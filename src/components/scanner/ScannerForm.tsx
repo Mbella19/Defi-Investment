@@ -38,8 +38,8 @@ export default function ScannerForm() {
         <ChainSelector value={chain} onChange={setChain} />
 
         {error && (
-          <div className="bg-error-container/20 border-l-2 border-error p-4">
-            <p className="text-error text-sm">{error}</p>
+          <div className="bg-[#ff4d4d]/10 border border-[#ff4d4d]/20 p-6">
+            <p className="text-[#ff4d4d] text-sm">{error}</p>
           </div>
         )}
 
@@ -55,52 +55,55 @@ export default function ScannerForm() {
 
       {/* Live Summary Sidebar */}
       <div className="col-span-12 lg:col-span-4">
-        <div className="bg-surface-lowest p-8 border-l-4 border-primary sticky top-20">
-          <span className="text-[10px] uppercase tracking-[0.3em] font-bold text-on-surface-variant mb-6 block">
-            Scan Parameters
-          </span>
+        <div className="bg-[#f2f3f5] border border-[#d7dade] p-10 sticky top-20 transition-all duration-300 hover:-translate-y-0.5 hover:border-[#00D4AA]/30">
+          <div className="flex items-center gap-3 mb-8">
+            <div className="w-2 h-2 bg-[#00D4AA]" />
+            <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+              Scan Parameters
+            </span>
+          </div>
 
-          <div className="space-y-6">
+          <div className="space-y-8">
             <div>
-              <span className="text-[9px] uppercase tracking-widest text-on-surface-variant font-bold block mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 block mb-2">
                 Budget
               </span>
-              <span className="font-headline text-3xl text-on-surface">
+              <span className="text-3xl font-black tracking-[-0.05em] text-[#203241]">
                 {formatBudget(budget)}
               </span>
             </div>
 
             <div>
-              <span className="text-[9px] uppercase tracking-widest text-on-surface-variant font-bold block mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 block mb-2">
                 Risk Profile
               </span>
-              <span className="font-headline text-lg text-primary">{riskInfo.label}</span>
-              <span className="text-[11px] text-on-surface-variant block mt-1">
+              <span className="text-lg font-black tracking-[-0.05em] text-[#00D4AA]">{riskInfo.label}</span>
+              <span className="text-[11px] text-[#6b7781] block mt-1">
                 {riskInfo.apyRange} APY target
               </span>
             </div>
 
             <div>
-              <span className="text-[9px] uppercase tracking-widest text-on-surface-variant font-bold block mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 block mb-2">
                 Assets
               </span>
-              <span className="text-sm text-on-surface">
+              <span className="text-sm text-[#203241]">
                 {assetType === "stablecoins" ? "Stablecoins Only" : "All Assets"}
               </span>
             </div>
 
             <div>
-              <span className="text-[9px] uppercase tracking-widest text-on-surface-variant font-bold block mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 block mb-2">
                 Network
               </span>
-              <span className="text-sm text-on-surface">{chain || "All Networks"}</span>
+              <span className="text-sm text-[#203241]">{chain || "All Networks"}</span>
             </div>
 
-            <div className="border-t border-outline-variant/10 pt-6">
-              <span className="text-[9px] uppercase tracking-widest text-on-surface-variant font-bold block mb-2">
+            <div className="border-t border-[#d7dade] pt-8">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 block mb-3">
                 Filter Preview
               </span>
-              <p className="text-[11px] text-on-surface-variant leading-relaxed">
+              <p className="text-[11px] text-[#6b7781] leading-relaxed">
                 Scanning for {assetType === "stablecoins" ? "stablecoin" : "all"} pools
                 {chain ? ` on ${chain}` : " across all networks"} with{" "}
                 {`>`}${formatBudget(profile.minTvl)} TVL, targeting {riskInfo.apyRange} APY

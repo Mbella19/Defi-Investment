@@ -12,11 +12,14 @@ const risks: RiskAppetite[] = ["low", "medium", "high"];
 
 export default function RiskSelector({ value, onChange }: RiskSelectorProps) {
   return (
-    <div className="space-y-4">
-      <label className="text-[9px] uppercase tracking-widest text-on-surface-variant font-bold block">
-        Risk Appetite
-      </label>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-[1px] bg-surface">
+    <div>
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-2 h-2 bg-[#ff4d4d]" />
+        <label className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+          Risk Appetite
+        </label>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {risks.map((risk) => {
           const info = getRiskDescription(risk);
           const isActive = value === risk;
@@ -26,29 +29,29 @@ export default function RiskSelector({ value, onChange }: RiskSelectorProps) {
               key={risk}
               onClick={() => onChange(risk)}
               className={`
-                p-6 text-left transition-all duration-300
+                group p-6 text-left transition-all duration-300 border
                 ${
                   isActive
-                    ? "bg-surface-high border-l-2 border-primary"
-                    : "bg-surface-low hover:bg-surface-container border-l-2 border-transparent"
+                    ? "bg-[#00D4AA]/5 border-[#00D4AA]"
+                    : "bg-white border-[#d7dade] hover:-translate-y-0.5 hover:border-[#00D4AA]/30"
                 }
               `}
             >
               <span
                 className={`
-                  text-[10px] uppercase tracking-widest font-bold block mb-2
-                  ${isActive ? "text-primary" : "text-on-surface-variant"}
+                  text-[11px] tracking-[0.2em] uppercase font-semibold block mb-3
+                  ${isActive ? "text-[#00D4AA]" : "text-[#45515d]/70 group-hover:text-[#43515d]"}
                 `}
               >
                 {info.label}
               </span>
-              <span className="font-headline text-lg block mb-2 text-on-surface">
+              <span className="text-lg font-black tracking-[-0.05em] block mb-3 text-[#203241]">
                 {info.apyRange} APY
               </span>
-              <span className="text-[11px] text-on-surface-variant leading-relaxed block">
+              <span className="text-[11px] text-[#6b7781] leading-relaxed block">
                 {info.description}
               </span>
-              <span className="text-[10px] text-on-surface-variant mt-2 block">
+              <span className="text-[10px] text-[#45515d]/70 mt-3 block tracking-[0.1em] uppercase">
                 Min TVL: {info.minTvl}
               </span>
             </button>

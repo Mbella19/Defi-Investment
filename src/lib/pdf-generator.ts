@@ -3,13 +3,13 @@ import autoTable from "jspdf-autotable";
 import type { InvestmentStrategy } from "@/types/strategy";
 
 const COLORS = {
-  bg: [14, 14, 14] as [number, number, number],
-  surface: [25, 26, 26] as [number, number, number],
-  primary: [186, 200, 218] as [number, number, number],
-  text: [231, 229, 229] as [number, number, number],
-  textDim: [172, 171, 170] as [number, number, number],
-  error: [238, 125, 119] as [number, number, number],
-  green: [110, 207, 138] as [number, number, number],
+  bg: [236, 236, 239] as [number, number, number],
+  surface: [242, 243, 245] as [number, number, number],
+  primary: [0, 212, 170] as [number, number, number],
+  text: [32, 50, 65] as [number, number, number],
+  textDim: [107, 119, 129] as [number, number, number],
+  error: [255, 77, 77] as [number, number, number],
+  green: [0, 212, 170] as [number, number, number],
 };
 
 export function generateStrategyPDF(

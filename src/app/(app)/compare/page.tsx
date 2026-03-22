@@ -102,17 +102,20 @@ export default function ComparePage() {
   ] : [];
 
   return (
-    <div className="p-8">
+    <div className="px-6 lg:px-10 py-12">
       {/* Hero */}
-      <section className="mb-8">
-        <span className="font-label uppercase tracking-[0.3em] text-[10px] text-secondary-dim font-bold mb-4 block">
-          Multi-Strategy Analysis
-        </span>
-        <h2 className="font-headline text-5xl md:text-7xl font-light leading-none mb-4 tracking-tighter text-on-surface">
+      <section className="mb-10">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-2 h-2 bg-[#00D4AA]" />
+          <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+            Multi-Strategy Analysis
+          </span>
+        </div>
+        <h2 className="text-5xl font-black tracking-[-0.05em] leading-none mb-4 text-[#203241]">
           Strategy <br />
-          <span className="italic text-primary">Comparison.</span>
+          <span className="italic text-[#00D4AA]">Comparison.</span>
         </h2>
-        <p className="font-body text-on-surface-variant max-w-xl text-sm leading-relaxed">
+        <p className="text-[#6b7781] max-w-xl text-sm leading-relaxed">
           Generate three strategies simultaneously — Conservative, Balanced, and Aggressive —
           and compare them side by side with radar charts and metrics.
         </p>
@@ -120,25 +123,29 @@ export default function ComparePage() {
 
       {/* Form */}
       {results.length === 0 && !loading && (
-        <div className="max-w-xl space-y-6">
-          <div className="bg-surface-lowest border-l-4 border-primary p-6 space-y-4">
+        <div className="max-w-xl space-y-8">
+          <div className="bg-[#f2f3f5] border border-[#d7dade] p-8 space-y-6">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-2 h-2 bg-[#00D4AA]" />
+              <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">Configuration</span>
+            </div>
             <div>
-              <label className="text-[9px] uppercase tracking-widest text-on-surface-variant font-bold block mb-2">
+              <label className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 block mb-2">
                 Budget
               </label>
               <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant">$</span>
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6b7781]">$</span>
                 <input
                   type="text"
                   value={budget.toLocaleString("en-US")}
                   onChange={(e) => setBudget(parseInt(e.target.value.replace(/[^0-9]/g, "")) || 0)}
-                  className="w-full bg-surface-low border-b border-outline-variant/30 text-xl font-headline pl-8 pr-4 py-3 focus:border-primary transition-colors outline-none text-on-surface"
+                  className="w-full bg-white border border-[#d7dade] text-sm font-black px-4 py-3 pl-8 focus:border-[#00D4AA] outline-none transition-colors text-[#203241]"
                 />
               </div>
-              <div className="flex gap-2 mt-2 flex-wrap">
+              <div className="flex gap-2 mt-3 flex-wrap">
                 {budgetPresets.map((p) => (
                   <button key={p} onClick={() => setBudget(p)}
-                    className={`px-3 py-1.5 text-[10px] font-bold transition-all ${budget === p ? "bg-primary text-on-primary" : "bg-surface-highest text-on-surface-variant"}`}>
+                    className={`px-4 py-2 text-[11px] font-semibold transition-all duration-300 ${budget === p ? "bg-[#00D4AA] text-white" : "bg-[#ebedf0] text-[#43515d] hover:text-[#203241]"}`}>
                     ${p.toLocaleString()}
                   </button>
                 ))}
@@ -147,20 +154,21 @@ export default function ComparePage() {
           </div>
 
           {error && (
-            <div className="bg-error-container/20 border-l-2 border-error p-4">
-              <p className="text-error text-sm">{error}</p>
+            <div className="bg-[#ff4d4d]/5 border border-[#ff4d4d]/20 p-4">
+              <p className="text-[#ff4d4d] text-sm">{error}</p>
             </div>
           )}
 
           <button
             onClick={generate}
             disabled={budget <= 0}
-            className="w-full py-4 text-sm uppercase font-bold tracking-widest bg-primary text-on-primary hover:bg-primary-dim transition-all flex items-center justify-center gap-2"
+            className="group w-full bg-[#ff6c12] text-white px-8 py-4 text-[11px] uppercase font-semibold tracking-[0.15em] hover:bg-[#e86210] transition-all duration-300 flex items-center justify-center gap-3"
           >
             <span className="material-symbols-outlined text-sm">compare</span>
             Generate 3 Strategies
+            <span className="inline-block transition-transform duration-300 group-hover:translate-x-1">&rarr;</span>
           </button>
-          <p className="text-[10px] text-on-surface-variant text-center">
+          <p className="text-[11px] text-[#6b7781] text-center">
             This generates Conservative, Balanced, and Aggressive strategies with full deep analysis. May take 10-30 minutes.
           </p>
         </div>
@@ -168,29 +176,29 @@ export default function ComparePage() {
 
       {/* Loading */}
       {loading && (
-        <div className="bg-surface-lowest border-l-4 border-primary p-12 text-center">
-          <div className="flex items-center justify-center gap-3 mb-6">
-            <div className="w-2 h-2 bg-primary animate-pulse" />
-            <div className="w-2 h-2 bg-primary animate-pulse" style={{ animationDelay: "200ms" }} />
-            <div className="w-2 h-2 bg-primary animate-pulse" style={{ animationDelay: "400ms" }} />
+        <div className="bg-[#f2f3f5] border border-[#d7dade] p-16 text-center">
+          <div className="flex items-center justify-center gap-3 mb-8">
+            <div className="w-2 h-2 bg-[#00D4AA] animate-pulse" />
+            <div className="w-2 h-2 bg-[#00D4AA] animate-pulse" style={{ animationDelay: "200ms" }} />
+            <div className="w-2 h-2 bg-[#00D4AA] animate-pulse" style={{ animationDelay: "400ms" }} />
           </div>
-          <span className="material-symbols-outlined text-5xl text-primary mb-4 block">compare</span>
-          <h3 className="font-headline text-2xl text-on-surface mb-2">Generating 3 Strategies</h3>
-          <p className="text-on-surface-variant text-sm">{progress}</p>
+          <span className="material-symbols-outlined text-5xl text-[#00D4AA] mb-4 block">compare</span>
+          <h3 className="text-2xl font-black tracking-[-0.05em] text-[#203241] mb-2">Generating 3 Strategies</h3>
+          <p className="text-[#6b7781] text-sm">{progress}</p>
         </div>
       )}
 
       {/* Results */}
       {validResults.length > 0 && (
-        <div className="space-y-8 animate-fade-in">
+        <div className="space-y-10 animate-fade-in">
           {/* Radar Chart */}
           {radarData.length > 0 && (
             <ChartContainer title="Strategy Comparison" subtitle="Radar chart comparing key metrics across all strategies">
               <ResponsiveContainer width="100%" height={400}>
                 <RadarChart data={radarData}>
-                  <PolarGrid stroke="#484848" />
-                  <PolarAngleAxis dataKey="metric" tick={{ fill: "#acabaa", fontSize: 10, fontFamily: "Inter" }} />
-                  <PolarRadiusAxis tick={{ fill: "#767575", fontSize: 9 }} />
+                  <PolarGrid stroke="#d7dade" />
+                  <PolarAngleAxis dataKey="metric" tick={{ fill: "#6b7781", fontSize: 10, fontFamily: "Inter" }} />
+                  <PolarRadiusAxis tick={{ fill: "#6b7781", fontSize: 9 }} />
                   {validResults.map((r, i) => (
                     <Radar
                       key={r.label}
@@ -209,12 +217,15 @@ export default function ComparePage() {
           )}
 
           {/* Comparison Table */}
-          <div className="bg-surface-lowest border-l-4 border-primary p-6">
-            <span className="text-[10px] uppercase tracking-[0.3em] font-bold text-on-surface-variant mb-4 block">
-              Key Metrics
-            </span>
-            <div className="space-y-[1px]">
-              <div className={`grid gap-4 text-[9px] uppercase tracking-widest text-on-surface-variant font-bold bg-surface-high p-3`} style={{ gridTemplateColumns: `200px repeat(${validResults.length}, 1fr)` }}>
+          <div className="bg-[#f2f3f5] border border-[#d7dade] p-8">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-2 h-2 bg-[#00D4AA]" />
+              <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+                Key Metrics
+              </span>
+            </div>
+            <div className="bg-white border border-[#d7dade]">
+              <div className={`grid gap-4 text-[11px] uppercase tracking-[0.15em] text-[#6b7781] font-semibold p-4 bg-[#f2f3f5]`} style={{ gridTemplateColumns: `200px repeat(${validResults.length}, 1fr)` }}>
                 <span>Metric</span>
                 {validResults.map((r) => <span key={r.label} className="text-right">{r.label}</span>)}
               </div>
@@ -243,10 +254,10 @@ export default function ComparePage() {
                   }),
                 },
               ].map((row) => (
-                <div key={row.label} className="bg-surface-low hover:bg-surface-high transition-all p-3" style={{ display: "grid", gridTemplateColumns: `200px repeat(${validResults.length}, 1fr)`, gap: "1rem" }}>
-                  <span className="text-on-surface text-[11px] font-label">{row.label}</span>
+                <div key={row.label} className="bg-white hover:bg-[#f2f3f5] transition-all duration-300 p-4 border-t border-[#e2e3e7]" style={{ display: "grid", gridTemplateColumns: `200px repeat(${validResults.length}, 1fr)`, gap: "1rem" }}>
+                  <span className="text-[#203241] text-[13px] font-medium">{row.label}</span>
                   {row.values.map((v, i) => (
-                    <span key={i} className="text-right text-[11px] text-primary font-bold">{v}</span>
+                    <span key={i} className="text-right text-[13px] text-[#00D4AA] font-bold">{v}</span>
                   ))}
                 </div>
               ))}
@@ -254,30 +265,33 @@ export default function ComparePage() {
           </div>
 
           {/* Individual Strategy Summaries */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {validResults.map((r, i) => (
-              <div key={r.label} className="bg-surface-low border-l-4 p-6" style={{ borderColor: CHART_PALETTE[i] }}>
-                <span className="text-[10px] uppercase tracking-[0.3em] font-bold block mb-2" style={{ color: CHART_PALETTE[i] }}>
-                  {r.label}
-                </span>
-                <span className="font-headline text-3xl text-on-surface block mb-1">
+              <div key={r.label} className="bg-white border border-[#d7dade] hover:border-[#00D4AA]/40 p-8 transition-all duration-300">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-2 h-2" style={{ backgroundColor: CHART_PALETTE[i] }} />
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.28em]" style={{ color: CHART_PALETTE[i] }}>
+                    {r.label}
+                  </span>
+                </div>
+                <span className="text-[42px] font-black text-[#00D4AA] block mb-1">
                   {r.strategy!.projectedApy.toFixed(2)}%
                 </span>
-                <span className="text-on-surface-variant text-[11px] block mb-4">
+                <span className="text-[#6b7781] text-[11px] block mb-6">
                   {formatCurrency(r.strategy!.projectedYearlyReturn)} / year
                 </span>
-                <p className="text-on-surface-variant text-[11px] leading-relaxed line-clamp-4">
+                <p className="text-[#6b7781] text-[11px] leading-relaxed line-clamp-4 mb-6">
                   {r.strategy!.summary.slice(0, 200)}...
                 </p>
-                <div className="mt-4 space-y-1">
+                <div className="space-y-2">
                   {r.strategy!.allocations.slice(0, 5).map((a, ai) => (
-                    <div key={ai} className="flex justify-between text-[10px]">
-                      <span className="text-on-surface-variant">{a.protocol} ({a.symbol})</span>
-                      <span className="text-primary font-bold">{a.allocationPercent}%</span>
+                    <div key={ai} className="flex justify-between text-[11px]">
+                      <span className="text-[#6b7781]">{a.protocol} ({a.symbol})</span>
+                      <span className="text-[#00D4AA] font-bold">{a.allocationPercent}%</span>
                     </div>
                   ))}
                   {r.strategy!.allocations.length > 5 && (
-                    <span className="text-on-surface-variant text-[9px]">+{r.strategy!.allocations.length - 5} more</span>
+                    <span className="text-[#6b7781] text-[11px]">+{r.strategy!.allocations.length - 5} more</span>
                   )}
                 </div>
               </div>
@@ -287,10 +301,11 @@ export default function ComparePage() {
           {/* Back */}
           <button
             onClick={() => setResults([])}
-            className="bg-primary text-on-primary px-8 py-3 text-[10px] uppercase font-bold tracking-widest hover:bg-primary-dim transition-all flex items-center gap-2"
+            className="group bg-[#ff6c12] text-white px-8 py-4 text-[11px] uppercase font-semibold tracking-[0.15em] hover:bg-[#e86210] transition-all duration-300 flex items-center gap-3"
           >
             <span className="material-symbols-outlined text-sm">refresh</span>
             New Comparison
+            <span className="inline-block transition-transform duration-300 group-hover:translate-x-1">&rarr;</span>
           </button>
         </div>
       )}

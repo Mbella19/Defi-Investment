@@ -3,55 +3,55 @@
 import { ReactNode } from "react";
 
 export const CHART_COLORS = {
-  primary: "#bac8da",
-  primaryDim: "#acbacc",
-  secondary: "#949eb3",
-  tertiary: "#ccd8ef",
-  error: "#ee7d77",
-  errorDim: "#bb5551",
-  success: "#6ecf8a",
-  warning: "#e8c468",
-  surface: "#191a1a",
-  surfaceLow: "#131313",
-  surfaceHigh: "#1f2020",
-  text: "#e7e5e5",
-  textDim: "#acabaa",
-  grid: "#484848",
-  gridDim: "#2a2a2a",
+  primary: "#00D4AA",
+  primaryDim: "#00B892",
+  secondary: "#FF6B6B",
+  tertiary: "#D4E157",
+  error: "#FF4D4D",
+  errorDim: "#CC3333",
+  success: "#00D4AA",
+  warning: "#ff6c12",
+  surface: "#f2f3f5",
+  surfaceLow: "#ececef",
+  surfaceHigh: "#ffffff",
+  text: "#203241",
+  textDim: "#6b7781",
+  grid: "#d7dade",
+  gridDim: "#e2e3e7",
 } as const;
 
 export const CHART_PALETTE = [
-  "#bac8da", "#6ecf8a", "#e8c468", "#ee7d77", "#949eb3",
-  "#ccd8ef", "#bb5551", "#acbacc", "#dae6fd", "#767575",
+  "#00D4AA", "#ff6c12", "#ff6887", "#dce61a", "#49c7c8",
+  "#8B5CF6", "#F59E0B", "#EC4899", "#10B981", "#6366F1",
 ];
 
 export const AXIS_STYLE = {
-  stroke: CHART_COLORS.grid,
+  stroke: "transparent",
   fontSize: 10,
   fontFamily: "Inter, sans-serif",
-  fill: CHART_COLORS.textDim,
+  fill: "#6b7781",
 };
 
 export const GRID_STYLE = {
-  stroke: CHART_COLORS.gridDim,
+  stroke: "#e2e3e7",
   strokeDasharray: "3 3",
 };
 
 export const TOOLTIP_STYLE = {
   contentStyle: {
-    backgroundColor: CHART_COLORS.surfaceLow,
-    border: `1px solid ${CHART_COLORS.grid}`,
+    backgroundColor: "#ffffff",
+    border: "1px solid #d7dade",
     borderRadius: 0,
     fontSize: 11,
     fontFamily: "Inter, sans-serif",
-    color: CHART_COLORS.text,
+    color: "#203241",
   },
   labelStyle: {
-    color: CHART_COLORS.primary,
-    fontWeight: 700,
+    color: "#00D4AA",
+    fontWeight: 600,
     fontSize: 10,
     textTransform: "uppercase" as const,
-    letterSpacing: "0.05em",
+    letterSpacing: "0.1em",
   },
 };
 
@@ -64,13 +64,16 @@ interface ChartContainerProps {
 
 export function ChartContainer({ title, subtitle, children, className = "" }: ChartContainerProps) {
   return (
-    <div className={`bg-surface-lowest border-l-4 border-primary p-6 ${className}`}>
-      <div className="mb-4">
-        <span className="text-[10px] uppercase tracking-[0.3em] font-bold text-on-surface-variant block">
-          {title}
-        </span>
+    <div className={`border border-[#d7dade] bg-[#f2f3f5] p-8 ${className}`}>
+      <div className="mb-6">
+        <div className="flex items-center gap-3 mb-1">
+          <div className="h-2 w-2 bg-[#00D4AA]" />
+          <span className="text-[11px] uppercase tracking-[0.2em] text-[#45515d]/70 font-semibold">
+            {title}
+          </span>
+        </div>
         {subtitle && (
-          <span className="text-[10px] text-on-surface-variant/60 block mt-1">{subtitle}</span>
+          <span className="text-[11px] text-[#6b7781] block ml-[19px]">{subtitle}</span>
         )}
       </div>
       {children}

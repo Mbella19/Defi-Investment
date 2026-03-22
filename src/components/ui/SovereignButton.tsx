@@ -24,16 +24,16 @@ export default function SovereignButton({
   type = "button",
 }: SovereignButtonProps) {
   const baseClasses =
-    "inline-flex items-center justify-center gap-2 text-[10px] uppercase font-bold tracking-widest transition-all duration-200";
+    "group inline-flex items-center justify-center gap-3 text-[12px] uppercase font-semibold tracking-[0.08em] transition-all duration-300";
 
   const variantClasses = {
-    primary: "bg-primary text-on-primary px-6 py-3 hover:bg-primary-dim",
-    ghost: "bg-transparent text-on-surface px-6 py-3 hover:bg-surface-high",
+    primary: "bg-[#ff6c12] text-white px-8 py-4 hover:-translate-y-1 hover:shadow-[0_18px_40px_rgba(255,108,18,0.28)]",
+    ghost: "bg-transparent text-[#2a3a46] px-6 py-3 hover:opacity-60",
     outline:
-      "bg-transparent border border-outline text-on-surface px-6 py-3 hover:bg-on-surface hover:text-background",
+      "bg-transparent border border-[#2a3a46] text-[#2a3a46] px-8 py-4 hover:-translate-y-0.5 hover:bg-[#2a3a46] hover:text-white",
   };
 
-  const classes = `${baseClasses} ${variantClasses[variant]} ${disabled ? "opacity-40 pointer-events-none" : ""} ${className}`;
+  const classes = `${baseClasses} ${variantClasses[variant]} ${disabled ? "opacity-30 pointer-events-none" : ""} ${className}`;
 
   if (href) {
     return (

@@ -71,12 +71,12 @@ export default function ResultsGrid({ results, budget }: ResultsGridProps) {
 
   if (results.length === 0) {
     return (
-      <div className="bg-surface-lowest p-16 text-center border-l-4 border-outline-variant">
-        <span className="material-symbols-outlined text-4xl text-on-surface-variant mb-4 block">
+      <div className="bg-[#f2f3f5] border border-[#d7dade] p-16 text-center">
+        <span className="material-symbols-outlined text-4xl text-[#6b7781] mb-4 block">
           search_off
         </span>
-        <h3 className="font-headline text-2xl text-on-surface mb-2">No Results Found</h3>
-        <p className="text-on-surface-variant text-sm max-w-md mx-auto">
+        <h3 className="font-headline text-2xl font-black text-[#203241] mb-2">No Results Found</h3>
+        <p className="text-[#6b7781] text-sm max-w-md mx-auto">
           No yield opportunities match your criteria. Try adjusting your risk appetite, budget, or
           switching to all asset types.
         </p>
@@ -87,21 +87,21 @@ export default function ResultsGrid({ results, budget }: ResultsGridProps) {
   return (
     <div>
       {/* Sort & Filter Bar */}
-      <div className="mb-6 flex flex-wrap items-end gap-4 bg-surface-low p-4 border-l-2 border-primary">
+      <div className="mb-8 flex flex-wrap items-end gap-4 bg-[#f2f3f5] border border-[#d7dade] p-8 transition-all duration-300">
         {/* Sort */}
-        <div className="flex flex-col gap-1">
-          <label className="text-[9px] uppercase tracking-widest text-on-surface-variant font-bold">
+        <div className="flex flex-col gap-2">
+          <label className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
             Sort By
           </label>
-          <div className="flex gap-[1px]">
+          <div className="flex gap-1">
             {sortOptions.map((opt) => (
               <button
                 key={opt.key}
                 onClick={() => setSortBy(opt.key)}
-                className={`px-3 py-1.5 text-[10px] font-bold transition-all duration-200 ${
+                className={`px-3 py-1.5 text-[10px] font-semibold tracking-[0.1em] transition-all duration-300 ${
                   sortBy === opt.key
-                    ? "bg-primary text-on-primary"
-                    : "bg-surface-highest text-on-surface-variant hover:text-on-surface"
+                    ? "bg-[#00D4AA] text-white"
+                    : "bg-white border border-[#d7dade] text-[#6b7781] hover:text-[#43515d] hover:border-[#00D4AA]/30"
                 }`}
               >
                 {opt.label}
@@ -110,17 +110,17 @@ export default function ResultsGrid({ results, budget }: ResultsGridProps) {
           </div>
         </div>
 
-        <div className="h-8 w-[1px] bg-outline-variant/20 hidden lg:block" />
+        <div className="h-8 w-px bg-[#d7dade] hidden lg:block" />
 
         {/* Chain filter */}
-        <div className="flex flex-col gap-1">
-          <label className="text-[9px] uppercase tracking-widest text-on-surface-variant font-bold">
+        <div className="flex flex-col gap-2">
+          <label className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
             Chain
           </label>
           <select
             value={filterChain}
             onChange={(e) => setFilterChain(e.target.value)}
-            className="bg-surface-lowest border-b border-outline-variant/30 text-[11px] py-1.5 px-3 outline-none font-label text-on-surface appearance-none cursor-pointer"
+            className="bg-white border border-[#d7dade] text-[11px] py-1.5 px-3 outline-none text-[#203241] appearance-none cursor-pointer transition-all duration-300 hover:border-[#00D4AA]/30"
           >
             <option value="">All Chains ({chains.length})</option>
             {chains.map((c) => (
@@ -130,14 +130,14 @@ export default function ResultsGrid({ results, budget }: ResultsGridProps) {
         </div>
 
         {/* Protocol filter */}
-        <div className="flex flex-col gap-1">
-          <label className="text-[9px] uppercase tracking-widest text-on-surface-variant font-bold">
+        <div className="flex flex-col gap-2">
+          <label className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
             Protocol
           </label>
           <select
             value={filterProtocol}
             onChange={(e) => setFilterProtocol(e.target.value)}
-            className="bg-surface-lowest border-b border-outline-variant/30 text-[11px] py-1.5 px-3 outline-none font-label text-on-surface appearance-none cursor-pointer"
+            className="bg-white border border-[#d7dade] text-[11px] py-1.5 px-3 outline-none text-[#203241] appearance-none cursor-pointer transition-all duration-300 hover:border-[#00D4AA]/30"
           >
             <option value="">All Protocols ({protocols.length})</option>
             {protocols.map((p) => (
@@ -149,23 +149,23 @@ export default function ResultsGrid({ results, budget }: ResultsGridProps) {
         {/* Stablecoin toggle */}
         <button
           onClick={() => setShowStableOnly(!showStableOnly)}
-          className={`px-3 py-1.5 text-[10px] font-bold transition-all duration-200 ${
+          className={`px-3 py-1.5 text-[10px] font-semibold tracking-[0.1em] transition-all duration-300 ${
             showStableOnly
-              ? "bg-primary text-on-primary"
-              : "bg-surface-highest text-on-surface-variant hover:text-on-surface"
+              ? "bg-[#00D4AA] text-white"
+              : "bg-white border border-[#d7dade] text-[#6b7781] hover:text-[#43515d] hover:border-[#00D4AA]/30"
           }`}
         >
           Stablecoins Only
         </button>
 
         {/* Count */}
-        <span className="text-[10px] text-on-surface-variant ml-auto">
+        <span className="text-[11px] text-[#6b7781] ml-auto">
           Showing {sorted.length} of {results.length}
         </span>
       </div>
 
       {/* Results Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-[1px] bg-surface animate-fade-in">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-fade-in">
         {sorted.map((result, i) => (
           <div key={result.pool.pool} className="animate-slide-up" style={{ animationDelay: `${Math.min(i, 10) * 30}ms` }}>
             <VaultCard result={result} budget={budget} />

@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
 import { Newsreader, Inter } from "next/font/google";
-import NavRail from "@/components/layout/NavRail";
-import Header from "@/components/layout/Header";
 import "./globals.css";
 
 const newsreader = Newsreader({
@@ -14,7 +12,7 @@ const newsreader = Newsreader({
 const inter = Inter({
   variable: "--font-inter",
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
+  weight: ["300", "400", "500", "600", "700", "800", "900"],
 });
 
 export const metadata: Metadata = {
@@ -29,20 +27,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en">
       <head>
         <link
           href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
           rel="stylesheet"
         />
       </head>
-      <body
-        className={`${newsreader.variable} ${inter.variable} bg-background text-on-surface font-body overflow-x-hidden selection:bg-primary selection:text-on-primary`}
-      >
-        <div className="grainy-bg fixed inset-0 z-[100]" />
-        <NavRail />
-        <Header />
-        <main className="ml-20 pt-14 min-h-screen">{children}</main>
+      <body className={`${newsreader.variable} ${inter.variable} bg-background text-on-surface font-body overflow-x-hidden`}>
+        {children}
       </body>
     </html>
   );

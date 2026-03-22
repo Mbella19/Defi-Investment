@@ -9,37 +9,40 @@ interface AssetTypeToggleProps {
 
 export default function AssetTypeToggle({ value, onChange }: AssetTypeToggleProps) {
   return (
-    <div className="space-y-4">
-      <label className="text-[9px] uppercase tracking-widest text-on-surface-variant font-bold block">
-        Asset Class
-      </label>
-      <div className="flex gap-[1px] bg-surface">
+    <div>
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-2 h-2 bg-[#00D4AA]" />
+        <label className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+          Asset Class
+        </label>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
         <button
           onClick={() => onChange("stablecoins")}
           className={`
-            flex-1 px-6 py-4 text-[11px] font-bold uppercase tracking-widest transition-all duration-200
+            group px-6 py-5 text-[11px] font-semibold uppercase tracking-[0.15em] transition-all duration-300 text-left
             ${
               value === "stablecoins"
-                ? "bg-surface-high text-primary border-b-2 border-primary"
-                : "bg-surface-low text-on-surface-variant hover:text-on-surface border-b-2 border-transparent"
+                ? "bg-[#203241] text-white"
+                : "bg-[#ebedf0] text-[#43515d] hover:-translate-y-0.5 hover:bg-[#203241] hover:text-white"
             }
           `}
         >
-          <span className="material-symbols-outlined text-sm block mb-1">toll</span>
+          <span className="material-symbols-outlined text-sm block mb-2">toll</span>
           Stablecoins Only
         </button>
         <button
           onClick={() => onChange("all")}
           className={`
-            flex-1 px-6 py-4 text-[11px] font-bold uppercase tracking-widest transition-all duration-200
+            group px-6 py-5 text-[11px] font-semibold uppercase tracking-[0.15em] transition-all duration-300 text-left
             ${
               value === "all"
-                ? "bg-surface-high text-primary border-b-2 border-primary"
-                : "bg-surface-low text-on-surface-variant hover:text-on-surface border-b-2 border-transparent"
+                ? "bg-[#203241] text-white"
+                : "bg-[#ebedf0] text-[#43515d] hover:-translate-y-0.5 hover:bg-[#203241] hover:text-white"
             }
           `}
         >
-          <span className="material-symbols-outlined text-sm block mb-1">token</span>
+          <span className="material-symbols-outlined text-sm block mb-2">token</span>
           All Assets
         </button>
       </div>

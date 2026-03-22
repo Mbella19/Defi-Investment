@@ -15,10 +15,10 @@ function ScoreGauge({ score, size = "lg" }: { score: number; size?: "sm" | "lg" 
 
   const color =
     score >= 70
-      ? "text-primary"
+      ? "text-[#00D4AA]"
       : score >= 40
-        ? "text-secondary"
-        : "text-error";
+        ? "text-[#7a8200]"
+        : "text-[#ff4d4d]";
 
   return (
     <div className="relative inline-flex items-center justify-center">
@@ -30,7 +30,7 @@ function ScoreGauge({ score, size = "lg" }: { score: number; size?: "sm" | "lg" 
           stroke="currentColor"
           strokeWidth={strokeWidth}
           fill="none"
-          className="text-surface-highest"
+          className="text-[#d7dade]"
         />
         <circle
           cx={radius + strokeWidth}
@@ -46,7 +46,7 @@ function ScoreGauge({ score, size = "lg" }: { score: number; size?: "sm" | "lg" 
         />
       </svg>
       <span
-        className={`absolute ${size === "lg" ? "text-2xl font-headline" : "text-xs font-label font-bold"} ${color}`}
+        className={`absolute ${size === "lg" ? "font-headline text-4xl font-black" : "text-xs font-bold"} ${color}`}
       >
         {score}
       </span>
@@ -56,18 +56,18 @@ function ScoreGauge({ score, size = "lg" }: { score: number; size?: "sm" | "lg" 
 
 function SectionCard({ section }: { section: AnalysisSection }) {
   return (
-    <div className="bg-surface-low ghost-border ghost-border-hover p-6 transition-all duration-300 hover:bg-surface-high">
+    <div className="bg-[#f2f3f5] border border-[#d7dade] hover:border-[#00D4AA]/30 hover:-translate-y-0.5 p-8 transition-all duration-300">
       <div className="flex items-center justify-between mb-4">
-        <h4 className="font-headline text-lg text-on-surface">{section.title}</h4>
+        <h4 className="font-headline text-lg font-black text-[#203241]">{section.title}</h4>
         <ScoreGauge score={section.score} size="sm" />
       </div>
-      <p className="text-on-surface-variant text-[12px] leading-relaxed mb-4">
+      <p className="text-[#6b7781] text-[12px] leading-relaxed mb-4">
         {section.assessment}
       </p>
       <ul className="space-y-1">
         {section.keyFindings.map((finding, i) => (
-          <li key={i} className="text-[11px] text-on-surface-variant flex items-start gap-2">
-            <span className="text-primary mt-0.5">&#8226;</span>
+          <li key={i} className="text-[11px] text-[#43515d] flex items-start gap-2">
+            <span className="text-[#00D4AA] mt-0.5">&#8226;</span>
             {finding}
           </li>
         ))}
@@ -76,34 +76,39 @@ function SectionCard({ section }: { section: AnalysisSection }) {
   );
 }
 
-const verdictLabels: Record<string, { label: string; color: string }> = {
-  high_confidence: { label: "High Confidence", color: "text-primary" },
-  moderate_confidence: { label: "Moderate Confidence", color: "text-secondary" },
-  low_confidence: { label: "Low Confidence", color: "text-error-dim" },
-  caution: { label: "Caution", color: "text-error" },
+const verdictStyles: Record<string, { label: string; bg: string; text: string }> = {
+  high_confidence: { label: "High Confidence", bg: "bg-[#00D4AA]/10", text: "text-[#00896e]" },
+  moderate_confidence: { label: "Moderate Confidence", bg: "bg-[#dce61a]/20", text: "text-[#7a8200]" },
+  low_confidence: { label: "Low Confidence", bg: "bg-[#ff6c12]/10", text: "text-[#ff6c12]" },
+  caution: { label: "Caution", bg: "bg-[#ff4d4d]/10", text: "text-[#ff4d4d]" },
 };
 
 export default function LegitimacyReport({ analysis }: LegitimacyReportProps) {
-  const verdict = verdictLabels[analysis.overallVerdict] || verdictLabels.caution;
+  const verdict = verdictStyles[analysis.overallVerdict] || verdictStyles.caution;
 
   return (
     <div className="space-y-8 animate-fade-in">
       {/* Overall Score */}
-      <div className="bg-surface-lowest p-10 border-l-4 border-primary flex flex-col md:flex-row items-start md:items-center gap-8">
+      <div className="bg-white border border-[#d7dade] p-8 flex flex-col md:flex-row items-start md:items-center gap-8 transition-all duration-300">
         <ScoreGauge score={analysis.legitimacyScore} size="lg" />
         <div>
-          <span className="text-[10px] uppercase tracking-[0.3em] font-bold text-on-surface-variant mb-2 block">
-            Intelligence Verdict
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-2 h-2 bg-[#00D4AA]" />
+            <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+              Intelligence Verdict
+            </span>
+          </div>
+          <span className={`inline-block px-4 py-1.5 ${verdict.bg} ${verdict.text} text-[11px] font-semibold tracking-[0.15em] uppercase mb-3`}>
+            {verdict.label}
           </span>
-          <h3 className={`font-headline text-3xl ${verdict.color}`}>{verdict.label}</h3>
-          <p className="text-on-surface-variant text-sm leading-relaxed mt-2 max-w-2xl">
+          <p className="text-[#6b7781] text-sm leading-relaxed mt-2 max-w-2xl">
             {analysis.summary}
           </p>
         </div>
       </div>
 
       {/* Section Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-[1px] bg-surface">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <SectionCard section={analysis.sections.auditHistory} />
         <SectionCard section={analysis.sections.teamReputation} />
         <SectionCard section={analysis.sections.tvlAnalysis} />
@@ -115,14 +120,17 @@ export default function LegitimacyReport({ analysis }: LegitimacyReportProps) {
       {/* Red Flags & Positive Signals */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         {analysis.redFlags.length > 0 && (
-          <div className="bg-surface-low border-l-4 border-error p-6">
-            <h4 className="text-[10px] uppercase tracking-widest font-bold text-error mb-4">
-              Red Flags
-            </h4>
+          <div className="bg-[#ff4d4d]/5 border border-[#ff4d4d]/10 p-8 transition-all duration-300">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-2 h-2 bg-[#ff4d4d]" />
+              <h4 className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#ff4d4d]">
+                Red Flags
+              </h4>
+            </div>
             <ul className="space-y-2">
               {analysis.redFlags.map((flag, i) => (
-                <li key={i} className="text-[12px] text-on-surface-variant flex items-start gap-2">
-                  <span className="text-error mt-0.5">&#9888;</span>
+                <li key={i} className="text-[12px] text-[#43515d] flex items-start gap-2">
+                  <span className="text-[#ff4d4d] mt-0.5">&#9888;</span>
                   {flag}
                 </li>
               ))}
@@ -130,14 +138,17 @@ export default function LegitimacyReport({ analysis }: LegitimacyReportProps) {
           </div>
         )}
         {analysis.positiveSignals.length > 0 && (
-          <div className="bg-surface-low border-l-4 border-primary p-6">
-            <h4 className="text-[10px] uppercase tracking-widest font-bold text-primary mb-4">
-              Positive Signals
-            </h4>
+          <div className="bg-[#00D4AA]/5 border border-[#00D4AA]/10 p-8 transition-all duration-300">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-2 h-2 bg-[#00D4AA]" />
+              <h4 className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#00896e]">
+                Positive Signals
+              </h4>
+            </div>
             <ul className="space-y-2">
               {analysis.positiveSignals.map((signal, i) => (
-                <li key={i} className="text-[12px] text-on-surface-variant flex items-start gap-2">
-                  <span className="text-primary mt-0.5">&#10003;</span>
+                <li key={i} className="text-[12px] text-[#43515d] flex items-start gap-2">
+                  <span className="text-[#00D4AA] mt-0.5">&#10003;</span>
                   {signal}
                 </li>
               ))}
@@ -148,14 +159,17 @@ export default function LegitimacyReport({ analysis }: LegitimacyReportProps) {
 
       {/* Investment Considerations */}
       {analysis.investmentConsiderations.length > 0 && (
-        <div className="bg-surface-lowest p-8 border-l-4 border-secondary">
-          <h4 className="text-[10px] uppercase tracking-widest font-bold text-secondary mb-4">
-            Investment Considerations
-          </h4>
+        <div className="bg-[#dce61a]/10 border border-[#dce61a]/20 p-8 transition-all duration-300">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-2 h-2 bg-[#7a8200]" />
+            <h4 className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#7a8200]">
+              Investment Considerations
+            </h4>
+          </div>
           <ul className="space-y-3">
             {analysis.investmentConsiderations.map((item, i) => (
-              <li key={i} className="text-[12px] text-on-surface-variant flex items-start gap-3">
-                <span className="text-secondary font-bold">{i + 1}.</span>
+              <li key={i} className="text-[12px] text-[#43515d] flex items-start gap-3">
+                <span className="text-[#7a8200] font-bold">{i + 1}.</span>
                 {item}
               </li>
             ))}
@@ -164,8 +178,8 @@ export default function LegitimacyReport({ analysis }: LegitimacyReportProps) {
       )}
 
       {/* Disclaimer */}
-      <div className="bg-surface-container p-4 text-center">
-        <p className="text-[10px] text-on-surface-variant">
+      <div className="border-t border-[#d7dade] pt-8 text-center">
+        <p className="text-[10px] text-[#6b7781]">
           This analysis is AI-generated and for informational purposes only. It is not financial
           advice. Always do your own research before investing. Analysis generated at{" "}
           {new Date(analysis.analyzedAt).toLocaleString()}.

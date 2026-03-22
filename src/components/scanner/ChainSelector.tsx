@@ -12,14 +12,17 @@ export default function ChainSelector({ value, onChange }: ChainSelectorProps) {
   const { chains, isLoading } = useChains();
 
   return (
-    <div className="space-y-4">
-      <label className="text-[9px] uppercase tracking-widest text-on-surface-variant font-bold block">
-        Network
-      </label>
+    <div>
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-2 h-2 bg-[#00D4AA]" />
+        <label className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+          Network
+        </label>
+      </div>
       <select
         value={value || ""}
         onChange={(e) => onChange(e.target.value || null)}
-        className="w-full bg-surface-lowest border-b border-outline-variant/30 text-sm py-3 px-4 focus:border-primary transition-colors outline-none font-label text-on-surface appearance-none cursor-pointer"
+        className="w-full bg-white border border-[#d7dade] text-sm text-[#203241] px-4 py-3 focus:border-[#00D4AA] transition-all duration-300 outline-none appearance-none cursor-pointer hover:border-[#00D4AA]/30"
       >
         <option value="">All Networks</option>
         {isLoading ? (

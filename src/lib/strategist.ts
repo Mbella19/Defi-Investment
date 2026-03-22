@@ -260,7 +260,7 @@ export async function generateStrategy(
   });
 
   // 3. Build protocol summaries
-  let summaries = buildProtocolSummaries(qualifying, allProtocols);
+  const summaries = buildProtocolSummaries(qualifying, allProtocols);
 
   // 4. Limit to top 30 protocols by TVL for deep analysis (keeps it practical)
   const protocolsToAnalyze = summaries.slice(0, 30);
