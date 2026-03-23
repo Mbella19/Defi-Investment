@@ -7,6 +7,10 @@ import type { ProtocolAnalysis } from "@/types/analysis";
 import { formatCurrency, formatDate } from "./formatters";
 import { getProtocolSentiment, formatSentimentForPrompt } from "./sentiment";
 import { fetchHacks, fetchRaises } from "./defillama";
+import { fetchTokenDetail, toTokenMarketData, formatMarketDataForPrompt } from "./coingecko";
+import { fetchTokenSecurity, resolveChainId, formatSecurityForPrompt } from "./goplus";
+import type { TokenMarketData } from "@/types/coingecko";
+import type { GoPlusTokenSecurity } from "@/types/goplus";
 
 // In-memory cache with 1-hour TTL
 const analysisCache = new Map<string, { data: ProtocolAnalysis; expiresAt: number }>();
@@ -14,15 +18,24 @@ const CACHE_TTL = 60 * 60 * 1000;
 
 const SYSTEM_PROMPT = `You are a DeFi protocol security analyst. Return ONLY a JSON object (no other text) with this structure:
 {"legitimacyScore":<0-100>,"overallVerdict":"<high_confidence|moderate_confidence|low_confidence|caution>","summary":"<2-3 sentences>","sections":{"auditHistory":{"title":"Audit History","score":<0-100>,"assessment":"<paragraph>","keyFindings":["...",".."]},"teamReputation":{"title":"Team & Reputation","score":<0-100>,"assessment":"<paragraph>","keyFindings":["...",".."]},"tvlAnalysis":{"title":"TVL Analysis","score":<0-100>,"assessment":"<paragraph>","keyFindings":["...",".."]},"smartContractRisk":{"title":"Smart Contract Risk","score":<0-100>,"assessment":"<paragraph>","keyFindings":["...",".."]},"protocolMaturity":{"title":"Protocol Maturity","score":<0-100>,"assessment":"<paragraph>","keyFindings":["...",".."]},"communityGovernance":{"title":"Community & Governance","score":<0-100>,"assessment":"<paragraph>","keyFindings":["...",".."]}},"redFlags":["..."],"positiveSignals":["..."],"investmentConsiderations":["..."]}
+IMPORTANT: If CoinGecko market data is provided, factor market cap size into team reputation and protocol maturity scores. If GoPlus contract security data is provided, use it directly in the smartContractRisk section — honeypot detection or high sell tax should be an automatic red flag. High developer activity is a positive signal for smart contract risk.
 Be conservative. Use publicly verifiable info. Always include at least one red flag. Return ONLY valid JSON.`;
 
-function buildPrompt(protocol: DefiLlamaProtocol, pools: DefiLlamaPool[], sentimentText?: string): string {
+function buildPrompt(
+  protocol: DefiLlamaProtocol,
+  pools: DefiLlamaPool[],
+  sentimentText?: string,
+  marketData?: TokenMarketData | null,
+  securityData?: GoPlusTokenSecurity | null,
+): string {
   const totalPoolTvl = pools.reduce((sum, p) => sum + (p.tvlUsd || 0), 0);
   const apys = pools.filter((p) => p.apy).map((p) => p.apy!);
   const minApy = apys.length > 0 ? Math.min(...apys) : 0;
   const maxApy = apys.length > 0 ? Math.max(...apys) : 0;
 
   const sentimentBlock = sentimentText ? `\nMARKET SENTIMENT DATA:\n${sentimentText}\n` : "";
+  const marketBlock = marketData ? `\nTOKEN MARKET DATA (CoinGecko):\n${formatMarketDataForPrompt(marketData)}\n` : "";
+  const securityBlock = securityData ? `\nCONTRACT SECURITY (GoPlus):\n${formatSecurityForPrompt(securityData)}\n` : "";
 
   return `${SYSTEM_PROMPT}
 
@@ -46,7 +59,7 @@ PROTOCOL DATA FROM DEFILLAMA:
 - Total TVL Across Pools: ${formatCurrency(totalPoolTvl)}
 - APY Range: ${minApy.toFixed(2)}% - ${maxApy.toFixed(2)}%
 - Stablecoin Pools: ${pools.filter((p) => p.stablecoin).length}
-${sentimentBlock}
+${sentimentBlock}${marketBlock}${securityBlock}
 Provide your complete analysis as a JSON object. Factor in the exploit history, funding data, and APY trends when scoring. Return ONLY the JSON, no other text.`;
 }
 
@@ -103,17 +116,41 @@ export async function analyzeProtocol(
     return cached.data;
   }
 
-  // Fetch sentiment data (hacks, funding rounds)
+  // Fetch all enrichment data in parallel (all optional, graceful degradation)
   let sentimentText = "";
+  let marketData: TokenMarketData | null = null;
+  let securityData: GoPlusTokenSecurity | null = null;
+
   try {
-    const [hacks, raises] = await Promise.all([fetchHacks(), fetchRaises()]);
+    const [hacks, raises, geckoDetail, goplusSec] = await Promise.all([
+      fetchHacks(),
+      fetchRaises(),
+      protocol.gecko_id ? fetchTokenDetail(protocol.gecko_id) : Promise.resolve(null),
+      protocol.address
+        ? (async () => {
+            const chainId = resolveChainId(protocol.chain || "Ethereum");
+            if (chainId) {
+              const result = await fetchTokenSecurity(chainId, protocol.address!);
+              if (result) return result;
+            }
+            if (protocol.chain !== "Ethereum") {
+              return fetchTokenSecurity(1, protocol.address!);
+            }
+            return null;
+          })()
+        : Promise.resolve(null),
+    ]);
+
     const sentiment = getProtocolSentiment(protocol.name, protocol.slug, hacks, raises, pools);
     sentimentText = formatSentimentForPrompt(sentiment);
+
+    if (geckoDetail) marketData = toTokenMarketData(geckoDetail);
+    if (goplusSec) securityData = goplusSec;
   } catch {
-    // Sentiment data is optional, continue without it
+    // Enrichment data is optional, continue without it
   }
 
-  const prompt = buildPrompt(protocol, pools, sentimentText);
+  const prompt = buildPrompt(protocol, pools, sentimentText, marketData, securityData);
 
   // Write prompt to a temp file, then pipe it to claude CLI
   const tmpFile = join(tmpdir(), `sovereign-${Date.now()}.txt`);

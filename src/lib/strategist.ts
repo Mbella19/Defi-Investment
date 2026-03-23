@@ -2,7 +2,8 @@ import { spawn } from "child_process";
 import type { DefiLlamaPool, DefiLlamaProtocol } from "@/types/pool";
 import type { StrategyCriteria, InvestmentStrategy } from "@/types/strategy";
 import type { ProtocolAnalysis } from "@/types/analysis";
-import { fetchAllPools, fetchProtocols } from "./defillama";
+import { fetchProtocols } from "./defillama";
+import { fetchAllEnrichedPools } from "./pool-aggregator";
 import { analyzeProtocol } from "./anthropic";
 import { formatCurrency } from "./formatters";
 
@@ -14,6 +15,8 @@ interface ProtocolSummary {
   chains: string[];
   audits: string;
   description: string;
+  marketCap?: number;
+  priceChange24h?: number;
   pools: {
     symbol: string;
     chain: string;
@@ -21,6 +24,10 @@ interface ProtocolSummary {
     tvl: number;
     stablecoin: boolean;
     poolId: string;
+    source?: string;
+    autoCompound?: boolean;
+    securityScore?: number;
+    securityFlags?: string;
   }[];
   analysis?: ProtocolAnalysis;
 }
@@ -56,6 +63,7 @@ function buildProtocolSummaries(
       chains: proto?.chains || [...new Set(protocolPools.map((p) => p.chain))],
       audits: proto?.audits || "0",
       description: proto?.description || "",
+      marketCap: proto?.mcap || undefined,
       pools: topPools.map((p) => ({
         symbol: p.symbol,
         chain: p.chain,
@@ -63,6 +71,10 @@ function buildProtocolSummaries(
         tvl: p.tvlUsd || 0,
         stablecoin: p.stablecoin,
         poolId: p.pool,
+        source: p.source,
+        autoCompound: p.autoCompound,
+        securityScore: p.securityData?.securityScore,
+        securityFlags: p.securityData?.flags?.join("; "),
       })),
     });
   }
@@ -129,7 +141,12 @@ function buildStrategyPrompt(
 ): string {
   const protocolDataLines = summaries.map((s) => {
     const poolLines = s.pools
-      .map((p) => `    ${p.symbol} | ${p.chain} | APY:${p.apy.toFixed(2)}% | TVL:${formatCurrency(p.tvl)} | Stable:${p.stablecoin ? "Y" : "N"} | ID:${p.poolId}`)
+      .map((p) => {
+        let line = `    ${p.symbol} | ${p.chain} | APY:${p.apy.toFixed(2)}% | TVL:${formatCurrency(p.tvl)} | Stable:${p.stablecoin ? "Y" : "N"} | ID:${p.poolId}`;
+        if (p.source === "beefy") line += ` | Source:Beefy | AutoCompound:Y`;
+        else if (p.autoCompound) line += ` | BeefyVault:Available`;
+        return line;
+      })
       .join("\n");
 
     // Include deep analysis data if available
@@ -144,8 +161,21 @@ function buildStrategyPrompt(
     Positive Signals: ${a.positiveSignals.join("; ")}`;
     }
 
+    // Include GoPlus security data if available from any pool
+    let securityLine = "";
+    const poolWithSecurity = s.pools.find((p) => p.securityScore !== undefined);
+    if (poolWithSecurity && poolWithSecurity.securityScore !== undefined) {
+      securityLine = `\n  CONTRACT SECURITY (GoPlus): Score ${poolWithSecurity.securityScore}/100 | Flags: ${poolWithSecurity.securityFlags || "None"}`;
+    }
+
+    // Include market data if available
+    let marketLine = "";
+    if (s.marketCap) {
+      marketLine = `\n  MARKET DATA (CoinGecko): MCap: ${formatCurrency(s.marketCap)}${s.priceChange24h !== undefined ? ` | 24h: ${s.priceChange24h > 0 ? "+" : ""}${s.priceChange24h.toFixed(2)}%` : ""}`;
+    }
+
     return `${s.name} (${s.category}) | TVL:${formatCurrency(s.tvl)} | Audits:${s.audits} | Chains:${s.chains.join(",")}
-  ${s.description.slice(0, 120)}${analysisLine}
+  ${s.description.slice(0, 120)}${analysisLine}${securityLine}${marketLine}
   Top pools:\n${poolLines}`;
   }).join("\n\n");
 
@@ -200,6 +230,9 @@ RULES:
 - Include step-by-step instructions on how to actually make each investment
 - Be specific about which chain to use and what the user needs (wallet, bridge, etc.)
 - Include the legitimacyScore, verdict, and redFlags from the analysis data for each allocation
+- If GoPlus contract security data is available, prefer protocols with score >= 70 for low/medium risk. Flag any protocol with honeypot detection or high sell tax
+- If a pool has a Beefy auto-compound vault available, mention it in the steps as an alternative investment method
+- Pools from Beefy (Source:Beefy) auto-compound yields — note this advantage in reasoning
 - Return ONLY valid JSON, no other text`;
 }
 
@@ -240,7 +273,7 @@ export async function generateStrategy(
 ): Promise<{ strategy: InvestmentStrategy; poolsScanned: number; protocolsAnalyzed: number; protocolsDeepAnalyzed: number }> {
   // 1. Fetch everything from DeFiLlama
   const [allPools, allProtocols] = await Promise.all([
-    fetchAllPools(),
+    fetchAllEnrichedPools(),
     fetchProtocols(),
   ]);
 
@@ -249,6 +282,7 @@ export async function generateStrategy(
     if (!p.apy || p.apy <= 0) return false;
     if (!p.tvlUsd || p.tvlUsd <= 0) return false;
     if (p.apy < criteria.targetApyMin || p.apy > criteria.targetApyMax) return false;
+    if (criteria.assetType === "stablecoins" && !p.stablecoin) return false;
 
     const minTvl =
       criteria.riskAppetite === "low" ? 5_000_000

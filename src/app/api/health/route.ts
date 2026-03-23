@@ -1,4 +1,7 @@
 import { fetchProtocolDetail, fetchAllPools, fetchPoolHistory, fetchHacks } from "@/lib/defillama";
+import { fetchTokenDetail, toTokenMarketData, fetchPriceHistory } from "@/lib/coingecko";
+import { fetchTokenSecurity, resolveChainId } from "@/lib/goplus";
+import { fetchBeefyVaultsEnriched } from "@/lib/beefy";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -65,6 +68,55 @@ export async function GET(request: Request) {
       ? protocolPools.reduce((s, p) => s + (p.apy || 0), 0) / protocolPools.length
       : 0;
 
+    // Fetch enrichment data in parallel (all optional)
+    let tokenMarketData = null;
+    let priceHistory: { timestamp: number; price: number }[] = [];
+    let securityData = null;
+    let beefyVaults: { id: string; apy: number | null; tvlUsd: number | null }[] = [];
+
+    try {
+      const [geckoDetail, geckoPriceHistory, goplusSec, allBeefyVaults] = await Promise.all([
+        detail.gecko_id ? fetchTokenDetail(detail.gecko_id) : Promise.resolve(null),
+        detail.gecko_id ? fetchPriceHistory(detail.gecko_id, 30) : Promise.resolve([]),
+        detail.address
+          ? (async () => {
+              // Try the protocol's primary chain first, then fallback to Ethereum
+              const primaryChain = detail.chain || detail.chains?.[0] || "Ethereum";
+              const chainId = resolveChainId(primaryChain);
+              if (chainId) {
+                const result = await fetchTokenSecurity(chainId, detail.address!);
+                if (result) return result;
+              }
+              // Fallback: try Ethereum if primary chain had no data
+              if (primaryChain !== "Ethereum") {
+                return fetchTokenSecurity(1, detail.address!);
+              }
+              return null;
+            })()
+          : Promise.resolve(null),
+        fetchBeefyVaultsEnriched(),
+      ]);
+
+      if (geckoDetail) tokenMarketData = toTokenMarketData(geckoDetail);
+      priceHistory = geckoPriceHistory;
+      securityData = goplusSec;
+
+      // Find Beefy vaults for this protocol (fuzzy match — slug may differ)
+      const slugLower = slug.toLowerCase();
+      const nameLower = detail.name.toLowerCase();
+      beefyVaults = allBeefyVaults
+        .filter((v) => {
+          const pid = v.platformId.toLowerCase();
+          return pid === slugLower || slugLower.startsWith(pid) || pid.startsWith(slugLower.replace(/-v\d+$/, "")) || nameLower.startsWith(pid);
+        })
+        .filter((v) => v.apy !== null && v.tvlUsd !== null && v.tvlUsd > 0)
+        .sort((a, b) => (b.tvlUsd || 0) - (a.tvlUsd || 0))
+        .slice(0, 10)
+        .map((v) => ({ id: v.id, apy: v.apy, tvlUsd: v.tvlUsd }));
+    } catch {
+      // Enrichment is optional
+    }
+
     return Response.json({
       protocol: {
         name: detail.name,
@@ -76,7 +128,7 @@ export async function GET(request: Request) {
         url: detail.url,
         twitter: detail.twitter,
       },
-      tvlHistory: tvlHistory.slice(-180), // Last 180 days
+      tvlHistory: tvlHistory.slice(-180),
       poolHistories: resolvedHistories,
       hacks: protocolHacks,
       metrics: {
@@ -87,6 +139,11 @@ export async function GET(request: Request) {
         hackCount: protocolHacks.length,
         totalHackLoss: protocolHacks.reduce((s, h) => s + h.amount, 0),
       },
+      // New enrichment data
+      tokenMarketData,
+      priceHistory,
+      securityData,
+      beefyVaults,
     });
   } catch (error) {
     console.error("Health check failed:", error);

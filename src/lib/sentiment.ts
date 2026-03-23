@@ -1,13 +1,15 @@
 import type { DefiLlamaPool } from "@/types/pool";
 import type { HackEntry, RaiseEntry } from "@/lib/defillama";
 import type { SentimentProfile, HackEvent, FundingRound, ApyTrend } from "@/types/sentiment";
+import type { TokenMarketData } from "@/types/coingecko";
 
 export function getProtocolSentiment(
   protocolName: string,
   protocolSlug: string,
   hacks: HackEntry[],
   raises: RaiseEntry[],
-  pools: DefiLlamaPool[]
+  pools: DefiLlamaPool[],
+  marketData?: TokenMarketData | null,
 ): SentimentProfile {
   const nameLower = protocolName.toLowerCase();
   const slugLower = protocolSlug.toLowerCase();
@@ -93,6 +95,23 @@ export function getProtocolSentiment(
   }
   if (apyTrend === "rising") {
     positiveSignals.push("APY trending upward over past 7 days");
+  }
+
+  // CoinGecko market data signals
+  if (marketData) {
+    if (marketData.marketCap > 1_000_000_000) {
+      positiveSignals.push(`Large market cap: $${(marketData.marketCap / 1e9).toFixed(1)}B`);
+    } else if (marketData.marketCap > 100_000_000) {
+      positiveSignals.push(`Mid-cap token: $${(marketData.marketCap / 1e6).toFixed(0)}M`);
+    }
+    if (marketData.priceChange30d !== null && marketData.priceChange30d < -30) {
+      riskSignals.push(`Token price crashed ${marketData.priceChange30d.toFixed(1)}% in 30 days`);
+    }
+    if (marketData.developerActivity !== null && marketData.developerActivity > 50) {
+      positiveSignals.push(`High developer activity: ${marketData.developerActivity} commits/4w`);
+    } else if (marketData.developerActivity !== null && marketData.developerActivity < 5) {
+      riskSignals.push(`Low developer activity: ${marketData.developerActivity} commits/4w`);
+    }
   }
 
   return {

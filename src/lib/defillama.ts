@@ -104,6 +104,9 @@ export interface ProtocolDetail {
   id: string;
   name: string;
   slug: string;
+  address: string | null;
+  gecko_id: string | null;
+  chain: string | null;
   tvl: { date: number; totalLiquidityUSD: number }[];
   chainTvls: Record<string, { tvl: { date: number; totalLiquidityUSD: number }[] }>;
   currentChainTvls: Record<string, number>;

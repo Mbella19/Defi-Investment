@@ -11,13 +11,13 @@ export default function BudgetInput({ value, onChange }: BudgetInputProps) {
   return (
     <div>
       <div className="flex items-center gap-3 mb-4">
-        <div className="w-2 h-2 bg-[#00D4AA]" />
-        <label className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+        <div className="w-2 h-2 bg-accent" />
+        <label className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70">
           Investment Budget
         </label>
       </div>
       <div className="relative">
-        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6b7781] text-lg font-light">
+        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted text-lg font-light">
           $
         </span>
         <input
@@ -28,7 +28,7 @@ export default function BudgetInput({ value, onChange }: BudgetInputProps) {
             const num = parseInt(raw) || 0;
             onChange(Math.min(num, 100000000));
           }}
-          className="w-full bg-white border border-[#d7dade] text-2xl font-black tracking-[-0.05em] pl-10 pr-4 py-4 focus:border-[#00D4AA] transition-all duration-300 outline-none text-[#203241] hover:border-[#00D4AA]/30"
+          className="w-full bg-surface-highest border border-outline text-2xl font-black tracking-[-0.05em] pl-10 pr-4 py-4 focus:border-accent transition-all duration-300 outline-none text-on-surface hover:border-accent/30"
         />
       </div>
       <div className="flex gap-2 flex-wrap mt-4">
@@ -37,11 +37,11 @@ export default function BudgetInput({ value, onChange }: BudgetInputProps) {
             key={preset}
             onClick={() => onChange(preset)}
             className={`
-              px-4 py-2 text-[10px] font-semibold tracking-[0.1em] uppercase transition-all duration-300
+              px-4 py-2 text-xs font-semibold tracking-[0.1em] uppercase transition-all duration-300
               ${
                 value === preset
-                  ? "bg-[#00D4AA] text-white"
-                  : "bg-[#ebedf0] text-[#43515d] hover:bg-[#00D4AA]/10 hover:text-[#203241]"
+                  ? "bg-accent text-white"
+                  : "bg-surface-container text-on-surface-variant hover:bg-accent/10 hover:text-on-surface"
               }
             `}
           >

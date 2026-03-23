@@ -6,18 +6,18 @@ interface RiskBadgeProps {
 
 const riskStyles: Record<RiskAppetite, { bg: string; text: string; label: string }> = {
   low: {
-    bg: "bg-[#00D4AA]/10",
-    text: "text-[#00896e]",
+    bg: "bg-accent/10",
+    text: "text-accent",
     label: "Low Risk",
   },
   medium: {
-    bg: "bg-[#dce61a]/20",
+    bg: "bg-lime/20",
     text: "text-[#7a8200]",
     label: "Medium Risk",
   },
   high: {
-    bg: "bg-[#ff4d4d]/10",
-    text: "text-[#ff4d4d]",
+    bg: "bg-danger/10",
+    text: "text-danger",
     label: "High Risk",
   },
 };
@@ -26,7 +26,7 @@ export default function RiskBadge({ risk }: RiskBadgeProps) {
   const style = riskStyles[risk];
   return (
     <span
-      className={`inline-block px-3 py-1 ${style.bg} ${style.text} text-[10px] font-semibold tracking-[0.15em] uppercase`}
+      className={`inline-block px-3 py-1 ${style.bg} ${style.text} text-xs font-semibold tracking-[0.12em] uppercase`}
     >
       {style.label}
     </span>

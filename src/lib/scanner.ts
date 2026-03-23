@@ -1,6 +1,6 @@
 import type { DefiLlamaPool } from "@/types/pool";
 import type { ScannerCriteria, ScanResult, ScanResponse, RiskAppetite } from "@/types/scanner";
-import { fetchAllPools } from "./defillama";
+import { fetchAllEnrichedPools } from "./pool-aggregator";
 import { RISK_PROFILES, classifyPoolRisk } from "./risk";
 
 function calculateMatchScore(pool: DefiLlamaPool, criteria: ScannerCriteria): number {
@@ -62,6 +62,20 @@ function calculateMatchScore(pool: DefiLlamaPool, criteria: ScannerCriteria): nu
   if (pool.volumeUsd7d && pool.volumeUsd7d > 1_000_000) score += 5;
   else if (pool.volumeUsd7d && pool.volumeUsd7d > 100_000) score += 3;
 
+  // Auto-compound bonus (+3 pts) — Beefy vaults auto-compound for you
+  if (pool.autoCompound) score += 3;
+
+  // Security score bonus/penalty — GoPlus contract analysis
+  if (pool.securityData) {
+    if (pool.securityData.securityScore >= 80) score += 5;
+    else if (pool.securityData.securityScore < 40) score -= 10;
+  }
+
+  // Market cap bonus — CoinGecko data
+  if (pool.tokenMarketData && pool.tokenMarketData.marketCap > 1_000_000_000) {
+    score += 3;
+  }
+
   return Math.min(100, Math.max(0, Math.round(score)));
 }
 
@@ -91,7 +105,7 @@ function allocateBudget(results: ScanResult[], budget: number, riskAppetite: Ris
 }
 
 export async function scanPools(criteria: ScannerCriteria): Promise<ScanResponse> {
-  const allPools = await fetchAllPools();
+  const allPools = await fetchAllEnrichedPools();
   const profile = RISK_PROFILES[criteria.riskAppetite];
 
   const filtered = allPools.filter((pool) => {

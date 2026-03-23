@@ -3,6 +3,7 @@ export interface StrategyCriteria {
   riskAppetite: "low" | "medium" | "high";
   targetApyMin: number;
   targetApyMax: number;
+  assetType?: "stablecoins" | "all";
 }
 
 export interface StrategyAllocation {

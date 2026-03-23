@@ -5,6 +5,7 @@ import type { StrategyCriteria, InvestmentStrategy } from "@/types/strategy";
 import { formatBudget, formatCurrency } from "@/lib/formatters";
 import { saveStrategy } from "@/lib/storage";
 import { generateStrategyPDF } from "@/lib/pdf-generator";
+import { useActiveStrategies } from "@/hooks/useActiveStrategies";
 import Link from "next/link";
 
 const riskOptions = [
@@ -28,6 +29,7 @@ export default function StrategyPage() {
   const [risk, setRisk] = useState<"low" | "medium" | "high">("low");
   const [apyMin, setApyMin] = useState(2);
   const [apyMax, setApyMax] = useState(15);
+  const [assetType, setAssetType] = useState<"stablecoins" | "all">("all");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{
@@ -37,6 +39,9 @@ export default function StrategyPage() {
     protocolsDeepAnalyzed: number;
   } | null>(null);
   const [progress, setProgress] = useState("");
+  const [activating, setActivating] = useState(false);
+  const [activated, setActivated] = useState(false);
+  const { activateStrategy } = useActiveStrategies();
 
   const generate = async () => {
     setLoading(true);
@@ -60,6 +65,7 @@ export default function StrategyPage() {
           riskAppetite: risk,
           targetApyMin: apyMin,
           targetApyMax: apyMax,
+          assetType,
         } as StrategyCriteria),
       });
 
@@ -84,37 +90,37 @@ export default function StrategyPage() {
   };
 
   return (
-    <div className="px-6 lg:px-10 py-12">
+    <div className="px-4 sm:px-6 lg:px-10 py-8 sm:py-12">
       {/* Hero */}
-      <section className="mb-16 grid grid-cols-12 gap-8 items-end pt-4">
+      <section className="mb-12 sm:mb-16 grid grid-cols-12 gap-6 sm:gap-8 items-end pt-4">
         <div className="col-span-12 lg:col-span-8">
           <div className="flex items-center gap-3 mb-8">
-            <div className="w-2 h-2 bg-[#00D4AA]" />
-            <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+            <div className="w-2 h-2 bg-accent" />
+            <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70">
               AI Investment Strategist
             </span>
           </div>
-          <h2 className="text-5xl md:text-7xl font-black leading-none mb-6 tracking-[-0.05em] text-[#203241]">
+          <h2 className="text-5xl md:text-7xl font-black leading-none mb-6 tracking-[-0.05em] text-on-surface">
             Auto <br />
-            <span className="italic text-[#00D4AA]">Strategist.</span>
+            <span className="italic text-accent">Strategist.</span>
           </h2>
-          <p className="text-[#6b7781] max-w-xl text-sm leading-relaxed">
+          <p className="text-muted max-w-xl text-sm leading-relaxed">
             Tell the AI your budget, risk appetite, and target APY. It will scan every protocol
             on DeFiLlama, deep-research the results, and create a complete investment strategy
             with exact allocations and step-by-step instructions.
           </p>
         </div>
-        <div className="col-span-12 lg:col-span-4 flex flex-col items-end gap-2">
-          <div className="flex gap-12">
+        <div className="col-span-12 lg:col-span-4 flex flex-col items-start lg:items-end gap-2">
+          <div className="flex gap-8 sm:gap-12">
             <div className="text-right">
-              <span className="text-4xl font-black tracking-[-0.05em] text-[#00D4AA]">Claude</span>
-              <span className="block text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 mt-1">
+              <span className="text-4xl font-black tracking-[-0.05em] text-accent">Claude</span>
+              <span className="block text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70 mt-1">
                 Engine
               </span>
             </div>
             <div className="text-right">
-              <span className="text-4xl font-black tracking-[-0.05em] text-[#00D4AA]">Live</span>
-              <span className="block text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 mt-1">
+              <span className="text-4xl font-black tracking-[-0.05em] text-accent">Live</span>
+              <span className="block text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70 mt-1">
                 Data Feed
               </span>
             </div>
@@ -123,19 +129,19 @@ export default function StrategyPage() {
       </section>
 
       {!result && (
-        <div className="grid grid-cols-12 gap-10">
+        <div className="grid grid-cols-12 gap-6 sm:gap-10">
           {/* Form */}
-          <div className="col-span-12 lg:col-span-8 space-y-12">
+          <div className="col-span-12 lg:col-span-8 space-y-10 sm:space-y-12">
             {/* Budget */}
             <div className="space-y-5">
               <div className="flex items-center gap-3">
-                <div className="w-2 h-2 bg-[#00D4AA]" />
-                <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+                <div className="w-2 h-2 bg-accent" />
+                <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70">
                   Investment Budget
                 </span>
               </div>
               <div className="relative">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6b7781] text-lg font-light">$</span>
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted text-lg font-light">$</span>
                 <input
                   type="text"
                   value={budget.toLocaleString("en-US")}
@@ -143,7 +149,7 @@ export default function StrategyPage() {
                     const num = parseInt(e.target.value.replace(/[^0-9]/g, "")) || 0;
                     setBudget(Math.min(num, 10000000));
                   }}
-                  className="w-full bg-white border border-[#d7dade] text-2xl font-black tracking-[-0.05em] pl-10 pr-4 py-4 focus:border-[#00D4AA] transition-all duration-300 outline-none text-[#203241]"
+                  className="w-full bg-surface-highest border border-outline text-2xl font-black tracking-[-0.05em] pl-10 pr-4 py-4 focus:border-accent transition-all duration-300 outline-none text-on-surface"
                 />
               </div>
               <div className="flex gap-2 flex-wrap">
@@ -151,10 +157,10 @@ export default function StrategyPage() {
                   <button
                     key={p}
                     onClick={() => setBudget(p)}
-                    className={`px-4 py-2 text-[11px] font-semibold tracking-[0.1em] transition-all duration-300 ${
+                    className={`px-4 py-2 text-[13px] font-semibold tracking-[0.1em] transition-all duration-300 ${
                       budget === p
-                        ? "bg-[#00D4AA] text-white"
-                        : "bg-[#ebedf0] text-[#43515d] hover:text-[#203241]"
+                        ? "bg-accent text-white"
+                        : "bg-surface-container text-on-surface-variant hover:text-on-surface"
                     }`}
                   >
                     ${p.toLocaleString()}
@@ -166,8 +172,8 @@ export default function StrategyPage() {
             {/* Risk */}
             <div className="space-y-5">
               <div className="flex items-center gap-3">
-                <div className="w-2 h-2 bg-[#00D4AA]" />
-                <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+                <div className="w-2 h-2 bg-accent" />
+                <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70">
                   Risk Appetite
                 </span>
               </div>
@@ -178,16 +184,16 @@ export default function StrategyPage() {
                     onClick={() => setRisk(opt.value)}
                     className={`p-6 text-left transition-all duration-300 border ${
                       risk === opt.value
-                        ? "bg-[#00D4AA]/5 border-[#00D4AA]"
-                        : "bg-white border-[#d7dade] hover:border-[#00D4AA]"
+                        ? "bg-accent/5 border-accent"
+                        : "bg-surface-highest border-outline hover:border-accent"
                     }`}
                   >
-                    <span className={`text-[11px] uppercase tracking-[0.15em] font-semibold block mb-2 ${
-                      risk === opt.value ? "text-[#00D4AA]" : "text-[#6b7781]"
+                    <span className={`text-[13px] uppercase tracking-[0.12em] font-semibold block mb-2 ${
+                      risk === opt.value ? "text-accent" : "text-muted"
                     }`}>
                       {opt.label}
                     </span>
-                    <span className="text-[12px] text-[#6b7781] leading-relaxed block">{opt.desc}</span>
+                    <span className="text-sm text-muted leading-relaxed block">{opt.desc}</span>
                   </button>
                 ))}
               </div>
@@ -196,29 +202,29 @@ export default function StrategyPage() {
             {/* APY Range */}
             <div className="space-y-5">
               <div className="flex items-center gap-3">
-                <div className="w-2 h-2 bg-[#00D4AA]" />
-                <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+                <div className="w-2 h-2 bg-accent" />
+                <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70">
                   Target APY Range
                 </span>
               </div>
               <div className="flex gap-4 items-center">
                 <div className="flex-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 block mb-2">Min APY</span>
+                  <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70 block mb-2">Min APY</span>
                   <input
                     type="number"
                     value={apyMin}
                     onChange={(e) => setApyMin(Number(e.target.value))}
-                    className="w-full bg-white border border-[#d7dade] text-sm px-4 py-3 focus:border-[#00D4AA] transition-all duration-300 outline-none text-[#203241]"
+                    className="w-full bg-surface-highest border border-outline text-sm px-4 py-3 focus:border-accent transition-all duration-300 outline-none text-on-surface"
                   />
                 </div>
-                <span className="text-[#6b7781] mt-6">to</span>
+                <span className="text-muted mt-6">to</span>
                 <div className="flex-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 block mb-2">Max APY</span>
+                  <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70 block mb-2">Max APY</span>
                   <input
                     type="number"
                     value={apyMax}
                     onChange={(e) => setApyMax(Number(e.target.value))}
-                    className="w-full bg-white border border-[#d7dade] text-sm px-4 py-3 focus:border-[#00D4AA] transition-all duration-300 outline-none text-[#203241]"
+                    className="w-full bg-surface-highest border border-outline text-sm px-4 py-3 focus:border-accent transition-all duration-300 outline-none text-on-surface"
                   />
                 </div>
               </div>
@@ -227,10 +233,10 @@ export default function StrategyPage() {
                   <button
                     key={p.label}
                     onClick={() => { setApyMin(p.min); setApyMax(p.max); }}
-                    className={`px-4 py-2 text-[11px] font-semibold tracking-[0.1em] transition-all duration-300 ${
+                    className={`px-4 py-2 text-[13px] font-semibold tracking-[0.1em] transition-all duration-300 ${
                       apyMin === p.min && apyMax === p.max
-                        ? "bg-[#00D4AA] text-white"
-                        : "bg-[#ebedf0] text-[#43515d] hover:text-[#203241]"
+                        ? "bg-accent text-white"
+                        : "bg-surface-container text-on-surface-variant hover:text-on-surface"
                     }`}
                   >
                     {p.label}
@@ -239,10 +245,58 @@ export default function StrategyPage() {
               </div>
             </div>
 
+            {/* Asset Type */}
+            <div className="space-y-5">
+              <div className="flex items-center gap-3">
+                <div className="w-2 h-2 bg-accent" />
+                <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70">
+                  Asset Type
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setAssetType("stablecoins")}
+                  className={`p-6 text-left transition-all duration-300 border ${
+                    assetType === "stablecoins"
+                      ? "bg-accent/5 border-accent"
+                      : "bg-surface-highest border-outline hover:border-accent"
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-sm block mb-2">toll</span>
+                  <span className={`text-[13px] uppercase tracking-[0.12em] font-semibold block mb-1 ${
+                    assetType === "stablecoins" ? "text-accent" : "text-muted"
+                  }`}>
+                    Stablecoins Only
+                  </span>
+                  <span className="text-sm text-muted leading-relaxed block">
+                    USDC, USDT, DAI — lower risk, stable value
+                  </span>
+                </button>
+                <button
+                  onClick={() => setAssetType("all")}
+                  className={`p-6 text-left transition-all duration-300 border ${
+                    assetType === "all"
+                      ? "bg-accent/5 border-accent"
+                      : "bg-surface-highest border-outline hover:border-accent"
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-sm block mb-2">token</span>
+                  <span className={`text-[13px] uppercase tracking-[0.12em] font-semibold block mb-1 ${
+                    assetType === "all" ? "text-accent" : "text-muted"
+                  }`}>
+                    All Assets
+                  </span>
+                  <span className="text-sm text-muted leading-relaxed block">
+                    ETH, BTC, altcoins + stablecoins — higher potential
+                  </span>
+                </button>
+              </div>
+            </div>
+
             {/* Error */}
             {error && (
-              <div className="bg-[#ff4d4d]/10 border border-[#ff4d4d]/20 p-6">
-                <p className="text-[#ff4d4d] text-sm">{error}</p>
+              <div className="bg-danger/10 border border-danger/20 p-6">
+                <p className="text-danger text-sm">{error}</p>
               </div>
             )}
 
@@ -250,15 +304,15 @@ export default function StrategyPage() {
             <button
               onClick={generate}
               disabled={loading || budget <= 0}
-              className={`group w-full px-8 py-4 text-[12px] uppercase font-semibold tracking-[0.08em] flex items-center justify-center gap-3 transition-all duration-300 ${
+              className={`group w-full px-8 py-4 text-sm uppercase font-semibold tracking-[0.08em] flex items-center justify-center gap-3 transition-all duration-300 ${
                 loading
-                  ? "bg-[#ebedf0] text-[#6b7781]"
-                  : "bg-[#ff6c12] text-white hover:-translate-y-1"
+                  ? "bg-surface-container text-muted"
+                  : "bg-cta text-white hover:-translate-y-1"
               }`}
             >
               {loading ? (
                 <>
-                  <div className="w-2 h-2 bg-[#00D4AA] animate-pulse" />
+                  <div className="w-2 h-2 bg-accent animate-pulse" />
                   {progress}
                 </>
               ) : (
@@ -272,10 +326,10 @@ export default function StrategyPage() {
 
           {/* Sidebar */}
           <div className="col-span-12 lg:col-span-4">
-            <div className="bg-[#f2f3f5] border border-[#d7dade] p-8 sticky top-20">
+            <div className="bg-surface-low border border-outline p-8 sticky top-20">
               <div className="flex items-center gap-3 mb-8">
-                <div className="w-2 h-2 bg-[#00D4AA]" />
-                <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+                <div className="w-2 h-2 bg-accent" />
+                <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70">
                   How It Works
                 </span>
               </div>
@@ -287,8 +341,8 @@ export default function StrategyPage() {
                   { step: "04", text: "Provides step-by-step instructions on how to make each investment" },
                 ].map((s) => (
                   <div key={s.step} className="flex gap-4">
-                    <span className="text-xl font-black text-[#00D4AA]/30">{s.step}</span>
-                    <p className="text-[12px] text-[#6b7781] leading-relaxed">{s.text}</p>
+                    <span className="text-xl font-black text-accent/30">{s.step}</span>
+                    <p className="text-sm text-muted leading-relaxed">{s.text}</p>
                   </div>
                 ))}
               </div>
@@ -299,14 +353,14 @@ export default function StrategyPage() {
 
       {/* Loading State */}
       {loading && (
-        <div className="mt-10 bg-[#f2f3f5] border border-[#d7dade] p-16 text-center">
+        <div className="mt-10 bg-surface-low border border-outline p-16 text-center">
           <div className="flex items-center justify-center gap-3 mb-8">
-            <div className="w-2 h-2 bg-[#00D4AA] animate-pulse" />
-            <div className="w-2 h-2 bg-[#00D4AA] animate-pulse" style={{ animationDelay: "200ms" }} />
-            <div className="w-2 h-2 bg-[#00D4AA] animate-pulse" style={{ animationDelay: "400ms" }} />
+            <div className="w-2 h-2 bg-accent animate-pulse" />
+            <div className="w-2 h-2 bg-accent animate-pulse" style={{ animationDelay: "200ms" }} />
+            <div className="w-2 h-2 bg-accent animate-pulse" style={{ animationDelay: "400ms" }} />
           </div>
-          <h3 className="text-3xl font-black tracking-[-0.05em] text-[#203241] mb-3">Building Your Strategy</h3>
-          <p className="text-[#6b7781] text-sm max-w-md mx-auto leading-relaxed">{progress}</p>
+          <h3 className="text-3xl font-black tracking-[-0.05em] text-on-surface mb-3">Building Your Strategy</h3>
+          <p className="text-muted text-sm max-w-md mx-auto leading-relaxed">{progress}</p>
         </div>
       )}
 
@@ -315,109 +369,112 @@ export default function StrategyPage() {
         <div className="space-y-10 animate-fade-in">
           {/* Stats Bar */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <div className="bg-[#f2f3f5] border border-[#d7dade] p-8">
-              <span className="text-[42px] font-black text-[#203241] tracking-[-0.06em]">{result.poolsScanned.toLocaleString()}</span>
-              <span className="block text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 mt-2">
+            <div className="bg-surface-low border border-outline p-8">
+              <span className="text-2xl sm:text-[42px] font-black text-on-surface tracking-[-0.06em]">{result.poolsScanned.toLocaleString()}</span>
+              <span className="block text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70 mt-2">
                 Pools Scanned
               </span>
             </div>
-            <div className="bg-[#f2f3f5] border border-[#d7dade] p-8">
-              <span className="text-[42px] font-black text-[#203241] tracking-[-0.06em]">{result.protocolsAnalyzed}</span>
-              <span className="block text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 mt-2">
+            <div className="bg-surface-low border border-outline p-8">
+              <span className="text-2xl sm:text-[42px] font-black text-on-surface tracking-[-0.06em]">{result.protocolsAnalyzed}</span>
+              <span className="block text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70 mt-2">
                 Protocols Found
               </span>
             </div>
-            <div className="bg-[#f2f3f5] border border-[#d7dade] p-8">
-              <span className="text-[42px] font-black text-[#00D4AA] tracking-[-0.06em]">{result.protocolsDeepAnalyzed}</span>
-              <span className="block text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 mt-2">
+            <div className="bg-surface-low border border-outline p-8">
+              <span className="text-2xl sm:text-[42px] font-black text-accent tracking-[-0.06em]">{result.protocolsDeepAnalyzed}</span>
+              <span className="block text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70 mt-2">
                 Deep Analyzed
               </span>
             </div>
-            <div className="bg-[#f2f3f5] border border-[#d7dade] p-8">
-              <span className="text-[42px] font-black text-[#00D4AA] tracking-[-0.06em]">{result.strategy.projectedApy.toFixed(2)}%</span>
-              <span className="block text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 mt-2">
+            <div className="bg-surface-low border border-outline p-8">
+              <span className="text-2xl sm:text-[42px] font-black text-accent tracking-[-0.06em]">{result.strategy.projectedApy.toFixed(2)}%</span>
+              <span className="block text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70 mt-2">
                 Projected APY
               </span>
             </div>
-            <div className="bg-[#f2f3f5] border border-[#d7dade] p-8">
-              <span className="text-[42px] font-black text-[#00D4AA] tracking-[-0.06em]">{formatCurrency(result.strategy.projectedYearlyReturn)}</span>
-              <span className="block text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 mt-2">
+            <div className="bg-surface-low border border-outline p-8">
+              <span className="text-2xl sm:text-[42px] font-black text-accent tracking-[-0.06em]">{formatCurrency(result.strategy.projectedYearlyReturn)}</span>
+              <span className="block text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70 mt-2">
                 Yearly Return
               </span>
             </div>
           </div>
 
           {/* Summary */}
-          <div className="bg-[#f2f3f5] border border-[#d7dade] p-8">
+          <div className="bg-surface-low border border-outline p-8">
             <div className="flex items-center gap-3 mb-6">
-              <div className="w-2 h-2 bg-[#00D4AA]" />
-              <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+              <div className="w-2 h-2 bg-accent" />
+              <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70">
                 Strategy Overview
               </span>
             </div>
-            <p className="text-[#43515d] text-sm leading-relaxed whitespace-pre-line">{result.strategy.summary}</p>
+            <p className="text-on-surface-variant text-sm leading-relaxed whitespace-pre-line">{result.strategy.summary}</p>
           </div>
 
           {/* Allocations */}
           <div>
             <div className="flex items-center gap-3 mb-8">
-              <div className="w-2 h-2 bg-[#00D4AA]" />
-              <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+              <div className="w-2 h-2 bg-accent" />
+              <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70">
                 Portfolio Allocations
               </span>
             </div>
             <div className="space-y-3">
               {result.strategy.allocations.map((alloc, i) => {
                 const verdictColor =
-                  alloc.verdict === "high_confidence" ? "text-[#00D4AA] bg-[#00D4AA]/10"
-                  : alloc.verdict === "moderate_confidence" ? "text-[#7a8200] bg-[#dce61a]/20"
-                  : alloc.verdict === "low_confidence" ? "text-[#ff6c12] bg-[#ff6c12]/10"
-                  : "text-[#ff4d4d] bg-[#ff4d4d]/10";
+                  alloc.verdict === "high_confidence" ? "text-accent bg-accent/10"
+                  : alloc.verdict === "moderate_confidence" ? "text-[#7a8200] bg-lime/20"
+                  : alloc.verdict === "low_confidence" ? "text-cta bg-cta/10"
+                  : "text-danger bg-danger/10";
                 const verdictLabel =
                   alloc.verdict === "high_confidence" ? "HIGH CONFIDENCE"
                   : alloc.verdict === "moderate_confidence" ? "MODERATE"
                   : alloc.verdict === "low_confidence" ? "LOW CONFIDENCE"
                   : "CAUTION";
                 const scoreColor =
-                  alloc.legitimacyScore >= 70 ? "text-[#00D4AA]"
+                  alloc.legitimacyScore >= 70 ? "text-accent"
                   : alloc.legitimacyScore >= 50 ? "text-[#7a8200]"
-                  : "text-[#ff4d4d]";
+                  : "text-danger";
 
                 return (
-                  <div key={i} className="bg-white border border-[#d7dade] hover:border-[#00D4AA] transition-all duration-300 p-6">
-                    <div className="grid grid-cols-12 gap-4 items-center">
-                      <div className="col-span-12 md:col-span-3">
-                        <div className="flex items-center gap-3">
-                          <span className="text-2xl font-black text-[#00D4AA]/30">{String(i + 1).padStart(2, "0")}</span>
-                          <div>
-                            <h4 className="font-black text-lg tracking-[-0.05em] text-[#203241]">{alloc.protocol}</h4>
-                            <p className="text-[10px] text-[#6b7781]">{alloc.symbol} &middot; {alloc.chain}</p>
-                          </div>
+                  <div key={i} className="bg-surface-highest border border-outline hover:border-accent transition-all duration-300 p-4 sm:p-6">
+                    <div className="flex flex-col gap-4">
+                      {/* Protocol name */}
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl font-black text-accent/30">{String(i + 1).padStart(2, "0")}</span>
+                        <div>
+                          <h4 className="font-black text-lg tracking-[-0.05em] text-on-surface">{alloc.protocol}</h4>
+                          <p className="text-xs text-muted">{alloc.symbol} &middot; {alloc.chain}</p>
                         </div>
                       </div>
-                      <div className="col-span-3 md:col-span-1 text-center">
-                        <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 block mb-1">Safety</span>
-                        <span className={`font-black text-xl ${scoreColor}`}>{alloc.legitimacyScore}</span>
+                      {/* Stats row */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="text-center sm:text-left">
+                          <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70 block mb-1">Safety</span>
+                          <span className={`font-black text-xl ${scoreColor}`}>{alloc.legitimacyScore}</span>
+                        </div>
+                        <div className="text-center sm:text-left">
+                          <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70 block mb-1">Verdict</span>
+                          <span className={`text-xs font-semibold uppercase tracking-[0.1em] px-3 py-1 inline-block ${verdictColor}`}>
+                            {verdictLabel}
+                          </span>
+                        </div>
+                        <div className="text-center sm:text-left">
+                          <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70 block mb-1">APY</span>
+                          <span className="font-black text-xl text-accent">{alloc.apy.toFixed(2)}%</span>
+                        </div>
+                        <div className="text-center sm:text-left">
+                          <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70 block mb-1">Allocate</span>
+                          <span className="font-black text-xl text-on-surface">{formatBudget(alloc.allocationAmount)}</span>
+                          <span className="text-xs text-muted block">({alloc.allocationPercent}%)</span>
+                        </div>
                       </div>
-                      <div className="col-span-3 md:col-span-2 text-center">
-                        <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 block mb-1">Verdict</span>
-                        <span className={`text-[10px] font-semibold uppercase tracking-[0.1em] px-3 py-1 ${verdictColor}`}>
-                          {verdictLabel}
-                        </span>
-                      </div>
-                      <div className="col-span-3 md:col-span-1 text-center">
-                        <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 block mb-1">APY</span>
-                        <span className="font-black text-xl text-[#00D4AA]">{alloc.apy.toFixed(2)}%</span>
-                      </div>
-                      <div className="col-span-3 md:col-span-2 text-center">
-                        <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 block mb-1">Allocate</span>
-                        <span className="font-black text-xl text-[#203241]">{formatBudget(alloc.allocationAmount)}</span>
-                        <span className="text-[10px] text-[#6b7781] block">({alloc.allocationPercent}%)</span>
-                      </div>
-                      <div className="col-span-12 md:col-span-3 flex gap-2 justify-end">
+                      {/* Actions */}
+                      <div className="flex gap-2 justify-end">
                         <Link
                           href={`/protocol/${alloc.protocol}`}
-                          className="w-10 h-10 border border-[#d7dade] flex items-center justify-center hover:border-[#00D4AA] hover:text-[#00D4AA] transition-all duration-300 text-[#6b7781]"
+                          className="w-10 h-10 border border-outline flex items-center justify-center hover:border-accent hover:text-accent transition-all duration-300 text-muted"
                           title="AI Research"
                         >
                           <span className="material-symbols-outlined text-sm">psychology</span>
@@ -426,7 +483,7 @@ export default function StrategyPage() {
                           href={`https://defillama.com/yields/pool/${alloc.poolId}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="group flex-1 md:flex-none h-10 px-6 bg-[#ff6c12] text-white flex items-center justify-center gap-2 text-[10px] uppercase font-semibold tracking-[0.15em] hover:-translate-y-0.5 transition-all duration-300"
+                          className="group flex-1 md:flex-none h-10 px-6 bg-cta text-white flex items-center justify-center gap-2 text-xs uppercase font-semibold tracking-[0.12em] hover:-translate-y-0.5 transition-all duration-300"
                         >
                           Invest
                           <span className="inline-block transition-transform duration-300 group-hover:translate-x-0.5">&rarr;</span>
@@ -434,12 +491,12 @@ export default function StrategyPage() {
                       </div>
                     </div>
                     <div className="mt-4">
-                      <p className="text-[12px] text-[#43515d] leading-relaxed">{alloc.reasoning}</p>
+                      <p className="text-sm text-on-surface-variant leading-relaxed">{alloc.reasoning}</p>
                     </div>
                     {alloc.redFlags && alloc.redFlags.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-2">
                         {alloc.redFlags.map((flag, fi) => (
-                          <span key={fi} className="text-[10px] text-[#ff4d4d] bg-[#ff4d4d]/10 border border-[#ff4d4d]/20 px-3 py-1">
+                          <span key={fi} className="text-xs text-danger bg-danger/10 border border-danger/20 px-3 py-1">
                             {flag}
                           </span>
                         ))}
@@ -452,42 +509,42 @@ export default function StrategyPage() {
           </div>
 
           {/* Risk Assessment */}
-          <div className="bg-[#f2f3f5] border border-[#d7dade] p-8">
+          <div className="bg-surface-low border border-outline p-8">
             <div className="flex items-center gap-3 mb-6">
-              <div className="w-2 h-2 bg-[#ff6c12]" />
-              <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#ff6c12]">
+              <div className="w-2 h-2 bg-cta" />
+              <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-cta">
                 Risk Assessment
               </span>
             </div>
-            <p className="text-[#43515d] text-[13px] leading-relaxed">{result.strategy.riskAssessment}</p>
+            <p className="text-on-surface-variant text-[13px] leading-relaxed">{result.strategy.riskAssessment}</p>
           </div>
 
           {/* Diversification */}
-          <div className="bg-[#f2f3f5] border border-[#d7dade] p-8">
+          <div className="bg-surface-low border border-outline p-8">
             <div className="flex items-center gap-3 mb-6">
-              <div className="w-2 h-2 bg-[#00D4AA]" />
-              <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#00D4AA]">
+              <div className="w-2 h-2 bg-accent" />
+              <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-accent">
                 Diversification
               </span>
             </div>
-            <p className="text-[#43515d] text-[13px] leading-relaxed">{result.strategy.diversificationNotes}</p>
+            <p className="text-on-surface-variant text-[13px] leading-relaxed">{result.strategy.diversificationNotes}</p>
           </div>
 
           {/* Steps */}
-          <div className="bg-[#f2f3f5] border border-[#d7dade] p-8">
+          <div className="bg-surface-low border border-outline p-8">
             <div className="flex items-center gap-3 mb-8">
-              <div className="w-2 h-2 bg-[#00D4AA]" />
-              <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+              <div className="w-2 h-2 bg-accent" />
+              <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70">
                 Step-by-Step Instructions
               </span>
             </div>
             <div className="space-y-5">
               {result.strategy.steps.map((step, i) => (
                 <div key={i} className="flex gap-4 items-start">
-                  <span className="w-8 h-8 bg-[#00D4AA] text-white flex items-center justify-center text-[10px] font-semibold shrink-0">
+                  <span className="w-8 h-8 bg-accent text-white flex items-center justify-center text-xs font-semibold shrink-0">
                     {i + 1}
                   </span>
-                  <p className="text-[#43515d] text-[13px] leading-relaxed pt-1.5">{step}</p>
+                  <p className="text-on-surface-variant text-[13px] leading-relaxed pt-1.5">{step}</p>
                 </div>
               ))}
             </div>
@@ -495,17 +552,17 @@ export default function StrategyPage() {
 
           {/* Warnings */}
           {result.strategy.warnings.length > 0 && (
-            <div className="bg-[#ff6c12]/10 border border-[#ff6c12]/20 p-8">
+            <div className="bg-cta/10 border border-cta/20 p-8">
               <div className="flex items-center gap-3 mb-6">
-                <div className="w-2 h-2 bg-[#ff6c12]" />
-                <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#ff6c12]">
+                <div className="w-2 h-2 bg-cta" />
+                <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-cta">
                   Warnings
                 </span>
               </div>
               <ul className="space-y-3">
                 {result.strategy.warnings.map((w, i) => (
-                  <li key={i} className="text-[13px] text-[#43515d] flex items-start gap-3">
-                    <span className="text-[#ff6c12] mt-0.5">&#9888;</span>
+                  <li key={i} className="text-[13px] text-on-surface-variant flex items-start gap-3">
+                    <span className="text-cta mt-0.5">&#9888;</span>
                     {w}
                   </li>
                 ))}
@@ -514,34 +571,61 @@ export default function StrategyPage() {
           )}
 
           {/* Actions + Disclaimer */}
-          <div className="flex flex-col sm:flex-row gap-4 items-center">
-            <div className="bg-[#f2f3f5] border border-[#d7dade] p-6 flex-1">
-              <p className="text-[11px] text-[#6b7781] text-center leading-relaxed">
+          <div className="flex flex-col gap-4">
+            <div className="bg-surface-low border border-outline p-6">
+              <p className="text-[13px] text-muted text-center leading-relaxed">
                 This strategy is AI-generated and for informational purposes only. Not financial advice.
                 Always do your own research. Generated at {new Date(result.strategy.generatedAt).toLocaleString()}.
               </p>
             </div>
-            <div className="flex gap-3 shrink-0">
+            <div className="flex flex-col sm:flex-row gap-3">
               <button
                 onClick={() => {
                   saveStrategy({ ...result.strategy, criteria: { budget, riskAppetite: risk } });
                   alert("Strategy saved! You can load it in Risk Lab or Portfolio Monitor.");
                 }}
-                className="border border-[#2a3a46] text-[#2a3a46] px-6 py-4 text-[12px] uppercase font-semibold tracking-[0.08em] hover:bg-[#2a3a46] hover:text-white transition-all duration-300 flex items-center gap-2"
+                className="border border-btn text-btn px-6 py-4 text-sm uppercase font-semibold tracking-[0.08em] hover:bg-btn hover:text-white transition-all duration-300 flex items-center justify-center gap-2"
               >
                 <span className="material-symbols-outlined text-sm">save</span>
                 Save
               </button>
               <button
+                onClick={async () => {
+                  setActivating(true);
+                  try {
+                    await activateStrategy(
+                      result.strategy,
+                      { budget, riskAppetite: risk, targetApyMin: apyMin, targetApyMax: apyMax, assetType },
+                    );
+                    setActivated(true);
+                  } catch {
+                    alert("Failed to activate strategy. Please try again.");
+                  } finally {
+                    setActivating(false);
+                  }
+                }}
+                disabled={activating || activated}
+                className={`px-6 py-4 text-sm uppercase font-semibold tracking-[0.08em] transition-all duration-300 flex items-center justify-center gap-2 ${
+                  activated
+                    ? "bg-accent/20 text-accent border border-accent/30"
+                    : "bg-accent text-white hover:-translate-y-0.5"
+                }`}
+              >
+                <span className="material-symbols-outlined text-sm">
+                  {activated ? "check_circle" : "monitoring"}
+                </span>
+                {activating ? "Activating..." : activated ? "Monitoring Active" : "Activate & Monitor"}
+              </button>
+              <button
                 onClick={() => generateStrategyPDF(result.strategy, { budget, riskAppetite: risk })}
-                className="border border-[#2a3a46] text-[#2a3a46] px-6 py-4 text-[12px] uppercase font-semibold tracking-[0.08em] hover:bg-[#2a3a46] hover:text-white transition-all duration-300 flex items-center gap-2"
+                className="border border-btn text-btn px-6 py-4 text-sm uppercase font-semibold tracking-[0.08em] hover:bg-btn hover:text-white transition-all duration-300 flex items-center justify-center gap-2"
               >
                 <span className="material-symbols-outlined text-sm">picture_as_pdf</span>
                 Export PDF
               </button>
               <button
                 onClick={() => setResult(null)}
-                className="group bg-[#ff6c12] text-white px-8 py-4 text-[12px] uppercase font-semibold tracking-[0.08em] hover:-translate-y-1 transition-all duration-300 flex items-center gap-2"
+                className="group bg-cta text-white px-8 py-4 text-sm uppercase font-semibold tracking-[0.08em] hover:-translate-y-1 transition-all duration-300 flex items-center justify-center gap-2"
               >
                 New Strategy
                 <span className="inline-block transition-transform duration-300 group-hover:translate-x-1">&rarr;</span>

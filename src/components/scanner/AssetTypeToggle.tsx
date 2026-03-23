@@ -11,8 +11,8 @@ export default function AssetTypeToggle({ value, onChange }: AssetTypeToggleProp
   return (
     <div>
       <div className="flex items-center gap-3 mb-4">
-        <div className="w-2 h-2 bg-[#00D4AA]" />
-        <label className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+        <div className="w-2 h-2 bg-accent" />
+        <label className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70">
           Asset Class
         </label>
       </div>
@@ -20,11 +20,11 @@ export default function AssetTypeToggle({ value, onChange }: AssetTypeToggleProp
         <button
           onClick={() => onChange("stablecoins")}
           className={`
-            group px-6 py-5 text-[11px] font-semibold uppercase tracking-[0.15em] transition-all duration-300 text-left
+            group px-6 py-5 text-[13px] font-semibold uppercase tracking-[0.12em] transition-all duration-300 text-left
             ${
               value === "stablecoins"
-                ? "bg-[#203241] text-white"
-                : "bg-[#ebedf0] text-[#43515d] hover:-translate-y-0.5 hover:bg-[#203241] hover:text-white"
+                ? "bg-btn text-white"
+                : "bg-surface-container text-on-surface-variant hover:-translate-y-0.5 hover:bg-btn hover:text-white"
             }
           `}
         >
@@ -34,11 +34,11 @@ export default function AssetTypeToggle({ value, onChange }: AssetTypeToggleProp
         <button
           onClick={() => onChange("all")}
           className={`
-            group px-6 py-5 text-[11px] font-semibold uppercase tracking-[0.15em] transition-all duration-300 text-left
+            group px-6 py-5 text-[13px] font-semibold uppercase tracking-[0.12em] transition-all duration-300 text-left
             ${
               value === "all"
-                ? "bg-[#203241] text-white"
-                : "bg-[#ebedf0] text-[#43515d] hover:-translate-y-0.5 hover:bg-[#203241] hover:text-white"
+                ? "bg-btn text-white"
+                : "bg-surface-container text-on-surface-variant hover:-translate-y-0.5 hover:bg-btn hover:text-white"
             }
           `}
         >

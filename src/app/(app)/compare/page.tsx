@@ -102,20 +102,20 @@ export default function ComparePage() {
   ] : [];
 
   return (
-    <div className="px-6 lg:px-10 py-12">
+    <div className="px-4 sm:px-6 lg:px-10 py-8 sm:py-12">
       {/* Hero */}
       <section className="mb-10">
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-2 h-2 bg-[#00D4AA]" />
-          <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+          <div className="w-2 h-2 bg-accent" />
+          <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70">
             Multi-Strategy Analysis
           </span>
         </div>
-        <h2 className="text-5xl font-black tracking-[-0.05em] leading-none mb-4 text-[#203241]">
+        <h2 className="text-3xl sm:text-5xl font-black tracking-[-0.05em] leading-none mb-4 text-on-surface">
           Strategy <br />
-          <span className="italic text-[#00D4AA]">Comparison.</span>
+          <span className="italic text-accent">Comparison.</span>
         </h2>
-        <p className="text-[#6b7781] max-w-xl text-sm leading-relaxed">
+        <p className="text-muted max-w-xl text-sm leading-relaxed">
           Generate three strategies simultaneously — Conservative, Balanced, and Aggressive —
           and compare them side by side with radar charts and metrics.
         </p>
@@ -124,28 +124,28 @@ export default function ComparePage() {
       {/* Form */}
       {results.length === 0 && !loading && (
         <div className="max-w-xl space-y-8">
-          <div className="bg-[#f2f3f5] border border-[#d7dade] p-8 space-y-6">
+          <div className="bg-surface-low border border-outline p-4 sm:p-8 space-y-6">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-2 h-2 bg-[#00D4AA]" />
-              <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">Configuration</span>
+              <div className="w-2 h-2 bg-accent" />
+              <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70">Configuration</span>
             </div>
             <div>
-              <label className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 block mb-2">
+              <label className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70 block mb-2">
                 Budget
               </label>
               <div className="relative">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[#6b7781]">$</span>
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted">$</span>
                 <input
                   type="text"
                   value={budget.toLocaleString("en-US")}
                   onChange={(e) => setBudget(parseInt(e.target.value.replace(/[^0-9]/g, "")) || 0)}
-                  className="w-full bg-white border border-[#d7dade] text-sm font-black px-4 py-3 pl-8 focus:border-[#00D4AA] outline-none transition-colors text-[#203241]"
+                  className="w-full bg-surface-highest border border-outline text-sm font-black px-4 py-3 pl-8 focus:border-accent outline-none transition-colors text-on-surface"
                 />
               </div>
               <div className="flex gap-2 mt-3 flex-wrap">
                 {budgetPresets.map((p) => (
                   <button key={p} onClick={() => setBudget(p)}
-                    className={`px-4 py-2 text-[11px] font-semibold transition-all duration-300 ${budget === p ? "bg-[#00D4AA] text-white" : "bg-[#ebedf0] text-[#43515d] hover:text-[#203241]"}`}>
+                    className={`px-4 py-2 text-[13px] font-semibold transition-all duration-300 ${budget === p ? "bg-accent text-white" : "bg-surface-container text-on-surface-variant hover:text-on-surface"}`}>
                     ${p.toLocaleString()}
                   </button>
                 ))}
@@ -154,21 +154,21 @@ export default function ComparePage() {
           </div>
 
           {error && (
-            <div className="bg-[#ff4d4d]/5 border border-[#ff4d4d]/20 p-4">
-              <p className="text-[#ff4d4d] text-sm">{error}</p>
+            <div className="bg-danger/5 border border-danger/20 p-4">
+              <p className="text-danger text-sm">{error}</p>
             </div>
           )}
 
           <button
             onClick={generate}
             disabled={budget <= 0}
-            className="group w-full bg-[#ff6c12] text-white px-8 py-4 text-[11px] uppercase font-semibold tracking-[0.15em] hover:bg-[#e86210] transition-all duration-300 flex items-center justify-center gap-3"
+            className="group w-full bg-cta text-white px-8 py-4 text-[13px] uppercase font-semibold tracking-[0.12em] hover:bg-[#e86210] transition-all duration-300 flex items-center justify-center gap-3"
           >
             <span className="material-symbols-outlined text-sm">compare</span>
             Generate 3 Strategies
             <span className="inline-block transition-transform duration-300 group-hover:translate-x-1">&rarr;</span>
           </button>
-          <p className="text-[11px] text-[#6b7781] text-center">
+          <p className="text-[13px] text-muted text-center">
             This generates Conservative, Balanced, and Aggressive strategies with full deep analysis. May take 10-30 minutes.
           </p>
         </div>
@@ -176,21 +176,21 @@ export default function ComparePage() {
 
       {/* Loading */}
       {loading && (
-        <div className="bg-[#f2f3f5] border border-[#d7dade] p-16 text-center">
+        <div className="bg-surface-low border border-outline p-16 text-center">
           <div className="flex items-center justify-center gap-3 mb-8">
-            <div className="w-2 h-2 bg-[#00D4AA] animate-pulse" />
-            <div className="w-2 h-2 bg-[#00D4AA] animate-pulse" style={{ animationDelay: "200ms" }} />
-            <div className="w-2 h-2 bg-[#00D4AA] animate-pulse" style={{ animationDelay: "400ms" }} />
+            <div className="w-2 h-2 bg-accent animate-pulse" />
+            <div className="w-2 h-2 bg-accent animate-pulse" style={{ animationDelay: "200ms" }} />
+            <div className="w-2 h-2 bg-accent animate-pulse" style={{ animationDelay: "400ms" }} />
           </div>
-          <span className="material-symbols-outlined text-5xl text-[#00D4AA] mb-4 block">compare</span>
-          <h3 className="text-2xl font-black tracking-[-0.05em] text-[#203241] mb-2">Generating 3 Strategies</h3>
-          <p className="text-[#6b7781] text-sm">{progress}</p>
+          <span className="material-symbols-outlined text-5xl text-accent mb-4 block">compare</span>
+          <h3 className="text-2xl font-black tracking-[-0.05em] text-on-surface mb-2">Generating 3 Strategies</h3>
+          <p className="text-muted text-sm">{progress}</p>
         </div>
       )}
 
       {/* Results */}
       {validResults.length > 0 && (
-        <div className="space-y-10 animate-fade-in">
+        <div className="space-y-6 sm:space-y-10 animate-fade-in">
           {/* Radar Chart */}
           {radarData.length > 0 && (
             <ChartContainer title="Strategy Comparison" subtitle="Radar chart comparing key metrics across all strategies">
@@ -217,15 +217,15 @@ export default function ComparePage() {
           )}
 
           {/* Comparison Table */}
-          <div className="bg-[#f2f3f5] border border-[#d7dade] p-8">
+          <div className="bg-surface-low border border-outline p-4 sm:p-8">
             <div className="flex items-center gap-3 mb-6">
-              <div className="w-2 h-2 bg-[#00D4AA]" />
-              <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+              <div className="w-2 h-2 bg-accent" />
+              <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70">
                 Key Metrics
               </span>
             </div>
-            <div className="bg-white border border-[#d7dade]">
-              <div className={`grid gap-4 text-[11px] uppercase tracking-[0.15em] text-[#6b7781] font-semibold p-4 bg-[#f2f3f5]`} style={{ gridTemplateColumns: `200px repeat(${validResults.length}, 1fr)` }}>
+            <div className="bg-surface-highest border border-outline overflow-x-auto">
+              <div className={`grid gap-4 text-[13px] uppercase tracking-[0.12em] text-muted font-semibold p-4 bg-surface-low`} style={{ gridTemplateColumns: `200px repeat(${validResults.length}, 1fr)` }}>
                 <span>Metric</span>
                 {validResults.map((r) => <span key={r.label} className="text-right">{r.label}</span>)}
               </div>
@@ -254,10 +254,10 @@ export default function ComparePage() {
                   }),
                 },
               ].map((row) => (
-                <div key={row.label} className="bg-white hover:bg-[#f2f3f5] transition-all duration-300 p-4 border-t border-[#e2e3e7]" style={{ display: "grid", gridTemplateColumns: `200px repeat(${validResults.length}, 1fr)`, gap: "1rem" }}>
-                  <span className="text-[#203241] text-[13px] font-medium">{row.label}</span>
+                <div key={row.label} className="bg-surface-highest hover:bg-surface-low transition-all duration-300 p-4 border-t border-outline-variant" style={{ display: "grid", gridTemplateColumns: `200px repeat(${validResults.length}, 1fr)`, gap: "1rem" }}>
+                  <span className="text-on-surface text-[13px] font-medium">{row.label}</span>
                   {row.values.map((v, i) => (
-                    <span key={i} className="text-right text-[13px] text-[#00D4AA] font-bold">{v}</span>
+                    <span key={i} className="text-right text-[13px] text-accent font-bold">{v}</span>
                   ))}
                 </div>
               ))}
@@ -265,33 +265,33 @@ export default function ComparePage() {
           </div>
 
           {/* Individual Strategy Summaries */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
             {validResults.map((r, i) => (
-              <div key={r.label} className="bg-white border border-[#d7dade] hover:border-[#00D4AA]/40 p-8 transition-all duration-300">
+              <div key={r.label} className="bg-surface-highest border border-outline hover:border-accent/40 p-4 sm:p-8 transition-all duration-300">
                 <div className="flex items-center gap-3 mb-4">
                   <div className="w-2 h-2" style={{ backgroundColor: CHART_PALETTE[i] }} />
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.28em]" style={{ color: CHART_PALETTE[i] }}>
+                  <span className="text-[13px] font-semibold uppercase tracking-[0.2em]" style={{ color: CHART_PALETTE[i] }}>
                     {r.label}
                   </span>
                 </div>
-                <span className="text-[42px] font-black text-[#00D4AA] block mb-1">
+                <span className="text-2xl sm:text-[42px] font-black text-accent block mb-1">
                   {r.strategy!.projectedApy.toFixed(2)}%
                 </span>
-                <span className="text-[#6b7781] text-[11px] block mb-6">
+                <span className="text-muted text-[13px] block mb-6">
                   {formatCurrency(r.strategy!.projectedYearlyReturn)} / year
                 </span>
-                <p className="text-[#6b7781] text-[11px] leading-relaxed line-clamp-4 mb-6">
+                <p className="text-muted text-[13px] leading-relaxed line-clamp-4 mb-6">
                   {r.strategy!.summary.slice(0, 200)}...
                 </p>
                 <div className="space-y-2">
                   {r.strategy!.allocations.slice(0, 5).map((a, ai) => (
-                    <div key={ai} className="flex justify-between text-[11px]">
-                      <span className="text-[#6b7781]">{a.protocol} ({a.symbol})</span>
-                      <span className="text-[#00D4AA] font-bold">{a.allocationPercent}%</span>
+                    <div key={ai} className="flex justify-between text-[13px]">
+                      <span className="text-muted">{a.protocol} ({a.symbol})</span>
+                      <span className="text-accent font-bold">{a.allocationPercent}%</span>
                     </div>
                   ))}
                   {r.strategy!.allocations.length > 5 && (
-                    <span className="text-[#6b7781] text-[11px]">+{r.strategy!.allocations.length - 5} more</span>
+                    <span className="text-muted text-[13px]">+{r.strategy!.allocations.length - 5} more</span>
                   )}
                 </div>
               </div>
@@ -301,7 +301,7 @@ export default function ComparePage() {
           {/* Back */}
           <button
             onClick={() => setResults([])}
-            className="group bg-[#ff6c12] text-white px-8 py-4 text-[11px] uppercase font-semibold tracking-[0.15em] hover:bg-[#e86210] transition-all duration-300 flex items-center gap-3"
+            className="group bg-cta text-white px-8 py-4 text-[13px] uppercase font-semibold tracking-[0.12em] hover:bg-[#e86210] transition-all duration-300 flex items-center gap-3"
           >
             <span className="material-symbols-outlined text-sm">refresh</span>
             New Comparison

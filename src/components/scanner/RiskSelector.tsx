@@ -14,8 +14,8 @@ export default function RiskSelector({ value, onChange }: RiskSelectorProps) {
   return (
     <div>
       <div className="flex items-center gap-3 mb-4">
-        <div className="w-2 h-2 bg-[#ff4d4d]" />
-        <label className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+        <div className="w-2 h-2 bg-danger" />
+        <label className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70">
           Risk Appetite
         </label>
       </div>
@@ -32,26 +32,26 @@ export default function RiskSelector({ value, onChange }: RiskSelectorProps) {
                 group p-6 text-left transition-all duration-300 border
                 ${
                   isActive
-                    ? "bg-[#00D4AA]/5 border-[#00D4AA]"
-                    : "bg-white border-[#d7dade] hover:-translate-y-0.5 hover:border-[#00D4AA]/30"
+                    ? "bg-accent/5 border-accent"
+                    : "bg-surface-highest border-outline hover:-translate-y-0.5 hover:border-accent/30"
                 }
               `}
             >
               <span
                 className={`
-                  text-[11px] tracking-[0.2em] uppercase font-semibold block mb-3
-                  ${isActive ? "text-[#00D4AA]" : "text-[#45515d]/70 group-hover:text-[#43515d]"}
+                  text-[13px] tracking-[0.2em] uppercase font-semibold block mb-3
+                  ${isActive ? "text-accent" : "text-label/70 group-hover:text-on-surface-variant"}
                 `}
               >
                 {info.label}
               </span>
-              <span className="text-lg font-black tracking-[-0.05em] block mb-3 text-[#203241]">
+              <span className="text-lg font-black tracking-[-0.05em] block mb-3 text-on-surface">
                 {info.apyRange} APY
               </span>
-              <span className="text-[11px] text-[#6b7781] leading-relaxed block">
+              <span className="text-[13px] text-muted leading-relaxed block">
                 {info.description}
               </span>
-              <span className="text-[10px] text-[#45515d]/70 mt-3 block tracking-[0.1em] uppercase">
+              <span className="text-xs text-label/70 mt-3 block tracking-[0.1em] uppercase">
                 Min TVL: {info.minTvl}
               </span>
             </button>

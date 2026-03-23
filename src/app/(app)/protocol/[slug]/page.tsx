@@ -73,7 +73,7 @@ export default function ProtocolPage() {
 
   if (protocolLoading) {
     return (
-      <div className="px-6 lg:px-10 py-12">
+      <div className="px-4 sm:px-6 lg:px-10 py-8 sm:py-12">
         <AnalysisSkeleton />
       </div>
     );
@@ -81,16 +81,16 @@ export default function ProtocolPage() {
 
   if (!protocol) {
     return (
-      <div className="px-6 lg:px-10 py-12">
-        <div className="bg-[#f2f3f5] border border-[#d7dade] p-16 text-center">
-          <span className="material-symbols-outlined text-4xl text-[#ff4d4d] mb-4 block">error</span>
-          <h3 className="font-headline text-2xl font-black text-[#203241] mb-2">Protocol Not Found</h3>
-          <p className="text-[#6b7781] text-sm mb-4">
+      <div className="px-4 sm:px-6 lg:px-10 py-8 sm:py-12">
+        <div className="bg-surface-low border border-outline p-8 sm:p-16 text-center">
+          <span className="material-symbols-outlined text-4xl text-danger mb-4 block">error</span>
+          <h3 className="font-headline text-2xl font-black text-on-surface mb-2">Protocol Not Found</h3>
+          <p className="text-muted text-sm mb-4">
             Could not find protocol &quot;{slug}&quot; on DeFiLlama.
           </p>
           <Link
             href="/scanner"
-            className="inline-block bg-[#ff6c12] text-white px-8 py-4 text-[11px] uppercase font-semibold tracking-[0.15em] hover:bg-[#ff6c12]/90 transition-all duration-300"
+            className="inline-block bg-cta text-white px-8 py-4 text-[13px] uppercase font-semibold tracking-[0.12em] hover:bg-cta/90 transition-all duration-300"
           >
             Back to Scanner
           </Link>
@@ -100,27 +100,27 @@ export default function ProtocolPage() {
   }
 
   return (
-    <div className="px-6 lg:px-10 py-12">
+    <div className="px-4 sm:px-6 lg:px-10 py-8 sm:py-12">
       <ProtocolHeader protocol={protocol} pools={pools} />
 
       {/* AI Analysis Section */}
       <section className="mt-12">
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
           <div>
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-2 h-2 bg-[#00D4AA]" />
-              <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+              <div className="w-2 h-2 bg-accent" />
+              <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70">
                 AI Intelligence Report
               </span>
             </div>
-            <h3 className="font-headline text-5xl font-black text-[#203241]">
-              Legitimacy <span className="italic text-[#00D4AA]">Analysis</span>
+            <h3 className="font-headline text-3xl sm:text-5xl font-black text-on-surface">
+              Legitimacy <span className="italic text-accent">Analysis</span>
             </h3>
           </div>
           {!analysis && !analysisLoading && (
             <button
               onClick={runAnalysis}
-              className="group bg-[#ff6c12] text-white px-8 py-4 text-[11px] uppercase font-semibold tracking-[0.15em] hover:bg-[#ff6c12]/90 transition-all duration-300 flex items-center gap-2"
+              className="group bg-cta text-white px-8 py-4 text-[13px] uppercase font-semibold tracking-[0.12em] hover:bg-cta/90 transition-all duration-300 flex items-center gap-2"
             >
               <span className="material-symbols-outlined text-sm">psychology</span>
               Run Deep Research
@@ -130,18 +130,18 @@ export default function ProtocolPage() {
         </div>
 
         {!analysis && !analysisLoading && !analysisError && (
-          <div className="bg-[#f2f3f5] border border-[#d7dade] p-12 text-center transition-all duration-300">
-            <span className="material-symbols-outlined text-5xl text-[#6b7781] mb-4 block">
+          <div className="bg-surface-low border border-outline p-6 sm:p-12 text-center transition-all duration-300">
+            <span className="material-symbols-outlined text-5xl text-muted mb-4 block">
               smart_toy
             </span>
-            <h4 className="font-headline text-xl font-black text-[#203241] mb-2">
+            <h4 className="font-headline text-xl font-black text-on-surface mb-2">
               AI Analysis Available
             </h4>
-            <p className="text-[#6b7781] text-sm max-w-md mx-auto mb-6">
+            <p className="text-muted text-sm max-w-md mx-auto mb-6">
               Click &quot;Run Deep Research&quot; to have our AI analyze this protocol&apos;s
               legitimacy, audit history, team reputation, and smart contract risks.
             </p>
-            <p className="text-[11px] text-[#6b7781]">
+            <p className="text-[13px] text-muted">
               Powered by Claude Opus &middot; Takes 10-20 seconds
             </p>
           </div>
@@ -150,8 +150,8 @@ export default function ProtocolPage() {
         {analysisLoading && (
           <div>
             <div className="flex items-center gap-3 mb-8">
-              <div className="w-2 h-2 bg-[#00D4AA] animate-pulse" />
-              <span className="text-[11px] text-[#6b7781] uppercase tracking-[0.28em]">
+              <div className="w-2 h-2 bg-accent animate-pulse" />
+              <span className="text-[13px] text-muted uppercase tracking-[0.2em]">
                 AI is analyzing {protocol.name}...
               </span>
             </div>
@@ -160,12 +160,12 @@ export default function ProtocolPage() {
         )}
 
         {analysisError && (
-          <div className="bg-[#ff4d4d]/5 border border-[#ff4d4d]/10 p-8">
-            <span className="material-symbols-outlined text-2xl text-[#ff4d4d] mb-2 block">error</span>
-            <p className="text-[#ff4d4d] text-sm mb-4">{analysisError}</p>
+          <div className="bg-danger/5 border border-danger/10 p-8">
+            <span className="material-symbols-outlined text-2xl text-danger mb-2 block">error</span>
+            <p className="text-danger text-sm mb-4">{analysisError}</p>
             <button
               onClick={runAnalysis}
-              className="bg-[#ff6c12] text-white px-8 py-4 text-[11px] uppercase font-semibold tracking-[0.15em] hover:bg-[#ff6c12]/90 transition-all duration-300"
+              className="bg-cta text-white px-8 py-4 text-[13px] uppercase font-semibold tracking-[0.12em] hover:bg-cta/90 transition-all duration-300"
             >
               Retry Analysis
             </button>
@@ -179,16 +179,16 @@ export default function ProtocolPage() {
       {pools.length > 0 && (
         <section className="mt-16">
           <div className="flex items-center gap-3 mb-8">
-            <div className="w-2 h-2 bg-[#00D4AA]" />
-            <span className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70">
+            <div className="w-2 h-2 bg-accent" />
+            <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70">
               Yield Opportunities
             </span>
           </div>
-          <h3 className="font-headline text-5xl font-black text-[#203241] mb-8">
-            Available <span className="italic text-[#00D4AA]">Pools</span>
+          <h3 className="font-headline text-3xl sm:text-5xl font-black text-on-surface mb-8">
+            Available <span className="italic text-accent">Pools</span>
           </h3>
-          <div className="bg-white border border-[#d7dade]">
-            <div className="grid grid-cols-12 gap-4 p-4 text-[11px] font-semibold uppercase tracking-[0.28em] text-[#45515d]/70 border-b border-[#d7dade]">
+          <div className="bg-surface-highest border border-outline overflow-x-auto">
+            <div className="grid grid-cols-12 gap-4 p-4 text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70 border-b border-outline min-w-[640px]">
               <span className="col-span-3">Pool</span>
               <span className="col-span-2">Chain</span>
               <span className="col-span-2 text-right">APY</span>
@@ -202,25 +202,25 @@ export default function ProtocolPage() {
               .map((pool) => (
                 <div
                   key={pool.pool}
-                  className="grid grid-cols-12 gap-4 p-4 hover:bg-[#f2f3f5] transition-all duration-300 items-center border-b border-[#d7dade] last:border-b-0"
+                  className="grid grid-cols-12 gap-4 p-4 hover:bg-surface-low transition-all duration-300 items-center border-b border-outline last:border-b-0 min-w-[640px]"
                 >
-                  <span className="col-span-3 text-sm text-[#203241]">{pool.symbol}</span>
-                  <span className="col-span-2 text-[11px] text-[#6b7781]">
+                  <span className="col-span-3 text-sm text-on-surface">{pool.symbol}</span>
+                  <span className="col-span-2 text-[13px] text-muted">
                     {pool.chain}
                   </span>
-                  <span className="col-span-2 text-right text-sm font-black text-[#00D4AA]">
+                  <span className="col-span-2 text-right text-sm font-black text-accent">
                     {pool.apy?.toFixed(2)}%
                   </span>
-                  <span className="col-span-2 text-right text-sm text-[#43515d]">
+                  <span className="col-span-2 text-right text-sm text-on-surface-variant">
                     {pool.tvlUsd
                       ? `$${(pool.tvlUsd / 1_000_000).toFixed(2)}M`
                       : "N/A"}
                   </span>
                   <span className="col-span-1 text-center">
                     {pool.stablecoin ? (
-                      <span className="text-[#00896e] text-[10px]">YES</span>
+                      <span className="text-accent text-xs">YES</span>
                     ) : (
-                      <span className="text-[#6b7781] text-[10px]">NO</span>
+                      <span className="text-muted text-xs">NO</span>
                     )}
                   </span>
                   <span className="col-span-2 text-right">
@@ -228,7 +228,7 @@ export default function ProtocolPage() {
                       href={`https://defillama.com/yields/pool/${pool.pool}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-[11px] text-[#ff6c12] hover:text-[#ff6c12]/80 uppercase tracking-[0.15em] font-semibold transition-all duration-300"
+                      className="text-[13px] text-cta hover:text-cta/80 uppercase tracking-[0.12em] font-semibold transition-all duration-300"
                     >
                       Invest &rarr;
                     </a>

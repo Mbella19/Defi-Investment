@@ -24,13 +24,13 @@ export default function SovereignButton({
   type = "button",
 }: SovereignButtonProps) {
   const baseClasses =
-    "group inline-flex items-center justify-center gap-3 text-[12px] uppercase font-semibold tracking-[0.08em] transition-all duration-300";
+    "group inline-flex items-center justify-center gap-3 text-sm uppercase font-semibold tracking-[0.08em] transition-all duration-300";
 
   const variantClasses = {
-    primary: "bg-[#ff6c12] text-white px-8 py-4 hover:-translate-y-1 hover:shadow-[0_18px_40px_rgba(255,108,18,0.28)]",
-    ghost: "bg-transparent text-[#2a3a46] px-6 py-3 hover:opacity-60",
+    primary: "bg-cta text-white px-8 py-4 hover:-translate-y-1 hover:shadow-[0_18px_40px_rgba(255,108,18,0.28)]",
+    ghost: "bg-transparent text-btn px-6 py-3 hover:opacity-60",
     outline:
-      "bg-transparent border border-[#2a3a46] text-[#2a3a46] px-8 py-4 hover:-translate-y-0.5 hover:bg-[#2a3a46] hover:text-white",
+      "bg-transparent border border-btn text-btn px-8 py-4 hover:-translate-y-0.5 hover:bg-btn hover:text-white",
   };
 
   const classes = `${baseClasses} ${variantClasses[variant]} ${disabled ? "opacity-30 pointer-events-none" : ""} ${className}`;

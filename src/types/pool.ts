@@ -1,3 +1,6 @@
+import type { GoPlusTokenSecurity } from "./goplus";
+import type { TokenMarketData } from "./coingecko";
+
 export interface DefiLlamaPool {
   pool: string;
   chain: string;
@@ -19,6 +22,12 @@ export interface DefiLlamaPool {
   apyPct30D: number | null;
   volumeUsd1d: number | null;
   volumeUsd7d: number | null;
+  // Enrichment fields (optional — filled by pool-aggregator)
+  source?: "defillama" | "beefy";
+  beefyVaultId?: string | null;
+  autoCompound?: boolean;
+  securityData?: GoPlusTokenSecurity | null;
+  tokenMarketData?: TokenMarketData | null;
 }
 
 export interface DefiLlamaChain {
@@ -51,6 +60,7 @@ export interface DefiLlamaProtocol {
   listedAt: number;
   slug: string;
   mcap: number | null;
+  gecko_id: string | null;
 }
 
 export interface ChainOption {

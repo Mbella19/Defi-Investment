@@ -1,44 +1,48 @@
 @import "tailwindcss";
 
-@theme inline {
+@variant dark (&:where(.dark, .dark *));
+
+@theme {
   --color-background: #ececef;
   --color-foreground: #203241;
 
-  /* Surface hierarchy — light grays */
-  --color-surface: #ececef;
-  --color-surface-lowest: #e2e3e7;
+  /* Surfaces */
   --color-surface-low: #f2f3f5;
   --color-surface-container: #ebedf0;
   --color-surface-high: #f8f8fa;
   --color-surface-highest: #ffffff;
-  --color-surface-bright: #ffffff;
-
-  /* Primary — Teal (DeFi brand) */
-  --color-primary: #00D4AA;
-  --color-primary-dim: #00B892;
-  --color-primary-container: #d0f5ec;
-  --color-on-primary: #00110D;
-
-  /* Secondary — Coral */
-  --color-secondary: #ff6887;
-  --color-secondary-dim: #e85570;
-
-  /* Tertiary — Orange (CTA) */
-  --color-tertiary: #ff6c12;
-  --color-tertiary-dim: #e86010;
-
-  /* Error */
-  --color-error: #ff4d4d;
-  --color-error-dim: #cc3333;
 
   /* Text */
   --color-on-surface: #203241;
   --color-on-surface-variant: #43515d;
-  --color-on-background: #203241;
+  --color-muted: #6b7781;
+  --color-label: #45515d;
+  --color-btn: #2a3a46;
 
   /* Borders */
   --color-outline: #d7dade;
   --color-outline-variant: #e2e3e7;
+
+  /* Accent (same in both themes) */
+  --color-accent: #00D4AA;
+  --color-accent-hover: #33DFB8;
+  --color-accent-on: #00110D;
+  --color-cta: #ff6c12;
+  --color-danger: #ff4d4d;
+  --color-coral: #ff6887;
+  --color-lime: #dce61a;
+  --color-cyan: #49c7c8;
+
+  /* Legacy aliases for imports that use old names */
+  --color-primary: #00D4AA;
+  --color-primary-dim: #00B892;
+  --color-secondary: #ff6887;
+  --color-secondary-dim: #e85570;
+  --color-tertiary: #ff6c12;
+  --color-error: #ff4d4d;
+  --color-error-dim: #cc3333;
+  --color-on-primary: #00110D;
+  --color-on-error: #1A0606;
 
   /* Fonts */
   --font-headline: var(--font-inter), "Inter", system-ui, sans-serif;
@@ -65,6 +69,27 @@
   }
 }
 
+/* ====== DARK MODE OVERRIDES ====== */
+.dark {
+  --color-background: #0a0a0b;
+  --color-foreground: #fafafa;
+  --color-surface-low: #111113;
+  --color-surface-container: #16161a;
+  --color-surface-high: #1c1c21;
+  --color-surface-highest: #222228;
+  --color-on-surface: #fafafa;
+  --color-on-surface-variant: #a0a5ad;
+  --color-muted: #6b7781;
+  --color-label: #8a8f98;
+  --color-btn: #d0d4da;
+  --color-outline: #2a2a32;
+  --color-outline-variant: #1e1e24;
+  --color-primary: #00D4AA;
+  --color-primary-dim: #00B892;
+  --color-secondary: #ff6887;
+  --color-error: #ff4d4d;
+}
+
 /* Sharp edges */
 *, *::before, *::after {
   border-radius: 0 !important;
@@ -72,8 +97,8 @@
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 8px; }
-::-webkit-scrollbar-track { background: #ececef; }
-::-webkit-scrollbar-thumb { background: #00D4AA; }
+::-webkit-scrollbar-track { background: var(--color-background); }
+::-webkit-scrollbar-thumb { background: var(--color-accent); }
 
 /* Material Symbols */
 .material-symbols-outlined {
@@ -90,7 +115,7 @@ body {
 }
 
 ::selection {
-  background: #ff6c12;
+  background: var(--color-cta);
   color: white;
 }
 
