@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import dynamic from "next/dynamic";
 import ThemeToggle from "@/components/ThemeToggle";
+import { DEMO_MODE } from "@/lib/demo";
 
 const ConnectButton = dynamic(
   () => import("@/components/wallet/ConnectButton"),
@@ -48,19 +49,19 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-background">
       {/* App Header */}
       <header className="sticky top-0 z-50 border-b border-outline bg-background/80 backdrop-blur-xl">
-        <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between px-4 py-3 sm:px-6 sm:py-4 lg:px-10">
+        <div className="mx-auto flex w-full max-w-[1600px] items-center justify-between px-4 py-3 sm:px-6 sm:py-4 lg:px-10 gap-2">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2 shrink-0">
             <span className="text-[28px] font-black leading-[0.85] tracking-[-0.08em] text-on-surface">
-              ST
+              SIG
             </span>
-            <span className="hidden sm:block text-xs font-medium uppercase leading-[1.1] tracking-[0.02em] text-on-surface">
-              Sovereign<br />Terminal
+            <span className="hidden lg:block text-xs font-medium uppercase leading-[1.1] tracking-[0.02em] text-on-surface">
+              Sovereign<br />Investment Group
             </span>
           </Link>
 
           {/* Desktop Nav */}
-          <nav className="hidden xl:flex items-center gap-0">
+          <nav className="hidden xl:flex items-center gap-0 min-w-0">
             {navItems.map((item) => {
               const isActive =
                 item.href === "/"
@@ -84,11 +85,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </nav>
 
           {/* Right side */}
-          <div className="flex items-center gap-3 sm:gap-4">
-            <div className="flex items-center gap-1.5 text-sm text-on-surface-variant/60">
-              <div className="h-1.5 w-1.5 bg-accent animate-pulse" />
-              <span className="hidden sm:inline">Live</span>
-            </div>
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            {DEMO_MODE ? (
+              <div className="flex items-center gap-1.5 text-sm text-yellow-600 dark:text-yellow-400">
+                <div className="h-1.5 w-1.5 bg-yellow-500 animate-pulse" />
+                <span className="hidden sm:inline font-semibold text-xs">Demo</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 text-sm text-on-surface-variant/60">
+                <div className="h-1.5 w-1.5 bg-accent animate-pulse" />
+                <span className="hidden sm:inline text-xs">Live</span>
+              </div>
+            )}
             <AlertBell />
             <ThemeToggle />
             <div className="hidden sm:block">

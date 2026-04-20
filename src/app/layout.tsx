@@ -17,7 +17,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Sovereign Terminal | DeFi Intelligence",
+  title: "Sovereign Investment Group | DeFi Intelligence",
   description:
     "Institutional-grade DeFi yield analysis powered by AI. Deep research on protocols, risk-adjusted yield scanning, and intelligent investment allocation.",
 };

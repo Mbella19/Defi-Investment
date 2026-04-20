@@ -19,9 +19,9 @@ function calculateMatchScore(pool: DefiLlamaPool, criteria: ScannerCriteria): nu
   else score += 5;
 
   // APY sweet-spot score (0-30 points) - bell curve around ideal target
-  const idealApy = criteria.riskAppetite === "low" ? 6
-    : criteria.riskAppetite === "medium" ? 12
-    : 25;
+  const idealApy = criteria.riskAppetite === "low" ? 2
+    : criteria.riskAppetite === "medium" ? 5.5
+    : 15;
   const apyDistance = Math.abs(apy - idealApy) / idealApy;
   if (apyDistance < 0.2) score += 30;
   else if (apyDistance < 0.4) score += 25;

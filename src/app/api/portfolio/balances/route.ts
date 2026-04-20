@@ -2,6 +2,8 @@ import { fetchAllBalances } from "@/lib/wallet/balance-fetcher";
 import { fetchTokenPrices } from "@/lib/coingecko";
 import { calculatePortfolio } from "@/lib/wallet/portfolio-calculator";
 import { getAllGeckoIds } from "@/lib/wallet/token-lists";
+import { DEMO_MODE } from "@/lib/demo";
+import { DEMO_PORTFOLIO } from "@/lib/demo/mock-portfolio";
 
 export async function POST(request: Request) {
   try {
@@ -9,6 +11,10 @@ export async function POST(request: Request) {
 
     if (!address || typeof address !== "string" || !/^0x[a-fA-F0-9]{40}$/.test(address)) {
       return Response.json({ error: "Invalid Ethereum address" }, { status: 400 });
+    }
+
+    if (DEMO_MODE) {
+      return Response.json({ ...DEMO_PORTFOLIO, address, fetchedAt: new Date().toISOString() });
     }
 
     const normalizedAddress = address as `0x${string}`;

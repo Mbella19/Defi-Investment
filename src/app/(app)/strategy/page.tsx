@@ -9,16 +9,16 @@ import { useActiveStrategies } from "@/hooks/useActiveStrategies";
 import Link from "next/link";
 
 const riskOptions = [
-  { value: "low" as const, label: "Conservative", desc: "Established protocols, high TVL, stablecoins preferred" },
-  { value: "medium" as const, label: "Balanced", desc: "Mix of established and emerging protocols" },
-  { value: "high" as const, label: "Aggressive", desc: "Higher yields, newer protocols, more risk" },
+  { value: "low" as const, label: "Conservative", desc: "1-3% APY — Established protocols, high TVL, stablecoins preferred" },
+  { value: "medium" as const, label: "Balanced", desc: "4-7% APY — Mix of established and emerging protocols" },
+  { value: "high" as const, label: "Aggressive", desc: "8%+ APY — Higher yields, newer protocols, more risk" },
 ];
 
 const apyPresets = [
-  { label: "Safe (2-8%)", min: 2, max: 8 },
-  { label: "Moderate (5-15%)", min: 5, max: 15 },
-  { label: "Growth (10-30%)", min: 10, max: 30 },
-  { label: "Aggressive (20-100%)", min: 20, max: 100 },
+  { label: "Conservative (1-3%)", min: 1, max: 3 },
+  { label: "Balanced (4-7%)", min: 4, max: 7 },
+  { label: "Aggressive (8-20%)", min: 8, max: 20 },
+  { label: "High Risk (20-100%)", min: 20, max: 100 },
   { label: "Full Range (1-500%)", min: 1, max: 500 },
 ];
 
@@ -27,8 +27,8 @@ const budgetPresets = [1000, 5000, 10000, 50000, 100000, 500000];
 export default function StrategyPage() {
   const [budget, setBudget] = useState(10000);
   const [risk, setRisk] = useState<"low" | "medium" | "high">("low");
-  const [apyMin, setApyMin] = useState(2);
-  const [apyMax, setApyMax] = useState(15);
+  const [apyMin, setApyMin] = useState(1);
+  const [apyMax, setApyMax] = useState(3);
   const [assetType, setAssetType] = useState<"stablecoins" | "all">("all");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

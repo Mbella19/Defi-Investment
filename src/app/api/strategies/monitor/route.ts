@@ -1,6 +1,8 @@
 import { getDb } from "@/lib/db";
 import { fetchAllPools, fetchHacks } from "@/lib/defillama";
 import { runMonitorScan } from "@/lib/monitor";
+import { DEMO_MODE } from "@/lib/demo";
+import { buildDemoStrategyScanResponse } from "@/lib/demo/mock-monitor";
 import { DEFAULT_ALERT_CONFIG } from "@/types/portfolio";
 import type { PortfolioPosition } from "@/types/portfolio";
 import type { InvestmentStrategy, StrategyCriteria } from "@/types/strategy";
@@ -19,6 +21,10 @@ export async function POST(request: Request) {
 
     if ((rows as unknown[]).length === 0) {
       return Response.json({ results: [], newAlerts: [] });
+    }
+
+    if (DEMO_MODE) {
+      return Response.json(buildDemoStrategyScanResponse((rows as unknown[]).length));
     }
 
     // Fetch current pool data and hack history

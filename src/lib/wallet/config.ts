@@ -5,7 +5,7 @@ import { http } from "wagmi";
 export const SUPPORTED_CHAINS = [mainnet, arbitrum, optimism, polygon, base, bsc, avalanche] as const;
 
 export const config = getDefaultConfig({
-  appName: "Sovereign Terminal",
+  appName: "Sovereign Investment Group",
   projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "demo",
   chains: [mainnet, arbitrum, optimism, polygon, base, bsc, avalanche],
   transports: {

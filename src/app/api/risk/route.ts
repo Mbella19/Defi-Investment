@@ -1,5 +1,7 @@
 import { fetchPoolHistory } from "@/lib/defillama";
 import { runFullRiskAnalysis } from "@/lib/risk-models";
+import { DEMO_MODE } from "@/lib/demo";
+import { DEMO_RISK_RESULT } from "@/lib/demo/mock-risk";
 import type { PoolHistoryPoint } from "@/types/risk-models";
 
 export async function POST(request: Request) {
@@ -9,6 +11,10 @@ export async function POST(request: Request) {
 
     if (!allocations || !Array.isArray(allocations) || allocations.length === 0) {
       return Response.json({ error: "No allocations provided" }, { status: 400 });
+    }
+
+    if (DEMO_MODE) {
+      return Response.json({ ...DEMO_RISK_RESULT, var: { ...DEMO_RISK_RESULT.var, portfolioValue: portfolioValue || 10_000 } });
     }
 
     // Fetch pool histories in parallel

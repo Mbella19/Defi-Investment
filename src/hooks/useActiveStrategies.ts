@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import type { ActiveStrategy, StrategyAlert } from "@/types/active-strategy";
 import type { InvestmentStrategy, StrategyCriteria } from "@/types/strategy";
+import { addPosition } from "@/lib/storage";
+import type { PortfolioPosition } from "@/types/portfolio";
 
 export function useActiveStrategies(walletAddress?: string | null) {
   const [strategies, setStrategies] = useState<ActiveStrategy[]>([]);
@@ -41,6 +43,24 @@ export function useActiveStrategies(walletAddress?: string | null) {
     });
     if (!res.ok) throw new Error("Failed to activate strategy");
     const data = await res.json();
+
+    // Also add allocations as positions in localStorage for the Monitor page
+    for (const alloc of strategy.allocations) {
+      const pos: PortfolioPosition = {
+        id: `${data.id}-${alloc.poolId}`,
+        poolId: alloc.poolId,
+        protocol: alloc.protocol,
+        chain: alloc.chain,
+        symbol: alloc.symbol,
+        investedAmount: alloc.allocationAmount,
+        entryApy: alloc.apy,
+        entryTvl: alloc.tvl,
+        entryDate: new Date().toISOString(),
+        riskAppetite: criteria.riskAppetite,
+      };
+      addPosition(pos);
+    }
+
     await fetchStrategies();
     return data;
   }, [fetchStrategies]);

@@ -1,5 +1,7 @@
 import { fetchAllPools, fetchHacks } from "@/lib/defillama";
 import { runMonitorScan } from "@/lib/monitor";
+import { DEMO_MODE } from "@/lib/demo";
+import { buildDemoMonitorResponse } from "@/lib/demo/mock-monitor";
 import type { PortfolioPosition, AlertConfig } from "@/types/portfolio";
 
 export async function POST(request: Request) {
@@ -12,6 +14,10 @@ export async function POST(request: Request) {
 
     if (!positions || positions.length === 0) {
       return Response.json({ alerts: [], positions: [] });
+    }
+
+    if (DEMO_MODE) {
+      return Response.json(buildDemoMonitorResponse(positions));
     }
 
     const [allPools, hacks] = await Promise.all([

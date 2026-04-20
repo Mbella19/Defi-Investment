@@ -600,8 +600,8 @@ function Footer() {
         </div>
 
         <div className="mt-16 flex flex-col gap-4 border-t border-outline pt-6 text-[13px] text-muted md:flex-row md:items-center md:justify-between">
-          <p>Sovereign Terminal — Institutional DeFi intelligence for everyone.</p>
-          <p>2025 Sovereign Terminal. All rights reserved.</p>
+          <p>Sovereign Investment Group — Institutional DeFi intelligence for everyone.</p>
+          <p>2025 Sovereign Investment Group. All rights reserved.</p>
         </div>
       </motion.div>
     </section>

@@ -1,4 +1,6 @@
 import { generateStrategy } from "@/lib/strategist";
+import { DEMO_MODE } from "@/lib/demo";
+import { DEMO_STRATEGY } from "@/lib/demo/mock-strategy";
 import type { StrategyCriteria } from "@/types/strategy";
 
 export async function POST(request: Request) {
@@ -10,6 +12,11 @@ export async function POST(request: Request) {
     }
     if (!criteria.targetApyMin || !criteria.targetApyMax || criteria.targetApyMin >= criteria.targetApyMax) {
       return Response.json({ error: "Invalid APY range" }, { status: 400 });
+    }
+
+    if (DEMO_MODE) {
+      const scaled = { ...DEMO_STRATEGY, projectedYearlyReturn: criteria.budget * (DEMO_STRATEGY.projectedApy / 100), generatedAt: new Date().toISOString(), allocations: DEMO_STRATEGY.allocations.map((a) => ({ ...a, allocationAmount: criteria.budget * (a.allocationPercent / 100) })) };
+      return Response.json({ strategy: scaled, poolsScanned: 847, protocolsAnalyzed: 42, protocolsDeepAnalyzed: 5 });
     }
 
     const result = await generateStrategy(criteria);
