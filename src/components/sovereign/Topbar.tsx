@@ -1,26 +1,22 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import dynamic from "next/dynamic";
+import { Icons } from "./Icons";
 
 const ConnectButton = dynamic(
   () => import("@/components/wallet/ConnectButton"),
   {
     ssr: false,
     loading: () => (
-      <span
-        className="mono"
-        style={{
-          fontSize: 11,
-          letterSpacing: "0.14em",
-          color: "var(--text-dim)",
-          padding: "6px 14px",
-          border: "1px solid var(--line-2)",
-        }}
+      <button
+        className="btn btn-primary btn-sm"
+        style={{ opacity: 0.6, pointerEvents: "none" }}
+        type="button"
       >
-        CONNECT
-      </span>
+        Connect wallet
+      </button>
     ),
   },
 );
@@ -29,101 +25,104 @@ const AlertBell = dynamic(() => import("@/components/notifications/AlertBell"), 
   ssr: false,
 });
 
-const LABELS: Record<string, string> = {
-  "/": "SOVEREIGN / OVERVIEW",
-  "/discover": "SOVEREIGN / DISCOVER",
-  "/portfolio": "SOVEREIGN / PORTFOLIO",
-  "/security": "SOVEREIGN / SECURITY",
-  "/tools": "SOVEREIGN / TOOLS",
+const CRUMBS: Record<string, string[]> = {
+  "/": ["Home"],
+  "/discover": ["Home", "Discover"],
+  "/portfolio": ["Home", "Portfolio"],
+  "/security": ["Home", "Security"],
+  "/tools": ["Home", "Tools"],
 };
 
-function labelFor(pathname: string): string {
-  if (LABELS[pathname]) return LABELS[pathname];
+function crumbsFor(pathname: string): string[] {
+  if (CRUMBS[pathname]) return CRUMBS[pathname];
   const seg = pathname.split("/").filter(Boolean)[0] ?? "";
-  return `SOVEREIGN / ${seg.toUpperCase() || "OVERVIEW"}`;
+  if (!seg) return ["Home"];
+  return ["Home", seg.charAt(0).toUpperCase() + seg.slice(1)];
 }
 
 export function Topbar({ extra }: { extra?: ReactNode }) {
   const pathname = usePathname() ?? "/";
-  const [time, setTime] = useState<Date | null>(null);
-
-  useEffect(() => {
-    setTime(new Date());
-    const id = setInterval(() => setTime(new Date()), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  const clock = time
-    ? time.toLocaleTimeString("en-GB", { hour12: false, timeZone: "UTC" })
-    : "--:--:--";
+  const breadcrumb = crumbsFor(pathname);
 
   return (
-    <div
+    <header
+      className="sovereign-topbar"
       style={{
+        height: 60,
+        padding: "0 24px",
+        flexShrink: 0,
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "14px 32px",
         borderBottom: "1px solid var(--line)",
-        background: "color-mix(in oklch, var(--surface) 70%, transparent)",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
+        background: "var(--glass-bg)",
+        backdropFilter: "blur(var(--glass-blur))",
+        WebkitBackdropFilter: "blur(var(--glass-blur))",
         position: "sticky",
         top: 0,
         zIndex: 30,
-        fontSize: 11,
-        letterSpacing: "0.12em",
-        textTransform: "uppercase",
-        color: "var(--text-dim)",
         gap: 16,
       }}
-      className="mono"
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 20, minWidth: 0 }}>
-        <span style={{ color: "var(--text)", whiteSpace: "nowrap" }}>
-          {labelFor(pathname)}
-        </span>
-        <span style={{ color: "var(--line-2)" }}>/</span>
-        <span className="tabular" style={{ whiteSpace: "nowrap" }}>
-          {clock} UTC
-        </span>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+        {breadcrumb.map((seg, i) => (
+          <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+            {i > 0 ? <Icons.chevR size={12} style={{ color: "var(--text-muted)" }} /> : null}
+            <span
+              style={{
+                fontSize: 13.5,
+                color: i === breadcrumb.length - 1 ? "var(--text)" : "var(--text-dim)",
+                fontWeight: i === breadcrumb.length - 1 ? 500 : 400,
+              }}
+            >
+              {seg}
+            </span>
+          </span>
+        ))}
         {extra}
       </div>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 18,
-          flexShrink: 0,
-          whiteSpace: "nowrap",
-        }}
-      >
-        <span
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+        <button
+          type="button"
+          className="topbar-search hide-lt-1100"
           style={{
-            display: "inline-flex",
+            display: "flex",
             alignItems: "center",
-            gap: 8,
+            gap: 10,
+            padding: "7px 12px",
+            borderRadius: 10,
+            background: "var(--surface-2)",
+            border: "1px solid var(--line)",
+            width: 280,
+            color: "var(--text-dim)",
+            fontSize: 12.5,
+            cursor: "pointer",
+            fontFamily: "inherit",
           }}
         >
-          <span
-            style={{
-              width: 6,
-              height: 6,
-              background: "var(--good)",
-              borderRadius: "50%",
-              boxShadow: "0 0 8px var(--good)",
-              animation: "blink 2s infinite",
-            }}
-          />
-          LIVE · DEFILLAMA
-        </span>
-        <span style={{ color: "var(--line-2)" }}>·</span>
-        <span>CLAUDE OPUS 4.7</span>
-        <span style={{ color: "var(--line-2)" }}>·</span>
+          <Icons.search size={14} />
+          <span>Search pools, tokens, chains…</span>
+          <span style={{ marginLeft: "auto", display: "flex", gap: 3 }}>
+            <kbd
+              className="mono"
+              style={{
+                fontSize: 10,
+                padding: "1px 6px",
+                borderRadius: 5,
+                background: "var(--surface)",
+                border: "1px solid var(--line-2)",
+                color: "var(--text-2)",
+              }}
+            >
+              ⌘K
+            </kbd>
+          </span>
+        </button>
         <AlertBell />
         <ConnectButton />
       </div>
-    </div>
+    </header>
   );
 }
 

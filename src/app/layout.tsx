@@ -1,31 +1,24 @@
 import type { Metadata } from "next";
-import { Fraunces, Geist_Mono, Inter } from "next/font/google";
+import { Geist_Mono, Inter } from "next/font/google";
 import ThemeProvider from "@/components/ThemeProvider";
 import "./globals.css";
-
-const fraunces = Fraunces({
-  variable: "--font-fraunces",
-  subsets: ["latin"],
-  style: ["normal", "italic"],
-  axes: ["SOFT", "WONK", "opsz"],
-});
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
+  weight: ["400", "500", "600", "700"],
 });
 
 const inter = Inter({
   variable: "--font-inter",
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700", "800", "900"],
+  weight: ["400", "500", "600", "700"],
 });
 
 export const metadata: Metadata = {
-  title: "Sovereign · Orbital Intelligence Terminal",
+  title: "Sovereign Investment Group",
   description:
-    "Institutional-grade DeFi yield intelligence. Deep research on protocols, risk-adjusted yield scanning, and sovereign investment allocation — powered by Claude Opus 4.7.",
+    "On-chain yield, priced honestly. SIG scores every DeFi pool on live TVL, audit posture, oracle health, and capital stickiness.",
 };
 
 export default function RootLayout({
@@ -34,10 +27,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body
-        className={`${fraunces.variable} ${geistMono.variable} ${inter.variable} noise`}
-      >
+    <html lang="en" data-theme="light" suppressHydrationWarning>
+      <body className={`${geistMono.variable} ${inter.variable}`}>
         <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>

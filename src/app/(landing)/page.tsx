@@ -1,514 +1,634 @@
 import Link from "next/link";
-import { Eyebrow, Icons } from "@/components/sovereign";
-import OrbitalHero from "@/components/landing/OrbitalHero";
-import LandingTicker from "@/components/landing/LandingTicker";
+import {
+  Icons,
+  Monogram,
+  YieldTape,
+  HeroChart,
+  TokenGlyph,
+} from "@/components/sovereign";
 
-const EVIDENCE = [
-  { n: "AUDITS", v: "6", d: "OpenZeppelin, Trail of Bits, Certora." },
-  { n: "TEAM", v: "KYC", d: "Doxxed founders, public ownership." },
-  { n: "TVL HALF-LIFE", v: "427d", d: "Capital stickiness vs. mercenary TVL." },
-  { n: "EXPLOITS", v: "0", d: "Post-mortems of historical incidents." },
-  { n: "GOVERNANCE", v: "ON-CHAIN", d: "Time-locked multisig, public votes." },
-  { n: "ORACLE", v: "CHAINLINK", d: "Primary and fallback feed analysis." },
-];
-
-const SUITE = [
+const TOOLS = [
   {
     k: "01",
-    n: "Auto-Strategist",
-    d: "Specify budget, risk, APY band. Receive an allocation grounded in live analysis.",
-    href: "/strategy",
+    n: "Scan",
+    d: "Filter thousands of pools by chain, token, TVL floor, and risk band. Sort by APY, safety, or TVL half-life.",
+    cta: "Open Scanner",
+    href: "/discover",
+    accent: false,
+    icon: Icons.search,
   },
   {
     k: "02",
-    n: "Vault Explorer",
-    d: "Ten thousand pools filtered by safety, chain, token, term.",
-    href: "/results",
+    n: "Score",
+    d: "A transparent 0–100 score per protocol across six axes. Every component is sourced, dated, and appealable.",
+    cta: "View Methodology",
+    href: "#method",
+    accent: true,
+    icon: Icons.shield,
   },
   {
     k: "03",
-    n: "Portfolio",
-    d: "Unified view of active sleeves, rebalance windows, projected yield curves.",
+    n: "Monitor",
+    d: "Watch positions and a watchlist in real time. Alerts fire on APY drops, TVL exodus, governance moves, or incidents.",
+    cta: "See Monitor",
     href: "/portfolio",
+    accent: false,
+    icon: Icons.activity,
   },
-  {
-    k: "04",
-    n: "Risk Lab",
-    d: "VaR, Sharpe, stress tests, correlation matrices. Quantitative clarity.",
-    href: "/risk",
-  },
-  {
-    k: "05",
-    n: "Live Monitor",
-    d: "APY shifts, TVL guardrails, exploit feeds. Action before headlines.",
-    href: "/monitor",
-  },
-  {
-    k: "06",
-    n: "Comparator",
-    d: "Three strategies, three risk profiles, side by side.",
-    href: "/compare",
-  },
-];
-
-const STATS = [
-  ["10,420", "POOLS INDEXED"],
-  ["$42.8B", "TVL TRACKED"],
-  ["3,104", "DEEP ANALYSES"],
-  ["92 / 100", "AVG SAFETY"],
 ] as const;
 
-const FOOTER_COLUMNS: Array<[string, Array<[string, string]>]> = [
-  [
-    "PLATFORM",
-    [
-      ["Strategy", "/strategy"],
-      ["Vaults", "/results"],
-      ["Portfolio", "/portfolio"],
-      ["Risk Lab", "/risk"],
-    ],
-  ],
-  [
-    "DATA",
-    [
-      ["DeFiLlama", "#"],
-      ["Chainlink", "#"],
-      ["Etherscan", "#"],
-      ["Immunefi", "#"],
-    ],
-  ],
-  [
-    "LEGAL",
-    [
-      ["Method", "#"],
-      ["Disclosures", "#"],
-      ["Contact", "#"],
-      ["© 2026", "#"],
-    ],
-  ],
+const AXES = [
+  { n: "Code", s: "Etherscan, GitHub", w: 22 },
+  { n: "Audits", s: "Direct disclosure", w: 18 },
+  { n: "Oracles", s: "Chainlink, Pyth registries", w: 15 },
+  { n: "Governance", s: "On-chain timelock, multisig", w: 15 },
+  { n: "Liquidity", s: "TVL half-life", w: 15 },
+  { n: "History", s: "Immunefi, REKT", w: 15 },
 ];
 
 export default function LandingPage() {
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)", position: "relative", overflow: "hidden" }}>
-      <header
+    <div
+      style={{
+        background: "var(--bg)",
+        minHeight: "100vh",
+        position: "relative",
+        overflowX: "hidden",
+      }}
+    >
+      <div
+        className="orb"
         style={{
-          padding: "24px 48px",
+          top: -120,
+          left: -140,
+          width: 420,
+          height: 420,
+          background: "color-mix(in oklch, var(--accent) 32%, transparent)",
+        }}
+      />
+      <div
+        className="orb"
+        style={{
+          top: 40,
+          right: -120,
+          width: 380,
+          height: 380,
+          background: "color-mix(in oklch, var(--text) 8%, transparent)",
+          opacity: 0.5,
+        }}
+      />
+
+      <nav
+        style={{
+          position: "relative",
+          zIndex: 2,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          position: "relative",
-          zIndex: 10,
-          gap: 24,
+          padding: "18px 48px",
+          gap: 16,
           flexWrap: "wrap",
         }}
       >
         <Link
           href="/"
-          style={{ display: "flex", alignItems: "center", gap: 14, textDecoration: "none", color: "var(--text)" }}
-        >
-          <span
-            style={{
-              width: 10,
-              height: 10,
-              background: "var(--accent)",
-              borderRadius: "50%",
-              boxShadow: "0 0 12px var(--accent)",
-            }}
-          />
-          <span className="serif" style={{ fontSize: 22, fontWeight: 900, letterSpacing: "-0.04em" }}>
-            Sovereign
-          </span>
-          <span
-            className="mono"
-            style={{
-              fontSize: 10,
-              letterSpacing: "0.2em",
-              color: "var(--text-dim)",
-              textTransform: "uppercase",
-              paddingTop: 6,
-            }}
-          >
-            Investment Group
-          </span>
-        </Link>
-        <nav
-          className="mono"
           style={{
             display: "flex",
-            gap: 40,
-            fontSize: 11,
-            letterSpacing: "0.15em",
-            textTransform: "uppercase",
+            alignItems: "center",
+            gap: 12,
+            textDecoration: "none",
+            color: "var(--text)",
           }}
         >
-          <a href="#intel" style={{ color: "var(--text-dim)", textDecoration: "none" }}>
-            Intelligence
-          </a>
-          <a href="#suite" style={{ color: "var(--text-dim)", textDecoration: "none" }}>
-            Suite
-          </a>
-          <a href="#trust" style={{ color: "var(--text-dim)", textDecoration: "none" }}>
-            Trust
-          </a>
-        </nav>
-        <div style={{ display: "flex", gap: 10 }}>
-          <Link className="btn" href="/discover">
-            Open App
-          </Link>
-          <Link className="btn btn-primary" href="/discover">
-            Launch Terminal <Icons.arrow />
-          </Link>
-        </div>
-      </header>
+          <Monogram size={34} />
+          <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.08 }}>
+            <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.015em" }}>Sovereign</span>
+            <span
+              className="mono"
+              style={{ fontSize: 9.5, color: "var(--text-dim)", letterSpacing: "0.12em", marginTop: 2 }}
+            >
+              INVESTMENT GROUP
+            </span>
+          </div>
+        </Link>
 
-      <section style={{ padding: "40px 48px 80px", position: "relative", maxWidth: 1600, margin: "0 auto" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1.05fr 1fr", gap: 40, alignItems: "center" }}>
-          <div className="fadeUp">
-            <Eyebrow>ORBITAL INTELLIGENCE · V4.2</Eyebrow>
-            <h1
-              className="serif"
+        <div
+          className="landing-pills"
+          style={{
+            display: "flex",
+            gap: 2,
+            alignItems: "center",
+            padding: 5,
+            background: "var(--glass-bg)",
+            backdropFilter: "blur(var(--glass-blur))",
+            WebkitBackdropFilter: "blur(var(--glass-blur))",
+            borderRadius: 999,
+            border: "1px solid var(--line)",
+            boxShadow: "var(--shadow-xs)",
+          }}
+        >
+          {[
+            { l: "Discover", h: "/discover" },
+            { l: "Portfolio", h: "/portfolio" },
+            { l: "Security", h: "/security" },
+            { l: "Method", h: "#method" },
+            { l: "Tools", h: "/tools" },
+          ].map((n) => (
+            <Link
+              key={n.l}
+              href={n.h}
               style={{
-                fontSize: "clamp(56px, 7vw, 112px)",
-                fontWeight: 900,
-                lineHeight: 0.92,
-                letterSpacing: "-0.055em",
-                margin: "28px 0",
-                color: "var(--text)",
+                padding: "7px 14px",
+                fontSize: 13,
+                color: "var(--text-2)",
+                borderRadius: 999,
+                fontWeight: 450,
+                textDecoration: "none",
               }}
             >
-              The sovereign
+              {n.l}
+            </Link>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <Link className="btn btn-sm btn-ghost" href="/discover">
+            Sign in
+          </Link>
+          <Link className="btn btn-primary btn-sm" href="/discover">
+            Open app <Icons.arrow size={13} />
+          </Link>
+        </div>
+      </nav>
+
+      <section
+        style={{
+          position: "relative",
+          padding: "56px 48px 48px",
+          maxWidth: 1340,
+          margin: "0 auto",
+        }}
+      >
+        <div
+          className="landing-hero-grid"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1.08fr 1fr",
+            gap: 64,
+            alignItems: "center",
+          }}
+        >
+          <div>
+            <span
+              className="chip accent mono"
+              style={{ marginBottom: 28, display: "inline-flex" }}
+            >
+              <span className="dot accent pulse-dot" /> LIVE · 9 POOLS ON THE TAPE
+            </span>
+            <h1
+              className="display"
+              style={{
+                fontSize: "clamp(44px, 6vw, 76px)",
+                fontWeight: 600,
+                lineHeight: 0.96,
+                letterSpacing: "-0.04em",
+                margin: "0 0 22px",
+                textWrap: "balance",
+              }}
+            >
+              On-chain yield,
               <br />
-              terminal for
-              <br />
-              <em
+              <span
                 style={{
-                  color: "var(--accent)",
                   fontStyle: "italic",
-                  fontWeight: 400,
+                  fontWeight: 500,
+                  color: "var(--text)",
+                  background:
+                    "linear-gradient(180deg, var(--text) 60%, var(--accent) 60%)",
+                  WebkitBackgroundClip: "text",
+                  backgroundClip: "text",
                 }}
               >
-                on-chain yield.
-              </em>
+                priced honestly.
+              </span>
             </h1>
             <p
               style={{
-                fontSize: 17,
-                lineHeight: 1.55,
-                color: "var(--text-dim)",
+                fontSize: 18,
+                lineHeight: 1.5,
+                color: "var(--text-2)",
                 maxWidth: 520,
-                margin: "0 0 40px",
+                margin: "0 0 32px",
               }}
             >
-              Ten thousand pools. One hundred and twenty chains. A single AI core that scores every protocol for
-              legitimacy, stress-tests your allocation, and returns a risk-adjusted strategy in minutes — not weeks.
+              SIG scores every DeFi pool on live TVL, audit posture, oracle health, and capital
+              stickiness — so you can size risk before you size a position.
             </p>
             <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-              <Link className="btn btn-primary" href="/discover">
-                Enter Terminal <Icons.arrow />
+              <Link className="btn btn-primary btn-lg" href="/discover">
+                Scan for yield <Icons.arrow size={14} />
               </Link>
-              <Link className="btn" href="#intel">
+              <Link className="btn btn-lg" href="#method">
                 Read the method
               </Link>
+              <span style={{ fontSize: 12.5, color: "var(--text-dim)", marginLeft: 4 }}>
+                No wallet required to browse.
+              </span>
             </div>
+
             <div
               style={{
-                marginTop: 56,
-                display: "grid",
-                gridTemplateColumns: "repeat(4, 1fr)",
-                gap: 0,
-                borderTop: "1px solid var(--line)",
-                paddingTop: 24,
+                marginTop: 40,
+                display: "flex",
+                alignItems: "center",
+                gap: 14,
+                flexWrap: "wrap",
               }}
             >
-              {STATS.map(([v, l]) => (
-                <div key={l} style={{ borderLeft: "1px solid var(--line)", paddingLeft: 18 }}>
-                  <div
-                    className="serif"
-                    style={{ fontSize: 28, fontWeight: 900, letterSpacing: "-0.04em" }}
-                  >
-                    {v}
-                  </div>
-                  <div
-                    className="mono"
-                    style={{
-                      fontSize: 9,
-                      letterSpacing: "0.2em",
-                      color: "var(--text-dim)",
-                      marginTop: 4,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    {l}
-                  </div>
-                </div>
-              ))}
+              <span className="eyebrow">SOURCES</span>
+              <div style={{ height: 1, flex: "0 0 20px", background: "var(--line)" }} />
+              <span
+                style={{
+                  fontSize: 12,
+                  color: "var(--text-2)",
+                  display: "flex",
+                  gap: 16,
+                  flexWrap: "wrap",
+                }}
+              >
+                <span>DeFiLlama</span>
+                <span style={{ color: "var(--line-2)" }}>/</span>
+                <span>Etherscan</span>
+                <span style={{ color: "var(--line-2)" }}>/</span>
+                <span>Chainlink</span>
+                <span style={{ color: "var(--line-2)" }}>/</span>
+                <span>Immunefi</span>
+                <span style={{ color: "var(--line-2)" }}>/</span>
+                <span>REKT</span>
+              </span>
             </div>
           </div>
-          <OrbitalHero />
+
+          <div style={{ position: "relative" }}>
+            <div
+              className="landing-hero-card-peek"
+              style={{
+                position: "absolute",
+                top: 36,
+                right: -18,
+                width: 280,
+                padding: 16,
+                background: "var(--surface-2)",
+                border: "1px solid var(--line)",
+                borderRadius: 18,
+                boxShadow: "var(--shadow-sm)",
+                transform: "rotate(3deg)",
+                zIndex: 0,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                <TokenGlyph sym="sDAI" size={26} tone="accent" />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>sDAI</div>
+                  <div style={{ fontSize: 11, color: "var(--text-dim)" }}>Spark · Ethereum</div>
+                </div>
+                <span className="chip good mono" style={{ marginLeft: "auto", fontSize: 10 }}>
+                  A+ 90
+                </span>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "baseline",
+                  marginBottom: 4,
+                }}
+              >
+                <span className="eyebrow" style={{ fontSize: 9.5 }}>APY</span>
+                <span className="num" style={{ fontSize: 20, fontWeight: 500 }}>8.75%</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <span className="eyebrow" style={{ fontSize: 9.5 }}>TVL</span>
+                <span className="num" style={{ fontSize: 13, color: "var(--text-1)" }}>$1.42B</span>
+              </div>
+            </div>
+
+            <div style={{ position: "relative", zIndex: 1 }}>
+              <HeroChart />
+            </div>
+
+            <div
+              style={{
+                position: "absolute",
+                bottom: -20,
+                left: -20,
+                padding: "10px 14px",
+                background: "var(--surface)",
+                border: "1px solid var(--line)",
+                borderRadius: 14,
+                boxShadow: "var(--shadow-sm)",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                maxWidth: 240,
+                zIndex: 2,
+              }}
+            >
+              <span
+                style={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: 8,
+                  background: "var(--accent-soft)",
+                  color: "var(--accent)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <Icons.shield size={15} />
+              </span>
+              <div style={{ fontSize: 11.5, color: "var(--text-2)", lineHeight: 1.35 }}>
+                <span style={{ color: "var(--text)", fontWeight: 500 }}>127 incidents</span> logged
+                <br />
+                and linked to source
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
-      <LandingTicker />
+      <YieldTape />
 
       <section
-        id="intel"
-        style={{ padding: "120px 48px", maxWidth: 1600, margin: "0 auto" }}
+        style={{
+          padding: "96px 48px 72px",
+          maxWidth: 1340,
+          margin: "0 auto",
+        }}
       >
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: 80, alignItems: "start" }}>
-          <div>
-            <Eyebrow>01 · THE METHOD</Eyebrow>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-end",
+            marginBottom: 40,
+            gap: 32,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ maxWidth: 680 }}>
+            <div className="eyebrow">WHAT IT DOES</div>
             <h2
-              className="serif"
+              className="display"
               style={{
-                fontSize: 68,
-                fontWeight: 900,
-                letterSpacing: "-0.04em",
-                lineHeight: 0.95,
-                margin: "24px 0",
+                fontSize: "clamp(32px, 4.2vw, 48px)",
+                margin: "12px 0 0",
+                letterSpacing: "-0.035em",
+                lineHeight: 1.02,
+                textWrap: "balance",
               }}
             >
-              Evidence.
-              <br />
-              Not{" "}
-              <em style={{ color: "var(--accent)", fontStyle: "italic", fontWeight: 400 }}>
-                vibes.
-              </em>
+              Three tools.{" "}
+              <span style={{ color: "var(--text-dim)" }}>One source of truth.</span>
             </h2>
-            <p style={{ color: "var(--text-dim)", lineHeight: 1.6, fontSize: 15, maxWidth: 400 }}>
-              Every protocol in your allocation is scored across six legitimacy axes. Nothing enters the portfolio
-              without a paper trail.
-            </p>
           </div>
-          <div
+          <p
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(3, 1fr)",
-              gap: "1px",
-              background: "var(--line)",
+              fontSize: 14,
+              color: "var(--text-2)",
+              maxWidth: 340,
+              lineHeight: 1.55,
+              margin: 0,
             }}
           >
-            {EVIDENCE.map((c) => (
-              <div
-                key={c.n}
-                style={{ background: "var(--surface)", padding: 32, minHeight: 180 }}
+            Every score, chart, and alert links back to its primary source. No vibes, no fake
+            leaderboards, no made-up partnerships.
+          </p>
+        </div>
+
+        <div
+          className="landing-tools-grid"
+          style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20 }}
+        >
+          {TOOLS.map((c) => {
+            const Ic = c.icon;
+            return (
+              <Link
+                key={c.k}
+                href={c.href}
+                style={{
+                  padding: 28,
+                  background: c.accent ? "var(--text)" : "var(--surface)",
+                  color: c.accent ? "var(--bg)" : "var(--text)",
+                  border: "1px solid " + (c.accent ? "var(--text)" : "var(--line)"),
+                  borderRadius: 20,
+                  boxShadow: c.accent ? "var(--shadow-md)" : "var(--shadow-xs)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 18,
+                  minHeight: 260,
+                  position: "relative",
+                  overflow: "hidden",
+                  textDecoration: "none",
+                }}
               >
+                {c.accent ? (
+                  <span
+                    style={{
+                      position: "absolute",
+                      top: -40,
+                      right: -40,
+                      width: 180,
+                      height: 180,
+                      borderRadius: "50%",
+                      background: "color-mix(in oklch, var(--accent) 40%, transparent)",
+                      filter: "blur(40px)",
+                    }}
+                  />
+                ) : null}
                 <div
-                  className="mono"
                   style={{
-                    fontSize: 9,
-                    letterSpacing: "0.2em",
-                    color: "var(--text-dim)",
-                    marginBottom: 16,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    position: "relative",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: 12,
+                      background: c.accent ? "var(--accent)" : "var(--accent-soft)",
+                      color: c.accent ? "var(--accent-ink)" : "var(--accent)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      border: c.accent
+                        ? "0"
+                        : "1px solid color-mix(in oklch, var(--accent) 28%, transparent)",
+                    }}
+                  >
+                    <Ic size={20} />
+                  </span>
+                  <span
+                    className="mono"
+                    style={{
+                      fontSize: 11,
+                      color: c.accent
+                        ? "color-mix(in oklch, var(--bg) 60%, transparent)"
+                        : "var(--text-dim)",
+                      letterSpacing: "0.06em",
+                    }}
+                  >
+                    {c.k} / 03
+                  </span>
+                </div>
+                <div
+                  className="display"
+                  style={{
+                    fontSize: 28,
+                    fontWeight: 600,
+                    letterSpacing: "-0.025em",
+                    position: "relative",
                   }}
                 >
                   {c.n}
                 </div>
-                <div
-                  className="serif"
+                <p
                   style={{
-                    fontSize: 32,
-                    fontWeight: 700,
-                    color: "var(--accent)",
-                    letterSpacing: "-0.03em",
-                    marginBottom: 16,
+                    fontSize: 14,
+                    lineHeight: 1.55,
+                    margin: 0,
+                    flex: 1,
+                    position: "relative",
+                    color: c.accent
+                      ? "color-mix(in oklch, var(--bg) 72%, transparent)"
+                      : "var(--text-2)",
                   }}
                 >
-                  {c.v}
-                </div>
-                <div style={{ fontSize: 13, color: "var(--text-dim)", lineHeight: 1.55 }}>
                   {c.d}
-                </div>
-              </div>
-            ))}
-          </div>
+                </p>
+                <span
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 500,
+                    color: c.accent ? "var(--accent)" : "var(--text)",
+                    display: "inline-flex",
+                    gap: 7,
+                    alignItems: "center",
+                    position: "relative",
+                  }}
+                >
+                  {c.cta} <Icons.arrow size={13} />
+                </span>
+              </Link>
+            );
+          })}
         </div>
       </section>
 
       <section
-        id="suite"
-        style={{ padding: "0 48px 120px", maxWidth: 1600, margin: "0 auto" }}
-      >
-        <Eyebrow>02 · THE SUITE</Eyebrow>
-        <h2
-          className="serif"
-          style={{
-            fontSize: 68,
-            fontWeight: 900,
-            letterSpacing: "-0.04em",
-            lineHeight: 0.95,
-            margin: "24px 0 56px",
-            maxWidth: 900,
-          }}
-        >
-          Six instruments.
-          <br />
-          One{" "}
-          <em style={{ color: "var(--accent)", fontStyle: "italic", fontWeight: 400 }}>
-            cockpit.
-          </em>
-        </h2>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
-            gap: "1px",
-            background: "var(--line)",
-          }}
-        >
-          {SUITE.map((s) => (
-            <Link
-              key={s.k}
-              href={s.href}
-              style={{
-                background: "var(--surface)",
-                padding: 40,
-                minHeight: 240,
-                position: "relative",
-                cursor: "pointer",
-                transition: "all 0.4s",
-                textDecoration: "none",
-                color: "var(--text)",
-                display: "block",
-              }}
-            >
-              <div
-                className="mono"
-                style={{
-                  fontSize: 10,
-                  letterSpacing: "0.2em",
-                  color: "var(--accent)",
-                  marginBottom: 24,
-                }}
-              >
-                {s.k} / 06
-              </div>
-              <div
-                className="serif"
-                style={{
-                  fontSize: 32,
-                  fontWeight: 700,
-                  letterSpacing: "-0.03em",
-                  marginBottom: 16,
-                }}
-              >
-                {s.n}
-              </div>
-              <div style={{ fontSize: 14, color: "var(--text-dim)", lineHeight: 1.6 }}>
-                {s.d}
-              </div>
-              <div
-                className="mono"
-                style={{
-                  position: "absolute",
-                  bottom: 40,
-                  left: 40,
-                  fontSize: 11,
-                  color: "var(--text-dim)",
-                  letterSpacing: "0.18em",
-                }}
-              >
-                OPEN →
-              </div>
-            </Link>
-          ))}
-        </div>
-      </section>
-
-      <section
-        id="trust"
-        style={{ padding: "0 48px 120px", maxWidth: 1600, margin: "0 auto" }}
+        id="method"
+        style={{ padding: "24px 48px 80px", maxWidth: 1340, margin: "0 auto" }}
       >
         <div
           style={{
-            border: "1px solid var(--line)",
+            padding: 48,
             background: "var(--surface)",
-            padding: "80px 48px",
-            textAlign: "center",
+            border: "1px solid var(--line)",
+            borderRadius: 24,
+            boxShadow: "var(--shadow-sm)",
             position: "relative",
             overflow: "hidden",
           }}
         >
-          <div
+          <span
             style={{
               position: "absolute",
-              inset: 0,
-              background:
-                "radial-gradient(circle at center, var(--accent-soft), transparent 60%)",
-              opacity: 0.7,
+              top: -80,
+              right: -80,
+              width: 300,
+              height: 300,
+              borderRadius: "50%",
+              background: "color-mix(in oklch, var(--accent) 14%, transparent)",
+              filter: "blur(60px)",
+              pointerEvents: "none",
             }}
           />
-          <div style={{ position: "relative" }}>
-            <div style={{ display: "inline-flex" }}>
-              <Eyebrow>AVERAGE PORTFOLIO SAFETY</Eyebrow>
-            </div>
-            <div
-              className="serif"
-              style={{
-                fontSize: "clamp(96px, 16vw, 200px)",
-                fontWeight: 900,
-                letterSpacing: "-0.08em",
-                lineHeight: 1,
-                color: "var(--accent)",
-                margin: "20px 0",
-              }}
-            >
-              92
-              <span style={{ color: "var(--text-muted)", fontSize: "50%" }}>/100</span>
-            </div>
-            <p style={{ fontSize: 18, color: "var(--text-dim)", maxWidth: 600, margin: "0 auto" }}>
-              Across 3,104 protocols deep-analyzed by the Sovereign core. Updated every block.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <section style={{ padding: "0 48px 80px", maxWidth: 1600, margin: "0 auto" }}>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: 40,
-            alignItems: "end",
-            borderTop: "1px solid var(--line)",
-            paddingTop: 80,
-          }}
-        >
-          <h2
-            className="serif"
+          <div
+            className="landing-method-grid"
             style={{
-              fontSize: "clamp(48px, 6vw, 88px)",
-              fontWeight: 900,
-              letterSpacing: "-0.055em",
-              lineHeight: 0.9,
+              display: "grid",
+              gridTemplateColumns: "1fr 1.7fr",
+              gap: 56,
+              alignItems: "start",
+              position: "relative",
             }}
           >
-            Stop guessing.
-            <br />
-            Start{" "}
-            <em style={{ color: "var(--accent)", fontStyle: "italic", fontWeight: 400 }}>
-              compounding.
-            </em>
-          </h2>
-          <div>
-            <p
+            <div>
+              <div className="eyebrow">HOW SCORING WORKS</div>
+              <h3
+                className="display"
+                style={{
+                  fontSize: "clamp(28px, 3.2vw, 36px)",
+                  margin: "12px 0 18px",
+                  letterSpacing: "-0.03em",
+                  lineHeight: 1.05,
+                }}
+              >
+                Six axes.
+                <br />
+                All sourced.
+                <br />
+                All public.
+              </h3>
+              <p style={{ fontSize: 14.5, color: "var(--text-2)", lineHeight: 1.6, margin: "0 0 22px" }}>
+                SIG doesn&rsquo;t hide behind a proprietary black box. Every component of a
+                protocol&rsquo;s score links to its primary source — Etherscan verification,
+                Immunefi programs, on-chain governance contracts, Chainlink feed registries.
+              </p>
+              <Link className="btn" href="/security">
+                Read full methodology <Icons.external size={13} />
+              </Link>
+            </div>
+
+            <div
+              className="landing-method-axes"
               style={{
-                color: "var(--text-dim)",
-                fontSize: 16,
-                lineHeight: 1.6,
-                marginBottom: 32,
+                display: "grid",
+                gridTemplateColumns: "repeat(3, 1fr)",
+                gap: 1,
+                background: "var(--line)",
+                border: "1px solid var(--line)",
+                borderRadius: 14,
+                overflow: "hidden",
               }}
             >
-              No wallet connection required for analysis. Explore strategies, activate monitoring, or walk
-              away. No fees, no lock-in.
-            </p>
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              <Link className="btn btn-primary" href="/discover">
-                Enter Terminal <Icons.arrow />
-              </Link>
-              <Link className="btn" href="/discover">
-                Browse Vaults
-              </Link>
+              {AXES.map((a) => (
+                <div key={a.n} style={{ background: "var(--surface)", padding: 22, minHeight: 140 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "flex-start",
+                      marginBottom: 16,
+                    }}
+                  >
+                    <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.01em" }}>
+                      {a.n}
+                    </span>
+                    <span className="chip mono" style={{ fontSize: 10 }}>
+                      {a.w}%
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>
+                    {a.s}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -516,75 +636,45 @@ export default function LandingPage() {
 
       <footer
         style={{
-          padding: "60px 48px 40px",
           borderTop: "1px solid var(--line)",
+          padding: "36px 48px",
           background: "var(--surface)",
         }}
       >
         <div
           style={{
-            maxWidth: 1600,
+            maxWidth: 1340,
             margin: "0 auto",
-            display: "grid",
-            gridTemplateColumns: "2fr 1fr 1fr 1fr",
-            gap: 40,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 20,
+            flexWrap: "wrap",
           }}
         >
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-              <div
-                style={{
-                  width: 8,
-                  height: 8,
-                  background: "var(--accent)",
-                  borderRadius: "50%",
-                }}
-              />
-              <div className="serif" style={{ fontSize: 18, fontWeight: 900 }}>
-                Sovereign
-              </div>
-            </div>
-            <div
-              style={{
-                fontSize: 12,
-                color: "var(--text-dim)",
-                maxWidth: 320,
-                lineHeight: 1.55,
-              }}
-            >
-              Institutional-grade DeFi intelligence. Built for allocators who read the docs.
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 14,
+              fontSize: 12,
+              color: "var(--text-dim)",
+            }}
+          >
+            <Monogram size={26} />
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <span style={{ fontSize: 12.5, color: "var(--text-1)", fontWeight: 500 }}>
+                Sovereign Investment Group · 2026
+              </span>
+              <span>Not financial advice. DeFi is experimental.</span>
             </div>
           </div>
-          {FOOTER_COLUMNS.map(([h, arr]) => (
-            <div key={h}>
-              <div
-                className="mono"
-                style={{
-                  fontSize: 9,
-                  letterSpacing: "0.2em",
-                  color: "var(--text-dim)",
-                  marginBottom: 16,
-                }}
-              >
-                {h}
-              </div>
-              {arr.map(([label, href]) => (
-                <Link
-                  key={label}
-                  href={href}
-                  style={{
-                    display: "block",
-                    fontSize: 13,
-                    color: "var(--text)",
-                    marginBottom: 10,
-                    textDecoration: "none",
-                  }}
-                >
-                  {label}
-                </Link>
-              ))}
-            </div>
-          ))}
+          <div style={{ display: "flex", gap: 24, fontSize: 13, color: "var(--text-2)" }}>
+            <span>Docs</span>
+            <span>Method</span>
+            <span>Status</span>
+            <span>GitHub</span>
+          </div>
         </div>
       </footer>
     </div>
