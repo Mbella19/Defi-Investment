@@ -2,21 +2,25 @@
 
 import { useEffect } from "react";
 import { WagmiProvider } from "wagmi";
-import { RainbowKitProvider, darkTheme, lightTheme } from "@rainbow-me/rainbowkit";
+import { RainbowKitProvider, darkTheme } from "@rainbow-me/rainbowkit";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { config } from "@/lib/wallet/config";
-import { useTheme } from "@/components/ThemeProvider";
 import { usePortfolio } from "@/hooks/usePortfolio";
 import { ConnectButton as RainbowConnectButton } from "@rainbow-me/rainbowkit";
+import { Eyebrow, Icons } from "@/components/sovereign";
 import type { PortfolioSummary } from "@/types/wallet";
 import "@rainbow-me/rainbowkit/styles.css";
 
 const queryClient = new QueryClient();
 
-const rkLight = lightTheme({ accentColor: "#00D4AA", accentColorForeground: "#00110D", borderRadius: "none", fontStack: "system" });
-const rkDark = darkTheme({ accentColor: "#00D4AA", accentColorForeground: "#00110D", borderRadius: "none", fontStack: "system" });
-rkDark.colors.modalBackground = "#0a0a0b";
-rkDark.colors.modalBorder = "#2a2a32";
+const rkDark = darkTheme({
+  accentColor: "#5AE4D4",
+  accentColorForeground: "#07080C",
+  borderRadius: "none",
+  fontStack: "system",
+});
+rkDark.colors.modalBackground = "#0D1015";
+rkDark.colors.modalBorder = "#1F2530";
 
 interface Props {
   onPortfolioChange: (p: PortfolioSummary | null) => void;
@@ -31,48 +35,142 @@ function WalletInner({ onPortfolioChange }: Props) {
 
   if (!isConnected) {
     return (
-      <div className="bg-surface-low border border-outline p-4 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <p className="text-sm text-on-surface-variant">
-          Connect your wallet to view your portfolio.
-        </p>
-        <RainbowConnectButton />
+      <div
+        className="brackets"
+        style={{
+          border: "1px solid var(--line)",
+          background: "var(--surface)",
+          padding: 28,
+          display: "flex",
+          flexDirection: "column",
+          gap: 18,
+        }}
+      >
+        <Eyebrow>Wallet Required</Eyebrow>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 16,
+            flexWrap: "wrap",
+          }}
+        >
+          <p
+            style={{
+              fontSize: 13,
+              color: "var(--text-dim)",
+              lineHeight: 1.5,
+              maxWidth: 420,
+            }}
+          >
+            Connect your wallet to pull balances from all 7 supported EVM chains.
+          </p>
+          <RainbowConnectButton />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-surface-low border border-outline p-4 sm:p-8 space-y-4">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+    <div
+      className="brackets"
+      style={{
+        border: "1px solid var(--line)",
+        background: "var(--surface)",
+        padding: 28,
+        display: "flex",
+        flexDirection: "column",
+        gap: 18,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 16,
+          flexWrap: "wrap",
+        }}
+      >
         <div>
-          <span className="text-[13px] font-semibold uppercase tracking-[0.2em] text-label/70 block mb-1">
-            Connected
-          </span>
-          <span className="font-mono text-sm text-on-surface">{address}</span>
+          <Eyebrow>Connected</Eyebrow>
+          <div
+            className="mono"
+            style={{
+              fontSize: 13,
+              color: "var(--text)",
+              marginTop: 8,
+              letterSpacing: "0.03em",
+            }}
+          >
+            {address}
+          </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button
             onClick={refetch}
             disabled={isLoading}
-            className="px-6 py-2.5 text-sm font-semibold uppercase tracking-[0.08em] bg-cta text-white hover:-translate-y-0.5 transition-all disabled:opacity-50"
+            className="mono"
+            style={{
+              padding: "10px 18px",
+              background: isLoading ? "var(--surface-2)" : "var(--accent)",
+              color: isLoading ? "var(--text-dim)" : "var(--bg)",
+              border: `1px solid ${isLoading ? "var(--line)" : "var(--accent)"}`,
+              fontSize: 10,
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              fontWeight: 600,
+              cursor: isLoading ? "not-allowed" : "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+            }}
           >
-            {isLoading ? "Loading..." : "Refresh"}
+            <Icons.refresh />
+            {isLoading ? "Loading…" : "Refresh"}
           </button>
           <RainbowConnectButton />
         </div>
       </div>
       {error && (
-        <div className="bg-danger/10 border border-danger/30 p-3">
-          <p className="text-sm text-danger">{error}</p>
+        <div
+          style={{
+            border: "1px solid var(--danger)",
+            background: "color-mix(in oklab, var(--danger) 10%, transparent)",
+            padding: "12px 16px",
+            color: "var(--danger)",
+            fontSize: 12,
+          }}
+        >
+          {error}
         </div>
       )}
       {isLoading && (
-        <div className="flex items-center gap-3 py-4">
-          <div className="flex gap-1.5">
-            <div className="w-2 h-2 bg-accent animate-pulse" />
-            <div className="w-2 h-2 bg-accent animate-pulse [animation-delay:150ms]" />
-            <div className="w-2 h-2 bg-accent animate-pulse [animation-delay:300ms]" />
-          </div>
-          <p className="text-sm text-on-surface-variant">Fetching balances across 7 chains...</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {[0, 150, 300].map((d) => (
+            <span
+              key={d}
+              style={{
+                width: 6,
+                height: 6,
+                background: "var(--accent)",
+                boxShadow: "0 0 8px var(--accent)",
+                animation: `blink 1.2s ease-in-out ${d}ms infinite`,
+              }}
+            />
+          ))}
+          <span
+            className="mono"
+            style={{
+              fontSize: 10,
+              color: "var(--text-dim)",
+              letterSpacing: "0.14em",
+              textTransform: "uppercase",
+            }}
+          >
+            Fetching balances across 7 chains…
+          </span>
         </div>
       )}
     </div>
@@ -80,12 +178,10 @@ function WalletInner({ onPortfolioChange }: Props) {
 }
 
 export default function WalletPortfolioSection({ onPortfolioChange }: Props) {
-  const { theme } = useTheme();
-
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
-        <RainbowKitProvider theme={theme === "dark" ? rkDark : rkLight}>
+        <RainbowKitProvider theme={rkDark}>
           <WalletInner onPortfolioChange={onPortfolioChange} />
         </RainbowKitProvider>
       </QueryClientProvider>

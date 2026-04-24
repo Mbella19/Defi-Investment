@@ -1,11 +1,9 @@
-import type { PortfolioPosition, AlertConfig, AlertEvent, DEFAULT_ALERT_CONFIG } from "@/types/portfolio";
+import type { PortfolioPosition, AlertConfig, AlertEvent } from "@/types/portfolio";
 import type { DefiLlamaPool } from "@/types/pool";
-import type { HackEntry } from "@/lib/defillama";
 
 export function runMonitorScan(
   positions: PortfolioPosition[],
   currentPools: DefiLlamaPool[],
-  hacks: HackEntry[],
   config: AlertConfig
 ): AlertEvent[] {
   const alerts: AlertEvent[] = [];
@@ -17,7 +15,6 @@ export function runMonitorScan(
   for (const pos of positions) {
     const currentPool = poolMap.get(pos.poolId);
 
-    // APY drop check
     if (currentPool && pos.entryApy > 0) {
       const currentApy = currentPool.apy || 0;
       const dropPercent = ((pos.entryApy - currentApy) / pos.entryApy) * 100;
@@ -57,7 +54,6 @@ export function runMonitorScan(
       }
     }
 
-    // TVL drain check
     if (currentPool && pos.entryTvl > 0) {
       const currentTvl = currentPool.tvlUsd || 0;
       const drainPercent = ((pos.entryTvl - currentTvl) / pos.entryTvl) * 100;
@@ -97,34 +93,6 @@ export function runMonitorScan(
       }
     }
 
-    // Exploit check
-    if (config.exploitAlerts) {
-      const protocolHacks = hacks.filter((h) => {
-        const target = (h.target || h.name || "").toLowerCase();
-        return target.includes(pos.protocol.toLowerCase());
-      });
-
-      const entryTimestamp = new Date(pos.entryDate).getTime() / 1000;
-      const recentHacks = protocolHacks.filter((h) => h.date > entryTimestamp);
-
-      for (const hack of recentHacks) {
-        alerts.push({
-          id: `exploit-${pos.id}-${hack.id || hack.date}`,
-          type: "exploit",
-          severity: "critical",
-          positionId: pos.id,
-          protocol: pos.protocol,
-          symbol: pos.symbol,
-          chain: pos.chain,
-          message: `Protocol was exploited for $${(hack.amount / 1e6).toFixed(2)}M`,
-          detail: `Method: ${hack.technique || "Unknown"}. Date: ${new Date(hack.date * 1000).toLocaleDateString()}`,
-          timestamp: new Date().toISOString(),
-          currentValue: hack.amount,
-        });
-      }
-    }
-
-    // Pool not found
     if (!currentPool) {
       alerts.push({
         id: `missing-${pos.id}`,
@@ -141,7 +109,6 @@ export function runMonitorScan(
     }
   }
 
-  // Sort by severity: critical first
   const order = { critical: 0, warning: 1, info: 2 };
   return alerts.sort((a, b) => order[a.severity] - order[b.severity]);
 }

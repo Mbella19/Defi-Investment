@@ -1,60 +1,106 @@
 @import "tailwindcss";
 
-@variant dark (&:where(.dark, .dark *));
-
 @theme {
-  --color-background: #ececef;
-  --color-foreground: #203241;
-
-  /* Surfaces */
-  --color-surface-low: #f2f3f5;
-  --color-surface-container: #ebedf0;
-  --color-surface-high: #f8f8fa;
-  --color-surface-highest: #ffffff;
+  /* Base */
+  --color-bg: #07080C;
+  --color-surface: #0D1015;
+  --color-surface-2: #12161D;
+  --color-surface-3: #181D25;
+  --color-line: #1F2530;
+  --color-line-2: #2A313D;
 
   /* Text */
-  --color-on-surface: #203241;
-  --color-on-surface-variant: #43515d;
-  --color-muted: #6b7781;
-  --color-label: #45515d;
-  --color-btn: #2a3a46;
+  --color-text: #E8EBF0;
+  --color-text-dim: #8A92A2;
+  --color-text-muted: #555D6D;
 
-  /* Borders */
-  --color-outline: #d7dade;
-  --color-outline-variant: #e2e3e7;
+  /* Accent + semantic */
+  --color-accent: oklch(0.82 0.14 180);
+  --color-accent-soft: oklch(0.82 0.14 180 / 0.12);
+  --color-accent-dim: oklch(0.65 0.12 180);
+  --color-warn: oklch(0.78 0.14 70);
+  --color-danger: oklch(0.65 0.22 25);
+  --color-good: oklch(0.78 0.17 150);
 
-  /* Accent (same in both themes) */
-  --color-accent: #00D4AA;
-  --color-accent-hover: #33DFB8;
-  --color-accent-on: #00110D;
-  --color-cta: #ff6c12;
-  --color-danger: #ff4d4d;
-  --color-coral: #ff6887;
-  --color-lime: #dce61a;
-  --color-cyan: #49c7c8;
+  /* Legacy aliases used by existing imports — mapped onto the new palette */
+  --color-background: #07080C;
+  --color-foreground: #E8EBF0;
+  --color-surface-low: #0D1015;
+  --color-surface-container: #12161D;
+  --color-surface-high: #181D25;
+  --color-surface-highest: #1F2530;
+  --color-on-surface: #E8EBF0;
+  --color-on-surface-variant: #8A92A2;
+  --color-muted: #8A92A2;
+  --color-label: #8A92A2;
+  --color-btn: #E8EBF0;
+  --color-outline: #1F2530;
+  --color-outline-variant: #2A313D;
+  --color-primary: oklch(0.82 0.14 180);
+  --color-primary-dim: oklch(0.65 0.12 180);
+  --color-secondary: oklch(0.65 0.22 25);
+  --color-secondary-dim: oklch(0.55 0.2 25);
+  --color-tertiary: oklch(0.78 0.14 70);
+  --color-error: oklch(0.65 0.22 25);
+  --color-error-dim: oklch(0.55 0.2 25);
+  --color-on-primary: #07080C;
+  --color-on-error: #07080C;
+  --color-cta: oklch(0.82 0.14 180);
+  --color-coral: oklch(0.65 0.22 25);
+  --color-lime: oklch(0.78 0.17 150);
+  --color-cyan: oklch(0.82 0.14 180);
 
-  /* Legacy aliases for imports that use old names */
-  --color-primary: #00D4AA;
-  --color-primary-dim: #00B892;
-  --color-secondary: #ff6887;
-  --color-secondary-dim: #e85570;
-  --color-tertiary: #ff6c12;
-  --color-error: #ff4d4d;
-  --color-error-dim: #cc3333;
-  --color-on-primary: #00110D;
-  --color-on-error: #1A0606;
-
-  /* Fonts */
-  --font-headline: var(--font-inter), "Inter", system-ui, sans-serif;
+  /* Fonts — exposed as Tailwind tokens */
+  --font-sans: var(--font-inter), "Inter", system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), "Geist Mono", "JetBrains Mono", monospace;
+  --font-serif: var(--font-fraunces), "Fraunces", Georgia, serif;
+  --font-headline: var(--font-fraunces), "Fraunces", Georgia, serif;
   --font-body: var(--font-inter), "Inter", system-ui, sans-serif;
-  --font-label: var(--font-inter), "Inter", system-ui, sans-serif;
-  --font-accent: var(--font-newsreader), "Newsreader", Georgia, serif;
+  --font-label: var(--font-geist-mono), "Geist Mono", "JetBrains Mono", monospace;
+  --font-accent: var(--font-fraunces), "Fraunces", Georgia, serif;
 
   /* Animations */
-  --animate-fade-in: fade-in 600ms cubic-bezier(0.22, 1, 0.36, 1);
-  --animate-slide-up: slide-up 600ms cubic-bezier(0.22, 1, 0.36, 1);
-  --animate-pulse-slow: pulse-slow 2.5s ease-in-out infinite;
+  --animate-fade-up: fadeUp 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-blink: blink 2.4s ease-in-out infinite;
+  --animate-orbit: orbit 120s linear infinite;
+  --animate-counter-rotate: counter-rotate 160s linear infinite;
+  --animate-drift: drift 14s ease-in-out infinite;
+  --animate-pulse-ring: pulse-ring 3s ease-out infinite;
+  --animate-scan-line: scan-line 2.4s linear infinite;
+  --animate-marquee: marquee 60s linear infinite;
 
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(24px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  @keyframes orbit {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  @keyframes counter-rotate {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(-360deg); }
+  }
+  @keyframes drift {
+    0%, 100% { transform: translate(0, 0); }
+    50% { transform: translate(8px, -12px); }
+  }
+  @keyframes pulse-ring {
+    0% { transform: scale(0.8); opacity: 0.9; }
+    100% { transform: scale(2.2); opacity: 0; }
+  }
+  @keyframes scan-line {
+    0% { transform: translateY(-100%); }
+    100% { transform: translateY(100%); }
+  }
+  @keyframes marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
   @keyframes fade-in {
     from { opacity: 0; }
     to { opacity: 1; }
@@ -69,54 +115,364 @@
   }
 }
 
-/* ====== DARK MODE OVERRIDES ====== */
-.dark {
-  --color-background: #0a0a0b;
-  --color-foreground: #fafafa;
-  --color-surface-low: #111113;
-  --color-surface-container: #16161a;
-  --color-surface-high: #1c1c21;
-  --color-surface-highest: #222228;
-  --color-on-surface: #fafafa;
-  --color-on-surface-variant: #a0a5ad;
-  --color-muted: #6b7781;
-  --color-label: #8a8f98;
-  --color-btn: #d0d4da;
-  --color-outline: #2a2a32;
-  --color-outline-variant: #1e1e24;
-  --color-primary: #00D4AA;
-  --color-primary-dim: #00B892;
-  --color-secondary: #ff6887;
-  --color-error: #ff4d4d;
+/* ============================================================
+   Root token aliases — kept as CSS custom properties so inline
+   style={{ background: "var(--surface)" }} continues to work.
+   ============================================================ */
+:root {
+  --bg: #07080C;
+  --surface: #0D1015;
+  --surface-2: #12161D;
+  --surface-3: #181D25;
+  --line: #1F2530;
+  --line-2: #2A313D;
+  --text: #E8EBF0;
+  --text-dim: #8A92A2;
+  --text-muted: #555D6D;
+  --accent: oklch(0.82 0.14 180);
+  --accent-soft: oklch(0.82 0.14 180 / 0.12);
+  --accent-dim: oklch(0.65 0.12 180);
+  --warn: oklch(0.78 0.14 70);
+  --danger: oklch(0.65 0.22 25);
+  --good: oklch(0.78 0.17 150);
+  --shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.8);
+  color-scheme: dark;
 }
 
-/* Sharp edges */
+* {
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Sharp edges everywhere — terminal aesthetic */
 *, *::before, *::after {
   border-radius: 0 !important;
 }
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 8px; }
-::-webkit-scrollbar-track { background: var(--color-background); }
-::-webkit-scrollbar-thumb { background: var(--color-accent); }
-
-/* Material Symbols */
-.material-symbols-outlined {
-  font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
-  font-size: 20px;
-}
-
-body {
-  background: var(--color-background);
-  color: var(--color-on-surface);
-  font-family: var(--font-body);
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-inter), "Inter", -apple-system, sans-serif;
+  font-feature-settings: "ss01", "cv11";
+  min-height: 100vh;
   overflow-x: hidden;
-  -webkit-font-smoothing: antialiased;
 }
+html { scroll-behavior: smooth; }
 
 ::selection {
-  background: var(--color-cta);
-  color: white;
+  background: var(--accent);
+  color: var(--bg);
 }
 
-html { scroll-behavior: smooth; }
+/* Typography helpers */
+.mono {
+  font-family: var(--font-geist-mono), "Geist Mono", "JetBrains Mono", monospace;
+  font-feature-settings: "ss02", "zero";
+}
+.serif {
+  font-family: var(--font-fraunces), "Fraunces", Georgia, serif;
+  font-optical-sizing: auto;
+  font-variation-settings: "SOFT" 50, "WONK" 0;
+}
+.tabular { font-variant-numeric: tabular-nums; }
+
+/* Eyebrow label */
+.eyebrow {
+  font-family: var(--font-geist-mono), "Geist Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.eyebrow::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+  box-shadow: 0 0 12px var(--accent);
+  animation: blink 2.4s ease-in-out infinite;
+}
+.eyebrow.plain::before { display: none; }
+
+/* Grid background with radial mask */
+.grid-bg {
+  background-image:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 80px 80px;
+  -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+          mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+}
+
+/* Noise overlay (body.noise::before) */
+.noise::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 22px;
+  font-family: var(--font-geist-mono), "Geist Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 500;
+  border: 1px solid var(--line-2);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+  text-decoration: none;
+}
+.btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: 0 0 30px -8px var(--accent);
+}
+.btn-primary {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+.btn-primary:hover {
+  background: transparent;
+  color: var(--accent);
+  box-shadow: 0 0 40px -6px var(--accent);
+}
+
+/* Inputs */
+.input {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 14px 16px;
+  font-family: var(--font-geist-mono), "Geist Mono", monospace;
+  font-size: 14px;
+  outline: none;
+  transition: all 0.3s;
+  width: 100%;
+}
+.input:focus {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+/* Cards */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  position: relative;
+  transition: border-color 0.4s, transform 0.4s;
+}
+.card:hover { border-color: var(--line-2); }
+
+/* Corner brackets */
+.brackets { position: relative; }
+.brackets::before,
+.brackets::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-color: var(--accent);
+  border-style: solid;
+  border-width: 0;
+  pointer-events: none;
+}
+.brackets::before {
+  top: -1px;
+  left: -1px;
+  border-top-width: 1px;
+  border-left-width: 1px;
+}
+.brackets::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom-width: 1px;
+  border-right-width: 1px;
+}
+
+/* App shell */
+.app-shell {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  z-index: 40;
+}
+.sidebar-logo {
+  font-family: var(--font-fraunces), "Fraunces", serif;
+  font-weight: 900;
+  font-size: 22px;
+  color: var(--accent);
+  letter-spacing: -0.04em;
+  margin-bottom: 40px;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  padding: 8px 0;
+}
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+.sidebar-item {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: all 0.25s;
+  position: relative;
+  background: transparent;
+}
+.sidebar-item:hover { color: var(--text); }
+.sidebar-item.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background: linear-gradient(90deg, var(--accent-soft), transparent);
+}
+.sidebar-item .tip {
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translate(8px, -50%);
+  background: var(--surface-3);
+  border: 1px solid var(--line-2);
+  padding: 6px 12px;
+  font-family: var(--font-geist-mono), "Geist Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+  color: var(--text);
+  z-index: 50;
+}
+.sidebar-item:hover .tip {
+  opacity: 1;
+  transform: translate(14px, -50%);
+}
+
+/* Chips */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-family: var(--font-geist-mono), "Geist Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 1px solid var(--line-2);
+  color: var(--text-dim);
+}
+.chip.good {
+  color: var(--good);
+  border-color: color-mix(in oklch, var(--good) 30%, transparent);
+  background: color-mix(in oklch, var(--good) 8%, transparent);
+}
+.chip.warn {
+  color: var(--warn);
+  border-color: color-mix(in oklch, var(--warn) 30%, transparent);
+  background: color-mix(in oklch, var(--warn) 8%, transparent);
+}
+.chip.danger {
+  color: var(--danger);
+  border-color: color-mix(in oklch, var(--danger) 30%, transparent);
+  background: color-mix(in oklch, var(--danger) 8%, transparent);
+}
+.chip.accent {
+  color: var(--accent);
+  border-color: color-mix(in oklch, var(--accent) 30%, transparent);
+  background: var(--accent-soft);
+}
+
+/* Spark line */
+.spark {
+  height: 32px;
+  width: 100%;
+}
+
+/* Marquee */
+.marquee {
+  display: flex;
+  gap: 48px;
+  animation: marquee 60s linear infinite;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+/* Reveal helpers */
+.fadeUp { animation: fadeUp 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.reveal {
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity 1s, transform 1s;
+}
+.reveal.in {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Tweaks panel (reserved for editor overlay) */
+.tweaks-panel {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  padding: 16px;
+  width: 260px;
+  z-index: 120;
+  font-family: var(--font-geist-mono), "Geist Mono", monospace;
+  box-shadow: var(--shadow);
+}
+
+/* Custom scrollbar — dark */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--surface); }
+::-webkit-scrollbar-thumb { background: var(--line-2); }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* Legacy Material Symbols stub — preserved so pages that still
+   reference the class don't break while the redesign lands. */
+.material-symbols-outlined {
+  font-family: "Material Symbols Outlined", sans-serif;
+  font-variation-settings: "FILL" 0, "wght" 300, "GRAD" 0, "opsz" 24;
+  font-size: 20px;
+  line-height: 1;
+}

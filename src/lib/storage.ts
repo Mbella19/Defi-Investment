@@ -58,7 +58,6 @@ export function loadAlertConfig(): AlertConfig {
     apyDropCritical: 50,
     tvlDrainWarning: 30,
     tvlDrainCritical: 50,
-    exploitAlerts: true,
   });
 }
 

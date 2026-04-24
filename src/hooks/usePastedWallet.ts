@@ -3,12 +3,8 @@
 import { useState, useCallback } from "react";
 import type { PortfolioSummary } from "@/types/wallet";
 
-const DEMO_ADDRESS = "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18";
-
 export function usePastedWallet() {
-  const [address, setAddress] = useState(
-    process.env.NEXT_PUBLIC_DEMO_MODE === "true" ? DEMO_ADDRESS : ""
-  );
+  const [address, setAddress] = useState("");
   const [portfolio, setPortfolio] = useState<PortfolioSummary | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -1,7 +1,5 @@
-import { fetchAllPools, fetchHacks } from "@/lib/defillama";
+import { fetchAllPools } from "@/lib/defillama";
 import { runMonitorScan } from "@/lib/monitor";
-import { DEMO_MODE } from "@/lib/demo";
-import { buildDemoMonitorResponse } from "@/lib/demo/mock-monitor";
 import type { PortfolioPosition, AlertConfig } from "@/types/portfolio";
 
 export async function POST(request: Request) {
@@ -16,18 +14,10 @@ export async function POST(request: Request) {
       return Response.json({ alerts: [], positions: [] });
     }
 
-    if (DEMO_MODE) {
-      return Response.json(buildDemoMonitorResponse(positions));
-    }
+    const allPools = await fetchAllPools();
 
-    const [allPools, hacks] = await Promise.all([
-      fetchAllPools(),
-      fetchHacks(),
-    ]);
+    const alerts = runMonitorScan(positions, allPools, config);
 
-    const alerts = runMonitorScan(positions, allPools, hacks, config);
-
-    // Enrich positions with current data
     const poolMap = new Map(allPools.map((p) => [p.pool, p]));
     const enriched = positions.map((pos) => {
       const current = poolMap.get(pos.poolId);

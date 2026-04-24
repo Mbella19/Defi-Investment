@@ -1,6 +1,4 @@
 import { scanPools } from "@/lib/scanner";
-import { DEMO_MODE } from "@/lib/demo";
-import { DEMO_SCAN_RESPONSE } from "@/lib/demo/mock-pools";
 import type { ScannerCriteria } from "@/types/scanner";
 
 export async function POST(request: Request) {
@@ -17,10 +15,6 @@ export async function POST(request: Request) {
 
     if (!["stablecoins", "all"].includes(criteria.assetType)) {
       return Response.json({ error: "Invalid asset type" }, { status: 400 });
-    }
-
-    if (DEMO_MODE) {
-      return Response.json({ ...DEMO_SCAN_RESPONSE, criteria, scannedAt: new Date().toISOString() });
     }
 
     const results = await scanPools(criteria);

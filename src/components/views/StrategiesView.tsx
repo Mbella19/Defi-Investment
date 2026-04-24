@@ -1,0 +1,686 @@
+"use client";
+
+import { useState } from "react";
+import { useActiveStrategies } from "@/hooks/useActiveStrategies";
+import { fmt, Eyebrow, Icons } from "@/components/sovereign";
+import type { ActiveStrategy, StrategyStatus } from "@/types/active-strategy";
+
+const STATUS_COLOR: Record<StrategyStatus, string> = {
+  active: "var(--good)",
+  paused: "var(--warn)",
+  archived: "var(--text-muted)",
+};
+
+export default function StrategiesPage() {
+  const {
+    strategies,
+    isLoading,
+    error,
+    updateStatus,
+    deleteStrategy,
+    runScan,
+  } = useActiveStrategies();
+  const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<{
+    scanned: number;
+    newAlerts: unknown[];
+  } | null>(null);
+
+  const handleScan = async (strategyId?: string) => {
+    setScanning(true);
+    setScanResult(null);
+    try {
+      const result = await runScan(strategyId);
+      setScanResult(result);
+    } catch {
+      /* handled by hook */
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const activeCount = strategies.filter((s) => s.status === "active").length;
+  const totalBudget = strategies
+    .filter((s) => s.status === "active")
+    .reduce((sum, s) => sum + s.totalBudget, 0);
+  const totalAlerts = strategies.reduce(
+    (sum, s) => sum + (s.alertCount || 0),
+    0
+  );
+
+  return (
+    <div style={{ padding: "40px 48px 96px", maxWidth: 1440, margin: "0 auto" }}>
+      <section style={{ marginBottom: 40 }}>
+        <Eyebrow>Strategy Monitor / S.ACTIVE</Eyebrow>
+        <h1
+          className="serif"
+          style={{
+            fontSize: "clamp(48px, 6vw, 88px)",
+            fontWeight: 900,
+            letterSpacing: "-0.055em",
+            lineHeight: 0.92,
+            margin: "20px 0 16px",
+            color: "var(--text)",
+          }}
+        >
+          Active
+          <br />
+          <span style={{ color: "var(--accent)", fontStyle: "italic", fontWeight: 300 }}>
+            Strategies.
+          </span>
+        </h1>
+        <p
+          style={{
+            fontSize: 14,
+            color: "var(--text-dim)",
+            lineHeight: 1.65,
+            maxWidth: 620,
+          }}
+        >
+          Monitor activated strategies. The system checks pool APYs and alerts you
+          when conditions drift from the entry thesis.
+        </p>
+      </section>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, 1fr)",
+          gap: 1,
+          background: "var(--line)",
+          border: "1px solid var(--line)",
+          marginBottom: 24,
+        }}
+      >
+        <Stat label="Active" value={activeCount.toString()} color="var(--good)" />
+        <Stat label="Deployed" value={fmt.money(totalBudget)} />
+        <Stat
+          label="Unread Alerts"
+          value={totalAlerts.toString()}
+          color={totalAlerts > 0 ? "var(--danger)" : undefined}
+        />
+        <Stat label="Total" value={strategies.length.toString()} />
+      </div>
+
+      {activeCount > 0 && (
+        <button
+          onClick={() => handleScan()}
+          disabled={scanning}
+          className="mono"
+          style={{
+            width: "100%",
+            padding: "18px 24px",
+            background: scanning ? "var(--surface-2)" : "var(--accent)",
+            color: scanning ? "var(--text-dim)" : "var(--bg)",
+            border: `1px solid ${scanning ? "var(--line)" : "var(--accent)"}`,
+            fontSize: 11,
+            letterSpacing: "0.18em",
+            textTransform: "uppercase",
+            fontWeight: 600,
+            cursor: scanning ? "not-allowed" : "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 12,
+            marginBottom: 24,
+          }}
+        >
+          {scanning ? (
+            <>
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  background: "var(--accent)",
+                  animation: "blink 1s ease-in-out infinite",
+                }}
+              />
+              Scanning all active strategies…
+            </>
+          ) : (
+            <>
+              <Icons.refresh />
+              Run Full Scan
+            </>
+          )}
+        </button>
+      )}
+
+      {scanResult && (
+        <div
+          style={{
+            border: "1px solid var(--accent)",
+            background: "var(--accent-soft)",
+            padding: "12px 16px",
+            color: "var(--accent)",
+            fontSize: 12,
+            marginBottom: 24,
+          }}
+          className="mono"
+        >
+          Scanned {scanResult.scanned}{" "}
+          {scanResult.scanned === 1 ? "strategy" : "strategies"} —{" "}
+          {scanResult.newAlerts.length > 0
+            ? `${scanResult.newAlerts.length} new alert${
+                scanResult.newAlerts.length === 1 ? "" : "s"
+              } generated`
+            : "no new alerts"}
+        </div>
+      )}
+
+      {error && (
+        <div
+          style={{
+            border: "1px solid var(--danger)",
+            background: "color-mix(in oklab, var(--danger) 10%, transparent)",
+            padding: "12px 16px",
+            color: "var(--danger)",
+            fontSize: 13,
+            marginBottom: 24,
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      {isLoading && (
+        <div
+          style={{
+            border: "1px solid var(--line)",
+            background: "var(--surface)",
+            padding: "32px",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            gap: 10,
+            marginBottom: 24,
+          }}
+        >
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              background: "var(--accent)",
+              animation: "blink 1s ease-in-out infinite",
+            }}
+          />
+          <span
+            className="mono"
+            style={{
+              fontSize: 11,
+              color: "var(--text-dim)",
+              letterSpacing: "0.14em",
+              textTransform: "uppercase",
+            }}
+          >
+            Loading strategies…
+          </span>
+        </div>
+      )}
+
+      {!isLoading && strategies.length === 0 && (
+        <div
+          className="brackets"
+          style={{
+            border: "1px solid var(--line)",
+            background: "var(--surface)",
+            padding: "56px 32px",
+            textAlign: "center",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
+            <Icons.monitor
+              width={28}
+              height={28}
+              style={{ color: "var(--text-dim)" }}
+            />
+          </div>
+          <p
+            className="mono"
+            style={{
+              fontSize: 11,
+              color: "var(--text-dim)",
+              letterSpacing: "0.14em",
+              textTransform: "uppercase",
+              marginBottom: 18,
+            }}
+          >
+            No strategies activated yet.
+          </p>
+          <a
+            href="/discover"
+            className="mono"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "14px 24px",
+              background: "var(--accent)",
+              color: "var(--bg)",
+              fontSize: 11,
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              fontWeight: 600,
+              textDecoration: "none",
+            }}
+          >
+            Create Strategy <Icons.arrow />
+          </a>
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {strategies.map((s) => (
+          <StrategyCard
+            key={s.id}
+            strategy={s}
+            onStatusChange={updateStatus}
+            onDelete={deleteStrategy}
+            onScan={() => handleScan(s.id)}
+            scanning={scanning}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color?: string;
+}) {
+  return (
+    <div style={{ background: "var(--surface)", padding: "22px 22px" }}>
+      <div
+        className="mono"
+        style={{
+          fontSize: 9,
+          letterSpacing: "0.2em",
+          textTransform: "uppercase",
+          color: "var(--text-dim)",
+          marginBottom: 10,
+        }}
+      >
+        {label}
+      </div>
+      <div
+        className="serif tabular"
+        style={{
+          fontSize: 28,
+          fontWeight: 700,
+          letterSpacing: "-0.03em",
+          color: color || "var(--text)",
+          lineHeight: 1,
+        }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function StrategyCard({
+  strategy: s,
+  onStatusChange,
+  onDelete,
+  onScan,
+  scanning,
+}: {
+  strategy: ActiveStrategy;
+  onStatusChange: (id: string, status: StrategyStatus) => void;
+  onDelete: (id: string) => void;
+  onScan: () => void;
+  scanning: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const statusColor = STATUS_COLOR[s.status];
+
+  return (
+    <div
+      className="brackets"
+      style={{
+        border: "1px solid var(--line)",
+        background: "var(--surface)",
+      }}
+    >
+      <div style={{ padding: "22px 26px" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            gap: 24,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                marginBottom: 10,
+              }}
+            >
+              <span
+                className="mono"
+                style={{
+                  fontSize: 10,
+                  letterSpacing: "0.18em",
+                  textTransform: "uppercase",
+                  color: statusColor,
+                  border: `1px solid ${statusColor}`,
+                  padding: "3px 8px",
+                }}
+              >
+                {s.status}
+              </span>
+              {(s.alertCount ?? 0) > 0 && (
+                <span
+                  className="mono"
+                  style={{
+                    fontSize: 10,
+                    letterSpacing: "0.18em",
+                    textTransform: "uppercase",
+                    color: "var(--danger)",
+                    border: "1px solid var(--danger)",
+                    padding: "3px 8px",
+                  }}
+                >
+                  {s.alertCount} alert{(s.alertCount ?? 0) !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+            <p
+              style={{
+                fontSize: 13,
+                color: "var(--text-dim)",
+                lineHeight: 1.5,
+                margin: 0,
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }}
+            >
+              {s.strategy.summary.slice(0, 150)}…
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: 24, flexShrink: 0 }}>
+            <div style={{ textAlign: "center" }}>
+              <div
+                className="serif"
+                style={{
+                  fontSize: 26,
+                  fontWeight: 700,
+                  color: "var(--accent)",
+                  letterSpacing: "-0.03em",
+                  lineHeight: 1,
+                }}
+              >
+                {s.projectedApy.toFixed(1)}%
+              </div>
+              <div
+                className="mono"
+                style={{
+                  fontSize: 9,
+                  letterSpacing: "0.18em",
+                  textTransform: "uppercase",
+                  color: "var(--text-dim)",
+                  marginTop: 6,
+                }}
+              >
+                APY
+              </div>
+            </div>
+            <div style={{ textAlign: "center" }}>
+              <div
+                className="serif"
+                style={{
+                  fontSize: 26,
+                  fontWeight: 700,
+                  color: "var(--text)",
+                  letterSpacing: "-0.03em",
+                  lineHeight: 1,
+                }}
+              >
+                {fmt.money(s.totalBudget)}
+              </div>
+              <div
+                className="mono"
+                style={{
+                  fontSize: 9,
+                  letterSpacing: "0.18em",
+                  textTransform: "uppercase",
+                  color: "var(--text-dim)",
+                  marginTop: 6,
+                }}
+              >
+                Budget
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+            marginTop: 16,
+          }}
+        >
+          {s.status === "active" && (
+            <TinyBtn onClick={() => onStatusChange(s.id, "paused")}>Pause</TinyBtn>
+          )}
+          {s.status === "paused" && (
+            <TinyBtn onClick={() => onStatusChange(s.id, "active")}>
+              Resume
+            </TinyBtn>
+          )}
+          {s.status !== "archived" && (
+            <TinyBtn onClick={() => onStatusChange(s.id, "archived")}>
+              Archive
+            </TinyBtn>
+          )}
+          {s.status === "active" && (
+            <TinyBtn
+              onClick={onScan}
+              disabled={scanning}
+              emphasis="accent"
+            >
+              {scanning ? "Scanning…" : "Scan Now"}
+            </TinyBtn>
+          )}
+          <TinyBtn onClick={() => setExpanded((v) => !v)}>
+            {expanded ? "Collapse" : "Details"}
+          </TinyBtn>
+          <TinyBtn
+            onClick={() => {
+              if (confirm("Delete this strategy and all its alerts?"))
+                onDelete(s.id);
+            }}
+            emphasis="danger"
+            style={{ marginLeft: "auto" }}
+          >
+            Delete
+          </TinyBtn>
+        </div>
+      </div>
+
+      {expanded && (
+        <div style={{ borderTop: "1px solid var(--line-2)", padding: "22px 26px" }}>
+          <div
+            className="mono"
+            style={{
+              fontSize: 10,
+              color: "var(--text-dim)",
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              marginBottom: 12,
+            }}
+          >
+            Created {new Date(s.createdAt).toLocaleString()} ·{" "}
+            {s.strategy.allocations.length} pools · {s.criteria.riskAppetite} risk
+          </div>
+
+          <div style={{ overflowX: "auto" }}>
+            <div
+              style={{
+                minWidth: 560,
+                display: "grid",
+                gridTemplateColumns: "1.4fr 0.9fr 0.8fr 1fr 0.8fr",
+                gap: 10,
+                padding: "8px 0",
+                borderBottom: "1px solid var(--line-2)",
+              }}
+            >
+              {["Pool", "Chain", "Entry APY", "Allocated", "Safety"].map((h, i) => (
+                <span
+                  key={h}
+                  className="mono"
+                  style={{
+                    fontSize: 9,
+                    color: "var(--text-dim)",
+                    letterSpacing: "0.18em",
+                    textTransform: "uppercase",
+                    textAlign: i >= 2 ? "right" : "left",
+                  }}
+                >
+                  {h}
+                </span>
+              ))}
+            </div>
+            {s.strategy.allocations.map((a, i) => {
+              const safetyColor =
+                a.legitimacyScore >= 70
+                  ? "var(--good)"
+                  : a.legitimacyScore >= 50
+                  ? "var(--warn)"
+                  : "var(--danger)";
+              return (
+                <div
+                  key={i}
+                  style={{
+                    minWidth: 560,
+                    display: "grid",
+                    gridTemplateColumns: "1.4fr 0.9fr 0.8fr 1fr 0.8fr",
+                    gap: 10,
+                    padding: "10px 0",
+                    borderBottom: "1px solid var(--line-2)",
+                    alignItems: "center",
+                  }}
+                >
+                  <div>
+                    <span
+                      className="mono"
+                      style={{
+                        fontSize: 12,
+                        color: "var(--text)",
+                        letterSpacing: "0.04em",
+                      }}
+                    >
+                      {a.protocol}
+                    </span>{" "}
+                    <span
+                      className="mono"
+                      style={{ fontSize: 11, color: "var(--text-dim)" }}
+                    >
+                      {a.symbol}
+                    </span>
+                  </div>
+                  <span
+                    className="mono"
+                    style={{ fontSize: 11, color: "var(--text-dim)" }}
+                  >
+                    {a.chain}
+                  </span>
+                  <span
+                    className="mono tabular"
+                    style={{
+                      fontSize: 12,
+                      color: "var(--accent)",
+                      textAlign: "right",
+                    }}
+                  >
+                    {a.apy.toFixed(1)}%
+                  </span>
+                  <span
+                    className="mono tabular"
+                    style={{
+                      fontSize: 12,
+                      color: "var(--text)",
+                      textAlign: "right",
+                    }}
+                  >
+                    {fmt.money(a.allocationAmount)}
+                  </span>
+                  <span
+                    className="mono tabular"
+                    style={{
+                      fontSize: 12,
+                      color: safetyColor,
+                      textAlign: "right",
+                    }}
+                  >
+                    {a.legitimacyScore}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TinyBtn({
+  onClick,
+  children,
+  disabled,
+  emphasis,
+  style,
+}: {
+  onClick: () => void;
+  children: React.ReactNode;
+  disabled?: boolean;
+  emphasis?: "accent" | "danger";
+  style?: React.CSSProperties;
+}) {
+  const color =
+    emphasis === "accent"
+      ? "var(--accent)"
+      : emphasis === "danger"
+      ? "var(--danger)"
+      : "var(--text-dim)";
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="mono"
+      style={{
+        padding: "8px 14px",
+        background: "transparent",
+        color,
+        border: `1px solid ${
+          emphasis ? color : "var(--line-2)"
+        }`,
+        fontSize: 10,
+        letterSpacing: "0.14em",
+        textTransform: "uppercase",
+        fontWeight: 600,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.55 : 1,
+        ...style,
+      }}
+    >
+      {children}
+    </button>
+  );
+}

@@ -318,7 +318,7 @@ export async function generateStrategy(
     const chunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
 
-    const proc = spawn("claude", ["-p", "--output-format", "text", "--model", "claude-opus-4-6", "--effort", "high"], {
+    const proc = spawn("claude", ["-p", "--output-format", "text", "--model", "claude-opus-4-7", "--effort", "max"], {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env },
     });

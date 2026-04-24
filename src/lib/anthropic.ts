@@ -6,7 +6,6 @@ import type { DefiLlamaPool, DefiLlamaProtocol } from "@/types/pool";
 import type { ProtocolAnalysis } from "@/types/analysis";
 import { formatCurrency, formatDate } from "./formatters";
 import { getProtocolSentiment, formatSentimentForPrompt } from "./sentiment";
-import { fetchHacks, fetchRaises } from "./defillama";
 import { fetchTokenDetail, toTokenMarketData, formatMarketDataForPrompt } from "./coingecko";
 import { fetchTokenSecurity, resolveChainId, formatSecurityForPrompt } from "./goplus";
 import type { TokenMarketData } from "@/types/coingecko";
@@ -122,9 +121,7 @@ export async function analyzeProtocol(
   let securityData: GoPlusTokenSecurity | null = null;
 
   try {
-    const [hacks, raises, geckoDetail, goplusSec] = await Promise.all([
-      fetchHacks(),
-      fetchRaises(),
+    const [geckoDetail, goplusSec] = await Promise.all([
       protocol.gecko_id ? fetchTokenDetail(protocol.gecko_id) : Promise.resolve(null),
       protocol.address
         ? (async () => {
@@ -141,11 +138,11 @@ export async function analyzeProtocol(
         : Promise.resolve(null),
     ]);
 
-    const sentiment = getProtocolSentiment(protocol.name, protocol.slug, hacks, raises, pools);
-    sentimentText = formatSentimentForPrompt(sentiment);
-
     if (geckoDetail) marketData = toTokenMarketData(geckoDetail);
     if (goplusSec) securityData = goplusSec;
+
+    const sentiment = getProtocolSentiment(protocol.name, pools, marketData);
+    sentimentText = formatSentimentForPrompt(sentiment);
   } catch {
     // Enrichment data is optional, continue without it
   }
@@ -160,7 +157,7 @@ export async function analyzeProtocol(
     const chunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
 
-    const proc = spawn("claude", ["-p", "--output-format", "text", "--model", "claude-opus-4-6", "--effort", "high"], {
+    const proc = spawn("claude", ["-p", "--output-format", "text", "--model", "claude-opus-4-7", "--effort", "max"], {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env },
     });

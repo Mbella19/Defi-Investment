@@ -50,54 +50,12 @@ export async function fetchPoolHistory(poolId: string) {
   return json.data;
 }
 
-export async function fetchHacks(): Promise<HackEntry[]> {
-  const res = await fetch(`${API_BASE}/hacks`, {
-    next: { revalidate: 3600 },
-  });
-  if (!res.ok) throw new Error(`Failed to fetch hacks: ${res.status}`);
-  return res.json();
-}
-
-export async function fetchRaises(): Promise<RaiseEntry[]> {
-  const res = await fetch(`${API_BASE}/raises`, {
-    next: { revalidate: 3600 },
-  });
-  if (!res.ok) throw new Error(`Failed to fetch raises: ${res.status}`);
-  const json = await res.json();
-  return json.raises || json;
-}
-
 export async function fetchProtocolDetail(slug: string): Promise<ProtocolDetail> {
   const res = await fetch(`${API_BASE}/protocol/${slug}`, {
     next: { revalidate: 600 },
   });
   if (!res.ok) throw new Error(`Failed to fetch protocol detail: ${res.status}`);
   return res.json();
-}
-
-// Types for new endpoints
-export interface HackEntry {
-  id: string;
-  name: string;
-  date: number;
-  target: string;
-  classification: string;
-  technique: string;
-  amount: number;
-  chain: string[];
-  bridgeHack: boolean;
-  returnedFunds: number | null;
-}
-
-export interface RaiseEntry {
-  name: string;
-  date: number;
-  amount: number | null;
-  round: string | null;
-  category: string;
-  leadInvestors: string[];
-  otherInvestors: string[];
-  chains: string[];
 }
 
 export interface ProtocolDetail {

@@ -1,4 +1,4 @@
-import { fetchProtocolDetail, fetchAllPools, fetchPoolHistory, fetchHacks } from "@/lib/defillama";
+import { fetchProtocolDetail, fetchAllPools, fetchPoolHistory } from "@/lib/defillama";
 import { fetchTokenDetail, toTokenMarketData, fetchPriceHistory } from "@/lib/coingecko";
 import { fetchTokenSecurity, resolveChainId } from "@/lib/goplus";
 import { fetchBeefyVaultsEnriched } from "@/lib/beefy";
@@ -12,18 +12,15 @@ export async function GET(request: Request) {
   }
 
   try {
-    const [detail, allPools, hacks] = await Promise.all([
+    const [detail, allPools] = await Promise.all([
       fetchProtocolDetail(slug),
       fetchAllPools(),
-      fetchHacks(),
     ]);
 
-    // Get pools for this protocol
     const protocolPools = allPools
       .filter((p) => p.project === slug)
       .sort((a, b) => (b.tvlUsd || 0) - (a.tvlUsd || 0));
 
-    // Get history for top 3 pools
     const topPools = protocolPools.slice(0, 3);
     const poolHistories = await Promise.allSettled(
       topPools.map(async (p) => {
@@ -45,30 +42,16 @@ export async function GET(request: Request) {
       .filter((r) => r.status === "fulfilled")
       .map((r) => (r as PromiseFulfilledResult<{ poolId: string; symbol: string; chain: string; data: { timestamp: string; apy: number; tvlUsd: number }[] }>).value);
 
-    // TVL history from protocol detail
     const tvlHistory = (detail.tvl || []).map((t: { date: number; totalLiquidityUSD: number }) => ({
       date: new Date(t.date * 1000).toISOString().split("T")[0],
       tvl: t.totalLiquidityUSD,
     }));
 
-    // Filter hacks for this protocol
-    const protocolHacks = hacks.filter((h) => {
-      const target = (h.target || h.name || "").toLowerCase();
-      return target.includes(slug.toLowerCase()) || target.includes(detail.name.toLowerCase());
-    }).map((h) => ({
-      date: new Date(h.date * 1000).toISOString(),
-      amount: h.amount,
-      technique: h.technique || "Unknown",
-      name: h.name,
-    }));
-
-    // Health metrics
     const currentTvl = protocolPools.reduce((s, p) => s + (p.tvlUsd || 0), 0);
     const avgApy = protocolPools.length > 0
       ? protocolPools.reduce((s, p) => s + (p.apy || 0), 0) / protocolPools.length
       : 0;
 
-    // Fetch enrichment data in parallel (all optional)
     let tokenMarketData = null;
     let priceHistory: { timestamp: number; price: number }[] = [];
     let securityData = null;
@@ -80,14 +63,12 @@ export async function GET(request: Request) {
         detail.gecko_id ? fetchPriceHistory(detail.gecko_id, 30) : Promise.resolve([]),
         detail.address
           ? (async () => {
-              // Try the protocol's primary chain first, then fallback to Ethereum
               const primaryChain = detail.chain || detail.chains?.[0] || "Ethereum";
               const chainId = resolveChainId(primaryChain);
               if (chainId) {
                 const result = await fetchTokenSecurity(chainId, detail.address!);
                 if (result) return result;
               }
-              // Fallback: try Ethereum if primary chain had no data
               if (primaryChain !== "Ethereum") {
                 return fetchTokenSecurity(1, detail.address!);
               }
@@ -101,7 +82,6 @@ export async function GET(request: Request) {
       priceHistory = geckoPriceHistory;
       securityData = goplusSec;
 
-      // Find Beefy vaults for this protocol (fuzzy match — slug may differ)
       const slugLower = slug.toLowerCase();
       const nameLower = detail.name.toLowerCase();
       beefyVaults = allBeefyVaults
@@ -130,16 +110,12 @@ export async function GET(request: Request) {
       },
       tvlHistory: tvlHistory.slice(-180),
       poolHistories: resolvedHistories,
-      hacks: protocolHacks,
       metrics: {
         currentTvl,
         poolCount: protocolPools.length,
         avgApy: Math.round(avgApy * 100) / 100,
         stablecoinPools: protocolPools.filter((p) => p.stablecoin).length,
-        hackCount: protocolHacks.length,
-        totalHackLoss: protocolHacks.reduce((s, h) => s + h.amount, 0),
       },
-      // New enrichment data
       tokenMarketData,
       priceHistory,
       securityData,

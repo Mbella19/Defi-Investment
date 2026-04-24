@@ -12,15 +12,14 @@ export interface PortfolioPosition {
 }
 
 export interface AlertConfig {
-  apyDropWarning: number;   // % drop threshold for warning (default 20)
-  apyDropCritical: number;  // % drop threshold for critical (default 50)
-  tvlDrainWarning: number;  // % drain threshold for warning (default 30)
-  tvlDrainCritical: number; // % drain threshold for critical (default 50)
-  exploitAlerts: boolean;   // monitor for exploits (default true)
+  apyDropWarning: number;
+  apyDropCritical: number;
+  tvlDrainWarning: number;
+  tvlDrainCritical: number;
 }
 
 export type AlertSeverity = "info" | "warning" | "critical";
-export type AlertType = "apy_drop" | "tvl_drain" | "exploit" | "rebalance";
+export type AlertType = "apy_drop" | "tvl_drain" | "rebalance";
 
 export interface AlertEvent {
   id: string;
@@ -43,5 +42,4 @@ export const DEFAULT_ALERT_CONFIG: AlertConfig = {
   apyDropCritical: 50,
   tvlDrainWarning: 30,
   tvlDrainCritical: 50,
-  exploitAlerts: true,
 };
