@@ -1,9 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useActiveStrategies } from "@/hooks/useActiveStrategies";
 import { fmt, Eyebrow, Icons } from "@/components/sovereign";
 import type { ActiveStrategy, StrategyStatus } from "@/types/active-strategy";
+import type { ApyForecast } from "@/lib/apy-forecast";
+
+const DIRECTION_COLOR: Record<ApyForecast["direction"], string> = {
+  rising: "var(--good)",
+  stable: "var(--text-dim)",
+  falling: "var(--danger)",
+  volatile: "var(--warn)",
+  unknown: "var(--text-muted)",
+};
+
+const DIRECTION_GLYPH: Record<ApyForecast["direction"], string> = {
+  rising: "▲",
+  stable: "→",
+  falling: "▼",
+  volatile: "~",
+  unknown: "·",
+};
 
 const STATUS_COLOR: Record<StrategyStatus, string> = {
   active: "var(--good)",
@@ -338,7 +355,40 @@ function StrategyCard({
   scanning: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [forecasts, setForecasts] = useState<Record<string, ApyForecast | null>>({});
+  const [forecastsLoading, setForecastsLoading] = useState(false);
   const statusColor = STATUS_COLOR[s.status];
+
+  useEffect(() => {
+    if (!expanded) return;
+    const ids = s.strategy.allocations.map((a) => a.poolId);
+    if (ids.length === 0) return;
+    if (ids.every((id) => id in forecasts)) return;
+
+    let cancelled = false;
+    setForecastsLoading(true);
+    fetch("/api/strategies/forecast", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ poolIds: ids }),
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`forecast ${r.status}`))))
+      .then((data: { forecasts: Array<{ poolId: string; forecast: ApyForecast | null }> }) => {
+        if (cancelled) return;
+        const next: Record<string, ApyForecast | null> = {};
+        for (const item of data.forecasts) next[item.poolId] = item.forecast;
+        setForecasts((prev) => ({ ...prev, ...next }));
+      })
+      .catch(() => {
+        /* leave empty — UI shows em-dashes */
+      })
+      .finally(() => {
+        if (!cancelled) setForecastsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, s.id, s.strategy.allocations, forecasts]);
 
   return (
     <div
@@ -532,29 +582,31 @@ function StrategyCard({
           <div style={{ overflowX: "auto" }}>
             <div
               style={{
-                minWidth: 560,
+                minWidth: 820,
                 display: "grid",
-                gridTemplateColumns: "1.4fr 0.9fr 0.8fr 1fr 0.8fr",
+                gridTemplateColumns: "1.4fr 0.8fr 0.7fr 0.7fr 1.1fr 0.9fr 0.6fr",
                 gap: 10,
                 padding: "8px 0",
                 borderBottom: "1px solid var(--line-2)",
               }}
             >
-              {["Pool", "Chain", "Entry APY", "Allocated", "Safety"].map((h, i) => (
-                <span
-                  key={h}
-                  className="mono"
-                  style={{
-                    fontSize: 9,
-                    color: "var(--text-dim)",
-                    letterSpacing: "0.18em",
-                    textTransform: "uppercase",
-                    textAlign: i >= 2 ? "right" : "left",
-                  }}
-                >
-                  {h}
-                </span>
-              ))}
+              {["Pool", "Chain", "Entry APY", "Current APY", "Projected 30d", "Allocated", "Safety"].map(
+                (h, i) => (
+                  <span
+                    key={h}
+                    className="mono"
+                    style={{
+                      fontSize: 9,
+                      color: "var(--text-dim)",
+                      letterSpacing: "0.18em",
+                      textTransform: "uppercase",
+                      textAlign: i >= 2 ? "right" : "left",
+                    }}
+                  >
+                    {h}
+                  </span>
+                ),
+              )}
             </div>
             {s.strategy.allocations.map((a, i) => {
               const safetyColor =
@@ -563,13 +615,17 @@ function StrategyCard({
                   : a.legitimacyScore >= 50
                   ? "var(--warn)"
                   : "var(--danger)";
+              const fc = forecasts[a.poolId];
+              const hasForecast = fc != null;
+              const directionColor = hasForecast ? DIRECTION_COLOR[fc!.direction] : "var(--text-muted)";
+              const directionGlyph = hasForecast ? DIRECTION_GLYPH[fc!.direction] : "·";
               return (
                 <div
                   key={i}
                   style={{
-                    minWidth: 560,
+                    minWidth: 820,
                     display: "grid",
-                    gridTemplateColumns: "1.4fr 0.9fr 0.8fr 1fr 0.8fr",
+                    gridTemplateColumns: "1.4fr 0.8fr 0.7fr 0.7fr 1.1fr 0.9fr 0.6fr",
                     gap: 10,
                     padding: "10px 0",
                     borderBottom: "1px solid var(--line-2)",
@@ -614,6 +670,56 @@ function StrategyCard({
                     className="mono tabular"
                     style={{
                       fontSize: 12,
+                      color: hasForecast ? "var(--text)" : "var(--text-muted)",
+                      textAlign: "right",
+                    }}
+                  >
+                    {hasForecast ? `${fc!.currentApy.toFixed(1)}%` : forecastsLoading ? "…" : "—"}
+                  </span>
+                  <span
+                    className="mono tabular"
+                    title={
+                      hasForecast
+                        ? `${fc!.direction.toUpperCase()} · ${fc!.confidence} confidence · ${fc!.sampleDays}d sample · slope ${fc!.details.slopePerDay >= 0 ? "+" : ""}${fc!.details.slopePerDay.toFixed(3)}/d · 90d median ${fc!.details.median90d.toFixed(1)}%`
+                        : forecastsLoading
+                        ? "Loading forecast…"
+                        : "Forecast unavailable"
+                    }
+                    style={{
+                      fontSize: 12,
+                      color: directionColor,
+                      textAlign: "right",
+                      display: "inline-flex",
+                      gap: 6,
+                      justifyContent: "flex-end",
+                      alignItems: "center",
+                    }}
+                  >
+                    {hasForecast ? (
+                      <>
+                        <span style={{ fontSize: 10 }}>{directionGlyph}</span>
+                        <span>{fc!.projectedApy30d.toFixed(1)}%</span>
+                        <span
+                          style={{
+                            fontSize: 8,
+                            letterSpacing: "0.16em",
+                            color: "var(--text-muted)",
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {fc!.confidence === "high" ? "H" : fc!.confidence === "medium" ? "M" : "L"}
+                        </span>
+                      </>
+                    ) : forecastsLoading ? (
+                      "…"
+                    ) : (
+                      "—"
+                    )}
+                  </span>
+                  <span
+                    className="mono tabular"
+                    style={{
+                      fontSize: 12,
                       color: "var(--text)",
                       textAlign: "right",
                     }}
@@ -633,6 +739,21 @@ function StrategyCard({
                 </div>
               );
             })}
+          </div>
+
+          <div
+            className="mono"
+            style={{
+              fontSize: 9,
+              color: "var(--text-muted)",
+              letterSpacing: "0.14em",
+              textTransform: "uppercase",
+              marginTop: 12,
+              lineHeight: 1.6,
+            }}
+          >
+            Projected 30d = blend of 30d linear regression and 90d median, weighted by R². Confidence: H/M/L.
+            Glyphs: ▲ rising · ▼ falling · → stable · ~ volatile.
           </div>
         </div>
       )}

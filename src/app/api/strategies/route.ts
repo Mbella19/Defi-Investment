@@ -1,9 +1,11 @@
 import { getDb } from "@/lib/db";
+import { ensureSchedulerStarted } from "@/lib/monitor-scheduler";
 import type { ActiveStrategy } from "@/types/active-strategy";
 import type { InvestmentStrategy, StrategyCriteria } from "@/types/strategy";
 
 export async function GET(request: Request) {
   try {
+    ensureSchedulerStarted();
     const { searchParams } = new URL(request.url);
     const wallet = searchParams.get("wallet");
 
@@ -43,6 +45,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    ensureSchedulerStarted();
     const body = await request.json();
     const { strategy, criteria, walletAddress } = body as {
       strategy: InvestmentStrategy;

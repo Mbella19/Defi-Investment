@@ -1,16 +1,69 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Icons } from "./Icons";
 import type { InvestmentStrategy, StrategyCriteria } from "@/types/strategy";
 import { getDepositUrl } from "@/lib/deposit-url";
+import { useActiveStrategies } from "@/hooks/useActiveStrategies";
+import {
+  customizeStrategy,
+  makeDefaultPicks,
+  normalizePicks,
+  totalIncludedPercent,
+  type AllocationPick,
+} from "@/lib/strategy-customize";
+
+const DRAFT_STORAGE_KEY = "sovereign:ai-strategy-draft:v2";
+
+type RiskBand = "Safe" | "Balanced" | "Degen" | "Custom";
+
+interface PersistedDraft {
+  budget: number;
+  risk: RiskBand;
+  stablesOnly: boolean;
+  customApyMin: number;
+  customApyMax: number;
+  result: InvestmentStrategy;
+  picks: AllocationPick[];
+}
+
+function loadDraft(): PersistedDraft | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(DRAFT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PersistedDraft;
+    if (!parsed?.result || !Array.isArray(parsed.result.allocations)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft(draft: PersistedDraft): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  } catch {
+    /* quota or private mode — silently ignore */
+  }
+}
+
+function clearDraft(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(DRAFT_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 type Props = {
   open: boolean;
   onClose: () => void;
   initialBudget?: number;
-  initialRisk?: "Safe" | "Balanced" | "Degen";
+  initialRisk?: RiskBand;
 };
 
 type ProgressEvent = {
@@ -37,36 +90,96 @@ const INITIAL_PROGRESS: ProgressState = {
   events: [],
 };
 
-function riskToApi(r: Props["initialRisk"]): StrategyCriteria["riskAppetite"] {
+const CUSTOM_DEFAULT_MIN = 5;
+const CUSTOM_DEFAULT_MAX = 15;
+
+function riskToApi(
+  r: RiskBand,
+  customMin?: number,
+  customMax?: number,
+): StrategyCriteria["riskAppetite"] {
   if (r === "Safe") return "low";
   if (r === "Degen") return "high";
+  if (r === "Custom") {
+    const mid = ((customMin ?? CUSTOM_DEFAULT_MIN) + (customMax ?? CUSTOM_DEFAULT_MAX)) / 2;
+    if (mid <= 8) return "low";
+    if (mid >= 18) return "high";
+    return "medium";
+  }
   return "medium";
 }
 
-function apyRange(r: Props["initialRisk"]): { min: number; max: number } {
+function apyRange(
+  r: RiskBand,
+  customMin?: number,
+  customMax?: number,
+): { min: number; max: number } {
   if (r === "Safe") return { min: 3, max: 8 };
   if (r === "Degen") return { min: 12, max: 60 };
+  if (r === "Custom") {
+    const minRaw = Number.isFinite(customMin) ? (customMin as number) : CUSTOM_DEFAULT_MIN;
+    const maxRaw = Number.isFinite(customMax) ? (customMax as number) : CUSTOM_DEFAULT_MAX;
+    const min = Math.max(0, Math.min(minRaw, maxRaw));
+    const max = Math.max(min + 0.1, Math.max(minRaw, maxRaw));
+    return { min, max };
+  }
   return { min: 6, max: 18 };
 }
 
 export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialRisk = "Balanced" }: Props) {
   const [budget, setBudget] = useState<number>(initialBudget);
-  const [risk, setRisk] = useState<"Safe" | "Balanced" | "Degen">(initialRisk);
+  const [risk, setRisk] = useState<RiskBand>(initialRisk);
   const [stablesOnly, setStablesOnly] = useState(false);
+  const [customApyMin, setCustomApyMin] = useState<number>(CUSTOM_DEFAULT_MIN);
+  const [customApyMax, setCustomApyMax] = useState<number>(CUSTOM_DEFAULT_MAX);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<InvestmentStrategy | null>(null);
+  const [picks, setPicks] = useState<AllocationPick[]>([]);
   const [progress, setProgress] = useState<ProgressState>(INITIAL_PROGRESS);
   const cancelRef = useRef(false);
 
   useEffect(() => {
     if (!open) return;
-    setBudget(initialBudget);
-    setRisk(initialRisk);
-    setResult(null);
+    const draft = loadDraft();
+    if (draft) {
+      setBudget(draft.budget);
+      setRisk(draft.risk);
+      setStablesOnly(draft.stablesOnly);
+      setCustomApyMin(
+        Number.isFinite(draft.customApyMin) ? draft.customApyMin : CUSTOM_DEFAULT_MIN,
+      );
+      setCustomApyMax(
+        Number.isFinite(draft.customApyMax) ? draft.customApyMax : CUSTOM_DEFAULT_MAX,
+      );
+      setResult(draft.result);
+      setPicks(
+        draft.picks?.length === draft.result.allocations.length
+          ? draft.picks
+          : makeDefaultPicks(draft.result),
+      );
+    } else {
+      setBudget(initialBudget);
+      setRisk(initialRisk);
+      setCustomApyMin(CUSTOM_DEFAULT_MIN);
+      setCustomApyMax(CUSTOM_DEFAULT_MAX);
+      setResult(null);
+      setPicks([]);
+    }
     setError(null);
     setProgress(INITIAL_PROGRESS);
   }, [open, initialBudget, initialRisk]);
+
+  useEffect(() => {
+    if (!result) return;
+    saveDraft({ budget, risk, stablesOnly, customApyMin, customApyMax, result, picks });
+  }, [budget, risk, stablesOnly, customApyMin, customApyMax, result, picks]);
+
+  useEffect(() => {
+    if (result && picks.length === 0) {
+      setPicks(makeDefaultPicks(result));
+    }
+  }, [result, picks.length]);
 
   useEffect(() => {
     if (!open) {
@@ -95,10 +208,10 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
     setProgress(INITIAL_PROGRESS);
     cancelRef.current = false;
 
-    const range = apyRange(risk);
+    const range = apyRange(risk, customApyMin, customApyMax);
     const body: StrategyCriteria = {
       budget,
-      riskAppetite: riskToApi(risk),
+      riskAppetite: riskToApi(risk, customApyMin, customApyMax),
       targetApyMin: range.min,
       targetApyMax: range.max,
       assetType: stablesOnly ? "stablecoins" : "all",
@@ -271,14 +384,14 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
                   padding: 2,
                 }}
               >
-                {(["Safe", "Balanced", "Degen"] as const).map((r) => (
+                {(["Safe", "Balanced", "Degen", "Custom"] as const).map((r) => (
                   <button
                     key={r}
                     type="button"
                     onClick={() => setRisk(r)}
                     style={{
                       flex: 1,
-                      padding: "7px 8px",
+                      padding: "7px 6px",
                       fontSize: 12,
                       fontWeight: 500,
                       borderRadius: 6,
@@ -294,6 +407,69 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
                   </button>
                 ))}
               </div>
+              {risk === "Custom" ? (
+                <div
+                  style={{
+                    marginTop: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1 }}>
+                    <span
+                      className="mono"
+                      style={{ fontSize: 10, color: "var(--text-dim)", letterSpacing: "0.08em" }}
+                    >
+                      MIN
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={1000}
+                      step={0.5}
+                      value={customApyMin}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (Number.isFinite(v)) setCustomApyMin(Math.max(0, v));
+                      }}
+                      className="input mono"
+                      style={{ width: "100%", padding: "6px 8px", fontSize: 12 }}
+                      aria-label="Custom min APY %"
+                    />
+                    <span style={{ fontSize: 11, color: "var(--text-dim)" }}>%</span>
+                  </div>
+                  <span style={{ color: "var(--text-dim)", fontSize: 11 }}>to</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1 }}>
+                    <span
+                      className="mono"
+                      style={{ fontSize: 10, color: "var(--text-dim)", letterSpacing: "0.08em" }}
+                    >
+                      MAX
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={1000}
+                      step={0.5}
+                      value={customApyMax}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (Number.isFinite(v)) setCustomApyMax(Math.max(0, v));
+                      }}
+                      className="input mono"
+                      style={{ width: "100%", padding: "6px 8px", fontSize: 12 }}
+                      aria-label="Custom max APY %"
+                    />
+                    <span style={{ fontSize: 11, color: "var(--text-dim)" }}>%</span>
+                  </div>
+                </div>
+              ) : null}
+              {risk === "Custom" && customApyMax <= customApyMin ? (
+                <div style={{ marginTop: 6, fontSize: 11, color: "var(--warn)" }}>
+                  Max APY must be greater than min APY.
+                </div>
+              ) : null}
             </div>
             <label
               style={{
@@ -325,7 +501,29 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
             </div>
           </div>
         ) : result ? (
-          <StrategyResultView result={result} />
+          <StrategyResultView
+            result={result}
+            criteria={{
+              budget,
+              riskAppetite: riskToApi(risk, customApyMin, customApyMax),
+              targetApyMin: apyRange(risk, customApyMin, customApyMax).min,
+              targetApyMax: apyRange(risk, customApyMin, customApyMax).max,
+              assetType: stablesOnly ? "stablecoins" : "all",
+            }}
+            budget={budget}
+            picks={picks}
+            onPicksChange={setPicks}
+            onStartOver={() => {
+              clearDraft();
+              setResult(null);
+              setPicks([]);
+              setError(null);
+              setProgress(INITIAL_PROGRESS);
+            }}
+            onActivated={() => {
+              clearDraft();
+            }}
+          />
         ) : null}
 
         {loading && !result ? (
@@ -488,7 +686,11 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
                 <button
                   type="button"
                   className="btn btn-primary btn-sm"
-                  disabled={loading || budget < 100}
+                  disabled={
+                    loading ||
+                    budget < 100 ||
+                    (risk === "Custom" && customApyMax <= customApyMin)
+                  }
                   onClick={runStrategy}
                 >
                   {loading
@@ -505,7 +707,54 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
   );
 }
 
-function StrategyResultView({ result }: { result: InvestmentStrategy }) {
+function StrategyResultView({
+  result,
+  criteria,
+  budget,
+  picks,
+  onPicksChange,
+  onStartOver,
+  onActivated,
+}: {
+  result: InvestmentStrategy;
+  criteria: StrategyCriteria;
+  budget: number;
+  picks: AllocationPick[];
+  onPicksChange: (next: AllocationPick[]) => void;
+  onStartOver: () => void;
+  onActivated: () => void;
+}) {
+  const { activateStrategy } = useActiveStrategies();
+  const [activating, setActivating] = useState(false);
+  const [activated, setActivated] = useState(false);
+  const [activateError, setActivateError] = useState<string | null>(null);
+
+  const safePicks = picks.length === result.allocations.length ? picks : makeDefaultPicks(result);
+  const totalPercent = totalIncludedPercent(safePicks);
+  const includedCount = safePicks.filter((p) => p.included).length;
+  const customized = useMemo(
+    () => customizeStrategy(result, safePicks, budget),
+    [result, safePicks, budget],
+  );
+
+  const sumOk = Math.abs(totalPercent - 100) < 0.5;
+  const hasPicks = includedCount > 0;
+  const isCustomized = customized.removedPoolIds.length > 0 || customized.changedPoolIds.length > 0;
+
+  function updatePick(poolId: string, patch: Partial<AllocationPick>) {
+    onPicksChange(
+      safePicks.map((p) => (p.poolId === poolId ? { ...p, ...patch } : p)),
+    );
+  }
+
+  function handleNormalize() {
+    onPicksChange(normalizePicks(safePicks));
+  }
+
+  function handleResetPicks() {
+    onPicksChange(makeDefaultPicks(result));
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <CollaborationBadge result={result} />
@@ -514,15 +763,20 @@ function StrategyResultView({ result }: { result: InvestmentStrategy }) {
         <div className="card" style={{ padding: 14 }}>
           <div className="eyebrow" style={{ fontSize: 10 }}>
             PROJECTED APY
+            {isCustomized ? (
+              <span style={{ marginLeft: 8, color: "var(--accent)", fontSize: 9 }}>(YOUR EDIT)</span>
+            ) : null}
           </div>
           <div
             className="num display"
             style={{ fontSize: 26, fontWeight: 500, marginTop: 4 }}
           >
-            {result.projectedApy.toFixed(2)}%
+            {customized.strategy.projectedApy.toFixed(2)}%
           </div>
           <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginTop: 2 }}>
-            blended across {result.allocations.length} pools
+            {isCustomized
+              ? `your picks · ${includedCount} of ${result.allocations.length} pools`
+              : `blended across ${result.allocations.length} pools`}
           </div>
         </div>
         <div className="card" style={{ padding: 14 }}>
@@ -533,7 +787,7 @@ function StrategyResultView({ result }: { result: InvestmentStrategy }) {
             className="num display"
             style={{ fontSize: 26, fontWeight: 500, marginTop: 4 }}
           >
-            ${result.projectedYearlyReturn.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            ${customized.strategy.projectedYearlyReturn.toLocaleString(undefined, { maximumFractionDigits: 0 })}
           </div>
           <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginTop: 2 }}>
             at current rates — not guaranteed
@@ -549,15 +803,83 @@ function StrategyResultView({ result }: { result: InvestmentStrategy }) {
 
 
       <div>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-          Allocations
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+            marginBottom: 8,
+            gap: 10,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Allocations · pick & weight</div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <span
+              className="mono"
+              style={{
+                fontSize: 11,
+                color: sumOk ? "var(--good)" : "var(--warn)",
+                letterSpacing: "0.04em",
+              }}
+              title="Sum of percents across included pools. Must equal 100% to activate."
+            >
+              {totalPercent.toFixed(1)}% / 100%
+            </span>
+            <button
+              type="button"
+              onClick={handleNormalize}
+              className="mono"
+              style={{
+                fontSize: 10,
+                letterSpacing: "0.16em",
+                textTransform: "uppercase",
+                background: "transparent",
+                border: "1px solid var(--line)",
+                color: "var(--text-dim)",
+                padding: "4px 8px",
+                cursor: "pointer",
+                borderRadius: 6,
+              }}
+              title="Scale included percents proportionally so they sum to exactly 100%"
+            >
+              Normalize
+            </button>
+            <button
+              type="button"
+              onClick={handleResetPicks}
+              className="mono"
+              style={{
+                fontSize: 10,
+                letterSpacing: "0.16em",
+                textTransform: "uppercase",
+                background: "transparent",
+                border: "1px solid var(--line)",
+                color: "var(--text-dim)",
+                padding: "4px 8px",
+                cursor: "pointer",
+                borderRadius: 6,
+              }}
+              title="Restore the AI's original allocation"
+            >
+              Reset
+            </button>
+          </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {result.allocations.map((a, i) => (
+          {result.allocations.map((a, i) => {
+            const pick = safePicks.find((p) => p.poolId === a.poolId) ?? {
+              poolId: a.poolId,
+              included: true,
+              percent: a.allocationPercent,
+            };
+            const liveAmount = pick.included ? Math.round((budget * pick.percent) / 100) : 0;
+            const dimmed = !pick.included;
+            return (
             <div
               key={`${a.protocol}-${a.poolId}-${i}`}
               className="card"
-              style={{ padding: 12 }}
+              style={{ padding: 12, opacity: dimmed ? 0.55 : 1 }}
             >
               <div
                 style={{
@@ -567,21 +889,53 @@ function StrategyResultView({ result }: { result: InvestmentStrategy }) {
                   gap: 10,
                 }}
               >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>
-                    {a.symbol} <span style={{ color: "var(--text-dim)" }}>· {a.protocol}</span>
-                  </div>
-                  <div className="mono" style={{ fontSize: 10.5, color: "var(--text-dim)" }}>
-                    {a.chain.toUpperCase()} · APY {a.apy.toFixed(2)}% · TVL $
-                    {(a.tvl / 1_000_000).toFixed(1)}M
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10, minWidth: 0, flex: 1 }}>
+                  <input
+                    type="checkbox"
+                    checked={pick.included}
+                    onChange={(e) => updatePick(a.poolId, { included: e.target.checked })}
+                    aria-label={`Include ${a.symbol} on ${a.protocol}`}
+                    style={{ marginTop: 3, cursor: "pointer" }}
+                  />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>
+                      {a.symbol} <span style={{ color: "var(--text-dim)" }}>· {a.protocol}</span>
+                    </div>
+                    <div className="mono" style={{ fontSize: 10.5, color: "var(--text-dim)" }}>
+                      {a.chain.toUpperCase()} · APY {a.apy.toFixed(2)}% · TVL $
+                      {(a.tvl / 1_000_000).toFixed(1)}M
+                    </div>
                   </div>
                 </div>
-                <div style={{ textAlign: "right" }}>
-                  <div className="num" style={{ fontSize: 13, fontWeight: 600 }}>
-                    ${a.allocationAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={0.1}
+                      value={pick.percent}
+                      disabled={!pick.included}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        if (Number.isFinite(v)) updatePick(a.poolId, { percent: Math.max(0, Math.min(100, v)) });
+                      }}
+                      className="mono"
+                      style={{
+                        width: 64,
+                        textAlign: "right",
+                        background: "var(--surface-2)",
+                        border: "1px solid var(--line)",
+                        borderRadius: 6,
+                        padding: "4px 6px",
+                        fontSize: 12,
+                        color: pick.included ? "var(--accent)" : "var(--text-muted)",
+                      }}
+                    />
+                    <span className="mono" style={{ fontSize: 11, color: "var(--text-dim)" }}>%</span>
                   </div>
-                  <div className="mono" style={{ fontSize: 10.5, color: "var(--accent)" }}>
-                    {a.allocationPercent.toFixed(1)}%
+                  <div className="num" style={{ fontSize: 12, fontWeight: 500, color: pick.included ? "var(--text-1)" : "var(--text-muted)" }}>
+                    ${liveAmount.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                   </div>
                 </div>
               </div>
@@ -663,7 +1017,8 @@ function StrategyResultView({ result }: { result: InvestmentStrategy }) {
                 ) : null}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -686,6 +1041,104 @@ function StrategyResultView({ result }: { result: InvestmentStrategy }) {
           ))}
         </div>
       ) : null}
+
+      <div
+        style={{
+          padding: 14,
+          borderRadius: 12,
+          border: "1px solid color-mix(in oklch, var(--accent) 35%, var(--line))",
+          background: "var(--accent-soft)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+        }}
+      >
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>
+            CONTINUOUS MONITORING
+          </div>
+          <div style={{ fontSize: 12.5, color: "var(--text-1)", lineHeight: 1.55 }}>
+            Activate to have us watch every protocol in this strategy 24/7 — APY drops, TVL drains, on-chain pauses, and known exploit alerts. We notify you the moment something changes. <strong>This does not record a deposit.</strong>
+          </div>
+        </div>
+        {activateError ? (
+          <div style={{ fontSize: 11.5, color: "var(--danger)" }}>
+            {activateError}
+          </div>
+        ) : null}
+        {!sumOk || !hasPicks ? (
+          <div style={{ fontSize: 11.5, color: "var(--warn)" }}>
+            {!hasPicks
+              ? "Select at least one pool to activate."
+              : `Allocations sum to ${totalPercent.toFixed(1)}% — must equal 100% (use Normalize).`}
+          </div>
+        ) : null}
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={activating || activated || !sumOk || !hasPicks}
+            onClick={async () => {
+              setActivateError(null);
+              setActivating(true);
+              try {
+                await activateStrategy(customized.strategy, criteria);
+                setActivated(true);
+                onActivated();
+              } catch (err) {
+                setActivateError(err instanceof Error ? err.message : "Failed to activate");
+              } finally {
+                setActivating(false);
+              }
+            }}
+          >
+            {activated
+              ? "MONITORING ACTIVE"
+              : activating
+                ? "ACTIVATING…"
+                : isCustomized
+                  ? "USE MY PICKS · MONITOR"
+                  : "USE STRATEGY · MONITOR"}{" "}
+            {!activated && !activating ? <Icons.arrow size={13} /> : null}
+          </button>
+          <button
+            type="button"
+            onClick={onStartOver}
+            disabled={activating}
+            className="mono"
+            style={{
+              fontSize: 11,
+              letterSpacing: "0.16em",
+              textTransform: "uppercase",
+              background: "transparent",
+              border: "1px solid var(--line)",
+              color: "var(--text-dim)",
+              padding: "8px 14px",
+              cursor: activating ? "not-allowed" : "pointer",
+              borderRadius: 8,
+            }}
+            title="Discard this strategy and start a new one"
+          >
+            Start over
+          </button>
+        </div>
+        {activated ? (
+          <Link
+            href="/strategies"
+            className="mono"
+            style={{
+              fontSize: 11,
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              color: "var(--accent)",
+              textDecoration: "none",
+              alignSelf: "flex-start",
+            }}
+          >
+            View active strategies →
+          </Link>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -790,7 +1243,12 @@ function CollaborationBadge({ result }: { result: InvestmentStrategy }) {
         <div className="eyebrow" style={{ fontSize: 10, color: toneColor, marginBottom: 2 }}>
           TRIPLE-AI COLLABORATION
         </div>
-        <div style={{ fontSize: 12.5, color: "var(--text-1)" }}>{label}</div>
+        <div
+          style={{ fontSize: 12.5, color: "var(--text-1)", cursor: "help" }}
+          title="A concern is counted as 'addressed' only when the revised strategy verifiably acted on it: the cited pool was dropped, its allocation was cut by ≥20%, or its reasoning was rewritten. The check is deterministic — Claude can't self-mark concerns resolved. Expand 'Reviewer concerns' below to see each one and its resolution."
+        >
+          {label}
+        </div>
         <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
           {verdictChip("Codex", verdicts.codex)}
           {verdictChip("Gemini", verdicts.gemini)}

@@ -19,7 +19,13 @@ export interface AlertConfig {
 }
 
 export type AlertSeverity = "info" | "warning" | "critical";
-export type AlertType = "apy_drop" | "tvl_drain" | "rebalance";
+export type AlertType =
+  | "apy_drop"
+  | "tvl_drain"
+  | "rebalance"
+  | "protocol_tvl_crash"
+  | "protocol_paused"
+  | "exploit_alert";
 
 export interface AlertEvent {
   id: string;

@@ -209,7 +209,7 @@ export default function AlertBell() {
 
           {alerts.length > 0 ? (
             <Link
-              href="/portfolio"
+              href="/strategies"
               className="mono"
               style={{
                 textAlign: "center",
