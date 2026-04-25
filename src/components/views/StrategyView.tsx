@@ -6,6 +6,7 @@ import type { StrategyCriteria, InvestmentStrategy, StrategyAllocation } from "@
 import { saveStrategy } from "@/lib/storage";
 import { useActiveStrategies } from "@/hooks/useActiveStrategies";
 import { Eyebrow, Icons, Spark, Typewriter, fmt } from "@/components/sovereign";
+import { getDepositUrl } from "@/lib/deposit-url";
 
 type Risk = "low" | "medium" | "high";
 type AssetType = "stablecoins" | "all";
@@ -1515,12 +1516,29 @@ function AllocRow({ alloc, index }: { alloc: StrategyAllocation; index: number }
               </Link>
               <a
                 className="btn btn-primary"
-                href={`https://defillama.com/yields/pool/${alloc.poolId}`}
+                href={getDepositUrl(alloc.protocol, alloc.poolId)}
                 target="_blank"
                 rel="noopener noreferrer"
               >
                 INVEST <Icons.arrow />
               </a>
+              <a
+                className="btn"
+                href={`https://defillama.com/yields/pool/${alloc.poolId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                POOL <Icons.arrow />
+              </a>
+              {alloc.contractAddress ? (
+                <Link
+                  className="btn"
+                  href={`/security/audit?address=${alloc.contractAddress}&chain=${encodeURIComponent(alloc.auditChain ?? alloc.chain)}&autostart=1`}
+                  title="Run multi-engine audit (Slither + Aderyn + Mythril + on-chain) reconciled by triple-AI panel"
+                >
+                  AUDIT <Icons.arrow />
+                </Link>
+              ) : null}
             </div>
           </div>
         </div>

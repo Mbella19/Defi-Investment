@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Icons } from "./Icons";
 import type { InvestmentStrategy, StrategyCriteria } from "@/types/strategy";
+import { getDepositUrl } from "@/lib/deposit-url";
 
 type Props = {
   open: boolean;
@@ -588,6 +590,78 @@ function StrategyResultView({ result }: { result: InvestmentStrategy }) {
                   {a.reasoning}
                 </div>
               ) : null}
+              <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                <a
+                  href={getDepositUrl(a.protocol, a.poolId)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="m-icon-btn"
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: "6px 12px",
+                    borderRadius: 8,
+                    background: "var(--accent-soft)",
+                    color: "var(--accent)",
+                    textDecoration: "none",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    width: "auto",
+                    height: "auto",
+                  }}
+                >
+                  Deposit on {a.protocol}
+                  <Icons.external size={12} />
+                </a>
+                <a
+                  href={`https://defillama.com/yields/pool/${a.poolId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="m-icon-btn"
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 500,
+                    padding: "6px 12px",
+                    borderRadius: 8,
+                    border: "1px solid var(--line)",
+                    color: "var(--text-2)",
+                    textDecoration: "none",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    width: "auto",
+                    height: "auto",
+                  }}
+                >
+                  Pool details
+                  <Icons.external size={12} />
+                </a>
+                {a.contractAddress ? (
+                  <Link
+                    href={`/security/audit?address=${a.contractAddress}&chain=${encodeURIComponent(a.auditChain ?? a.chain)}&autostart=1`}
+                    className="m-icon-btn"
+                    title="Run multi-engine smart-contract audit (Slither + Aderyn + Mythril + on-chain interrogation, reconciled by triple-AI panel)"
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 500,
+                      padding: "6px 12px",
+                      borderRadius: 8,
+                      border: "1px solid var(--line)",
+                      color: "var(--text-2)",
+                      textDecoration: "none",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      width: "auto",
+                      height: "auto",
+                    }}
+                  >
+                    Deep audit
+                    <Icons.arrow />
+                  </Link>
+                ) : null}
+              </div>
             </div>
           ))}
         </div>

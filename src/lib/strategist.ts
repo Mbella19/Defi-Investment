@@ -1072,8 +1072,28 @@ export async function generateStrategy(
     revisionNotes: String(revisionNotes).slice(0, 600),
   };
 
+  // Enrich each allocation with the protocol's primary contract address +
+  // deployment chain so the UI can deep-link to the multi-engine audit page.
+  // DefiLlama's `chain` is sometimes "Multi-Chain"; fall back to chains[0] in
+  // that case (typically the canonical L1 deployment).
+  const protocolByName = new Map<string, DefiLlamaProtocol>();
+  for (const p of allProtocols) protocolByName.set(p.name.toLowerCase(), p);
+
+  const enrichedAllocations: StrategyAllocation[] = revisedStrategy.allocations.map((a) => {
+    const proto = protocolByName.get(a.protocol.toLowerCase());
+    if (!proto) return a;
+    const rawAddr = proto.address?.trim();
+    if (!rawAddr || !/^0x[a-fA-F0-9]{40}$/.test(rawAddr)) return a;
+    const chainName =
+      proto.chain && proto.chain !== "Multi-Chain"
+        ? proto.chain
+        : proto.chains?.[0] ?? proto.chain ?? "Ethereum";
+    return { ...a, contractAddress: rawAddr, auditChain: chainName };
+  });
+
   const finalStrategy: InvestmentStrategy = {
     ...revisedStrategy,
+    allocations: enrichedAllocations,
     warnings: [...(revisedStrategy.warnings || []), ...extraWarnings],
     collaboration,
   };

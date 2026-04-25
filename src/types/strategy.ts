@@ -20,6 +20,10 @@ export interface StrategyAllocation {
   legitimacyScore: number;
   verdict: "high_confidence" | "moderate_confidence" | "low_confidence" | "caution";
   redFlags: string[];
+  /** Protocol's primary contract address (from DeFiLlama). Enables one-click multi-engine audit. */
+  contractAddress?: string;
+  /** Chain on which `contractAddress` is deployed (often differs from `chain` for multi-chain protocols). */
+  auditChain?: string;
 }
 
 export type CritiqueCategory =
