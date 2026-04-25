@@ -56,6 +56,13 @@ export interface DeployerForensicsReport {
   reasoning: string[];
   recommendations: string[];
   analyzedAt: string;
+  dualAi?: {
+    claudeOk: boolean;
+    codexOk: boolean;
+    claudeSummary?: string;
+    codexSummary?: string;
+    errors: { source: "claude" | "codex"; error: string }[];
+  };
 }
 
 export type VulnerabilityCategory =
@@ -80,6 +87,9 @@ export interface CandidateSnippet {
   reason: string;
 }
 
+export type AiSource = "claude" | "codex";
+export type Consensus = "both" | "claude-only" | "codex-only";
+
 export interface AuditFinding {
   id: string;
   category: VulnerabilityCategory;
@@ -92,6 +102,18 @@ export interface AuditFinding {
   confidence: number;
   verified: boolean;
   recommendation: string;
+  consensus?: Consensus;
+  claudeConfidence?: number;
+  codexConfidence?: number;
+}
+
+export interface DualAiMeta {
+  claudeOk: boolean;
+  codexOk: boolean;
+  bothConfirmed: number;
+  claudeOnly: number;
+  codexOnly: number;
+  errors: { source: AiSource; error: string }[];
 }
 
 export interface SourceAuditReport {
@@ -108,6 +130,7 @@ export interface SourceAuditReport {
   overallVerdict: "clean" | "review" | "dangerous";
   analyzedAt: string;
   rejectedFindings: number;
+  dualAi?: DualAiMeta;
 }
 
 export type ExploitAlertSeverity = "critical" | "high" | "medium" | "low";
@@ -132,4 +155,12 @@ export interface RelevantAlert extends ExploitAlert {
   relevanceScore: number;
   actionItems: string[];
   aiInterpretation: string;
+  dualAi?: {
+    claudeOk: boolean;
+    codexOk: boolean;
+    claudeRelevance?: number;
+    codexRelevance?: number;
+    claudeInterpretation?: string;
+    codexInterpretation?: string;
+  };
 }

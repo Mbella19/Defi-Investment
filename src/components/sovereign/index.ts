@@ -21,3 +21,5 @@ export { HeroChart } from "./HeroChart";
 export { MobileTab } from "./MobileTab";
 export { Sidebar } from "./Sidebar";
 export { Topbar } from "./Topbar";
+export { ThemeToggle } from "./ThemeToggle";
+export { AIStrategyModal } from "./AIStrategyModal";

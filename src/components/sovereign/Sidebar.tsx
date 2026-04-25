@@ -35,7 +35,7 @@ export function Sidebar() {
         style={{ textDecoration: "none", color: "var(--text)" }}
         aria-label="Sovereign home"
       >
-        <Monogram size={34} />
+        <Monogram size={44} />
         <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.08, minWidth: 0 }}>
           <span style={{ fontSize: 14.5, fontWeight: 600, letterSpacing: "-0.015em" }}>Sovereign</span>
           <span

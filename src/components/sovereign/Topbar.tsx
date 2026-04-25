@@ -4,6 +4,7 @@ import { type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Icons } from "./Icons";
+import { ThemeToggle } from "./ThemeToggle";
 
 const ConnectButton = dynamic(
   () => import("@/components/wallet/ConnectButton"),
@@ -119,6 +120,7 @@ export function Topbar({ extra }: { extra?: ReactNode }) {
             </kbd>
           </span>
         </button>
+        <ThemeToggle />
         <AlertBell />
         <ConnectButton />
       </div>

@@ -21,6 +21,8 @@ export const metadata: Metadata = {
     "On-chain yield, priced honestly. SIG scores every DeFi pool on live TVL, audit posture, oracle health, and capital stickiness.",
 };
 
+const themeBootstrap = `(function(){try{var s=localStorage.getItem('sig-theme');var t=s==='dark'||s==='light'?s:(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','light');}})();`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -28,6 +30,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" data-theme="light" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
+      </head>
       <body className={`${geistMono.variable} ${inter.variable}`}>
         <ThemeProvider>{children}</ThemeProvider>
       </body>

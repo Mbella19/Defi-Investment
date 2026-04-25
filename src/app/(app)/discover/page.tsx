@@ -8,6 +8,8 @@ import {
   TokenGlyph,
   Spark,
   RiskBar,
+  ThemeToggle,
+  AIStrategyModal,
   type ChainId,
 } from "@/components/sovereign";
 import { POOLS, fmtTVL, walk } from "@/lib/demo-data";
@@ -29,7 +31,9 @@ export default function DiscoverPage() {
   const [risk, setRisk] = useState<(typeof RISK_BANDS)[number]>("Balanced");
   const [chain, setChain] = useState<"All" | ChainId>("All");
   const [type, setType] = useState<(typeof TYPE_FILTERS)[number]>("All");
+  const [budget, setBudget] = useState<number>(50000);
   const [mobileChip, setMobileChip] = useState<(typeof MOBILE_CHIPS)[number]>("Safe");
+  const [aiOpen, setAiOpen] = useState(false);
 
   const sparks = useMemo(() => POOLS.map((_, i) => walk(i + 1, 24, 50, 3)), []);
 
@@ -62,7 +66,11 @@ export default function DiscoverPage() {
             <button className="btn btn-sm" type="button">
               <Icons.filter size={13} /> Saved filters
             </button>
-            <button className="btn btn-primary btn-sm" type="button">
+            <button
+              className="btn btn-primary btn-sm"
+              type="button"
+              onClick={() => setAiOpen(true)}
+            >
               <Icons.zap size={13} /> AI Strategy
             </button>
           </div>
@@ -98,7 +106,11 @@ export default function DiscoverPage() {
               </span>
               <input
                 className="input mono"
-                defaultValue="50,000"
+                type="number"
+                min={100}
+                step={100}
+                value={budget}
+                onChange={(e) => setBudget(Number(e.target.value || 0))}
                 style={{ paddingLeft: 22 }}
               />
             </div>
@@ -195,7 +207,11 @@ export default function DiscoverPage() {
               ))}
             </div>
           </div>
-          <button className="btn btn-primary" type="button">
+          <button
+            className="btn btn-primary"
+            type="button"
+            onClick={() => setAiOpen(true)}
+          >
             Run scan <Icons.arrow size={13} />
           </button>
         </div>
@@ -281,9 +297,17 @@ export default function DiscoverPage() {
             <div className="m-title">Discover</div>
             <div className="m-sub">9,812 POOLS · LIVE</div>
           </div>
-          <button type="button" className="m-icon-btn" aria-label="Filters">
-            <Icons.filter size={18} />
-          </button>
+          <div style={{ display: "flex", gap: 4 }}>
+            <ThemeToggle variant="mobile" />
+            <button
+              type="button"
+              className="m-icon-btn"
+              aria-label="AI Strategy"
+              onClick={() => setAiOpen(true)}
+            >
+              <Icons.zap size={18} />
+            </button>
+          </div>
         </div>
         <div style={{ padding: "12px 16px" }}>
           <div className="chip-row">
@@ -404,6 +428,13 @@ export default function DiscoverPage() {
           ))}
         </div>
       </div>
+
+      <AIStrategyModal
+        open={aiOpen}
+        onClose={() => setAiOpen(false)}
+        initialBudget={budget}
+        initialRisk={risk}
+      />
     </>
   );
 }

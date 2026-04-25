@@ -1,12 +1,14 @@
 import type {
   AuditFinding,
   CandidateSnippet,
+  Consensus,
+  DualAiMeta,
   SourceAuditReport,
   Severity,
   VulnerabilityCategory,
 } from "@/types/security";
 import { CHAIN_ID_TO_NAME, getContractSource, normalizeSourceCode } from "./etherscan";
-import { invokeClaude, extractJson } from "./claude-client";
+import { dualInvoke, dualExtractJson, maxSeverity } from "./dual-llm";
 import { createHash } from "crypto";
 
 const cache = new Map<string, { report: SourceAuditReport; expiresAt: number }>();
@@ -249,12 +251,22 @@ function verifySnippet(claimed: string, candidateCode: string): boolean {
   return matchingLines.length / claimedLines.length >= 0.7;
 }
 
-function reconcileFindings(
+interface ConfirmedFinding {
+  source: "claude" | "codex";
+  finding: ModelFinding;
+}
+
+/**
+ * Per-source reconciliation: filter raw model findings down to verified, high-
+ * confidence confirmations. Returns confirmed (with source label) and rejected count.
+ */
+function reconcilePerSource(
+  source: "claude" | "codex",
   candidates: CandidateSnippet[],
   modelFindings: ModelFinding[]
-): { findings: AuditFinding[]; rejected: number } {
+): { confirmed: ConfirmedFinding[]; rejected: number } {
   const byId = new Map(candidates.map((c) => [c.id, c]));
-  const findings: AuditFinding[] = [];
+  const confirmed: ConfirmedFinding[] = [];
   let rejected = 0;
 
   for (const mf of modelFindings) {
@@ -263,35 +275,104 @@ function reconcileFindings(
       continue;
     }
     const cand = byId.get(mf.id);
-    if (!cand) {
+    if (!cand || mf.confidence < MIN_CONFIDENCE) {
       rejected++;
       continue;
     }
-    if (mf.confidence < MIN_CONFIDENCE) {
+    if (!verifySnippet(mf.codeSnippet, cand.code)) {
       rejected++;
       continue;
     }
-    const verified = verifySnippet(mf.codeSnippet, cand.code);
-    if (!verified) {
-      rejected++;
+    confirmed.push({ source, finding: mf });
+  }
+
+  return { confirmed, rejected };
+}
+
+/**
+ * Merge confirmations from both AIs into a single AuditFinding[] keyed by
+ * candidate id. When both AIs flag the same candidate we boost confidence and
+ * mark consensus="both"; single-AI findings are kept but flagged as such.
+ */
+function mergeDualFindings(
+  candidates: CandidateSnippet[],
+  claudeConfirmed: ConfirmedFinding[],
+  codexConfirmed: ConfirmedFinding[]
+): { findings: AuditFinding[]; bothConfirmed: number; claudeOnly: number; codexOnly: number } {
+  const byId = new Map(candidates.map((c) => [c.id, c]));
+  const claudeMap = new Map(claudeConfirmed.map((c) => [c.finding.id, c.finding]));
+  const codexMap = new Map(codexConfirmed.map((c) => [c.finding.id, c.finding]));
+  const allIds = new Set<string>([...claudeMap.keys(), ...codexMap.keys()]);
+
+  const findings: AuditFinding[] = [];
+  let bothConfirmed = 0;
+  let claudeOnly = 0;
+  let codexOnly = 0;
+
+  for (const id of allIds) {
+    const cand = byId.get(id);
+    if (!cand) continue;
+    const cl = claudeMap.get(id);
+    const cx = codexMap.get(id);
+    let consensus: Consensus;
+    let severity: Severity;
+    let title: string;
+    let description: string;
+    let recommendation: string;
+    let confidence: number;
+
+    if (cl && cx) {
+      consensus = "both";
+      bothConfirmed++;
+      severity = maxSeverity(cl.severity, cx.severity);
+      // prefer the longer, more specific description
+      description = (cl.description.length >= cx.description.length ? cl.description : cx.description).slice(0, 600);
+      title = (cl.title.length >= cx.title.length ? cl.title : cx.title).slice(0, 140);
+      recommendation = (cl.recommendation.length >= cx.recommendation.length ? cl.recommendation : cx.recommendation).slice(0, 400);
+      // average + consensus boost, capped at 1
+      confidence = Math.min(1, (cl.confidence + cx.confidence) / 2 + 0.1);
+    } else if (cl) {
+      consensus = "claude-only";
+      claudeOnly++;
+      severity = cl.severity;
+      title = cl.title.slice(0, 140);
+      description = cl.description.slice(0, 600);
+      recommendation = cl.recommendation.slice(0, 400);
+      confidence = Math.max(0, Math.min(1, cl.confidence));
+    } else if (cx) {
+      consensus = "codex-only";
+      codexOnly++;
+      severity = cx.severity;
+      title = cx.title.slice(0, 140);
+      description = cx.description.slice(0, 600);
+      recommendation = cx.recommendation.slice(0, 400);
+      confidence = Math.max(0, Math.min(1, cx.confidence));
+    } else {
       continue;
     }
+
     findings.push({
       id: cand.id,
       category: cand.category,
-      severity: mf.severity,
-      title: mf.title.slice(0, 140),
-      description: mf.description.slice(0, 600),
+      severity,
+      title,
+      description,
       startLine: cand.startLine,
       endLine: cand.endLine,
       codeSnippet: cand.code,
-      confidence: Math.max(0, Math.min(1, mf.confidence)),
+      confidence,
       verified: true,
-      recommendation: mf.recommendation.slice(0, 400),
+      recommendation,
+      consensus,
+      claudeConfidence: cl?.confidence,
+      codexConfidence: cx?.confidence,
     });
   }
 
   findings.sort((a, b) => {
+    // consensus="both" before single-AI findings, then by severity, then by confidence
+    if (a.consensus === "both" && b.consensus !== "both") return -1;
+    if (b.consensus === "both" && a.consensus !== "both") return 1;
     const rank: Record<Severity, number> = {
       critical: 5,
       high: 4,
@@ -299,10 +380,12 @@ function reconcileFindings(
       low: 2,
       info: 1,
     };
-    return rank[b.severity] - rank[a.severity];
+    const sevDiff = rank[b.severity] - rank[a.severity];
+    if (sevDiff !== 0) return sevDiff;
+    return b.confidence - a.confidence;
   });
 
-  return { findings, rejected };
+  return { findings, bothConfirmed, claudeOnly, codexOnly };
 }
 
 function scoreFromFindings(findings: AuditFinding[]): {
@@ -364,22 +447,46 @@ export async function auditContract(
 
   const prompt = buildAuditPrompt(candidates, src.ContractName || "Unknown");
 
-  let modelFindings: ModelFinding[] = [];
-  try {
-    const output = await invokeClaude(prompt, {
-      effort: "max",
-      timeoutMs: 360_000,
-    });
-    const parsed = extractJson<{ findings: ModelFinding[] }>(output);
-    modelFindings = Array.isArray(parsed.findings) ? parsed.findings : [];
-  } catch (err) {
-    throw new Error(
-      `AI audit failed: ${err instanceof Error ? err.message : "unknown error"}`
-    );
+  // Run BOTH Claude Opus 4.7 (max) and Codex GPT-5.5 (xhigh) on the same prompt.
+  // Either failing does not abort the other; partial results are still useful.
+  const raw = await dualInvoke(prompt, { timeoutMs: 360_000 });
+  const parsed = dualExtractJson<{ findings: ModelFinding[] }>(raw);
+
+  if (!parsed.claude && !parsed.codex) {
+    const detail = parsed.errors.map((e) => `${e.source}: ${e.error}`).join(" | ");
+    throw new Error(`Dual AI audit failed: both models unavailable (${detail})`);
   }
 
-  const { findings, rejected } = reconcileFindings(candidates, modelFindings);
+  const claudeFindings = Array.isArray(parsed.claude?.findings) ? parsed.claude!.findings : [];
+  const codexFindings = Array.isArray(parsed.codex?.findings) ? parsed.codex!.findings : [];
+
+  const { confirmed: claudeConfirmed, rejected: claudeRejected } = reconcilePerSource(
+    "claude",
+    candidates,
+    claudeFindings
+  );
+  const { confirmed: codexConfirmed, rejected: codexRejected } = reconcilePerSource(
+    "codex",
+    candidates,
+    codexFindings
+  );
+
+  const { findings, bothConfirmed, claudeOnly, codexOnly } = mergeDualFindings(
+    candidates,
+    claudeConfirmed,
+    codexConfirmed
+  );
+
   const { score, verdict } = scoreFromFindings(findings);
+
+  const dualAi: DualAiMeta = {
+    claudeOk: parsed.claude !== null,
+    codexOk: parsed.codex !== null,
+    bothConfirmed,
+    claudeOnly,
+    codexOnly,
+    errors: parsed.errors,
+  };
 
   const report: SourceAuditReport = {
     contractAddress: contractAddress.toLowerCase(),
@@ -394,7 +501,8 @@ export async function auditContract(
     overallScore: score,
     overallVerdict: verdict,
     analyzedAt: new Date().toISOString(),
-    rejectedFindings: rejected,
+    rejectedFindings: claudeRejected + codexRejected,
+    dualAi,
   };
 
   cache.set(key, { report, expiresAt: Date.now() + CACHE_TTL });

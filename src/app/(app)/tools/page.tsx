@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentType } from "react";
-import { Icons } from "@/components/sovereign";
+import { Icons, ThemeToggle } from "@/components/sovereign";
 
 type Tool = {
   n: string;
@@ -132,6 +132,7 @@ export default function ToolsPage() {
             <div className="m-title">Tools</div>
             <div className="m-sub">MODELING · ROUTING · FORENSICS</div>
           </div>
+          <ThemeToggle variant="mobile" />
         </div>
         <div className="m-content">
           {TOOLS.map((t) => {

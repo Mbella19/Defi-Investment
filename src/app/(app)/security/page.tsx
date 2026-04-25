@@ -1,6 +1,6 @@
 "use client";
 
-import { Icons, Stat, RiskBar } from "@/components/sovereign";
+import { Icons, Stat, RiskBar, ThemeToggle } from "@/components/sovereign";
 
 type FeedTone = "info" | "good" | "warn" | "danger";
 type FeedItem = { t: string; tone: FeedTone; ts: string; meta: string };
@@ -156,9 +156,12 @@ export default function SecurityPage() {
             <div className="m-title">Security</div>
             <div className="m-sub">RISK TELEMETRY · LIVE</div>
           </div>
-          <button type="button" className="m-icon-btn" aria-label="Alerts">
-            <Icons.bell size={18} />
-          </button>
+          <div style={{ display: "flex", gap: 4 }}>
+            <ThemeToggle variant="mobile" />
+            <button type="button" className="m-icon-btn" aria-label="Alerts">
+              <Icons.bell size={18} />
+            </button>
+          </div>
         </div>
         <div className="m-content">
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>

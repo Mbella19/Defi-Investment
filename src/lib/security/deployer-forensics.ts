@@ -12,7 +12,7 @@ import {
   getContractCreation,
   getNormalTxs,
 } from "./etherscan";
-import { invokeClaude, extractJson } from "./claude-client";
+import { dualInvoke, dualExtractJson, dedupeStrings } from "./dual-llm";
 
 const cache = new Map<string, { report: DeployerForensicsReport; expiresAt: number }>();
 const CACHE_TTL = 24 * 60 * 60 * 1000;
@@ -262,30 +262,55 @@ export async function analyzeDeployer(
   let summary = "";
   let reasoning: string[] = [];
   let recommendations: string[] = [];
+  let dualAi: DeployerForensicsReport["dualAi"];
 
-  try {
-    const prompt = buildSynthesisPrompt(trace);
-    const output = await invokeClaude(prompt, { effort: "max", timeoutMs: 120_000 });
-    const parsed = extractJson<{
-      summary: string;
-      reasoning: string[];
-      recommendations: string[];
-    }>(output);
-    summary = String(parsed.summary || "").trim();
-    reasoning = Array.isArray(parsed.reasoning)
-      ? parsed.reasoning.map(String).filter(Boolean).slice(0, 8)
-      : [];
-    recommendations = Array.isArray(parsed.recommendations)
-      ? parsed.recommendations.map(String).filter(Boolean).slice(0, 6)
-      : [];
-  } catch (err) {
-    summary = `Automatic synthesis unavailable (${
-      err instanceof Error ? err.message : "unknown error"
-    }). Review raw flags below.`;
+  const prompt = buildSynthesisPrompt(trace);
+  const raw = await dualInvoke(prompt, { timeoutMs: 180_000 });
+  const parsed = dualExtractJson<{
+    summary: string;
+    reasoning: string[];
+    recommendations: string[];
+  }>(raw);
+
+  const claudeSummary = parsed.claude ? String(parsed.claude.summary || "").trim() : "";
+  const codexSummary = parsed.codex ? String(parsed.codex.summary || "").trim() : "";
+  const claudeReasoning = Array.isArray(parsed.claude?.reasoning)
+    ? parsed.claude!.reasoning.map(String).filter(Boolean)
+    : [];
+  const codexReasoning = Array.isArray(parsed.codex?.reasoning)
+    ? parsed.codex!.reasoning.map(String).filter(Boolean)
+    : [];
+  const claudeRecs = Array.isArray(parsed.claude?.recommendations)
+    ? parsed.claude!.recommendations.map(String).filter(Boolean)
+    : [];
+  const codexRecs = Array.isArray(parsed.codex?.recommendations)
+    ? parsed.codex!.recommendations.map(String).filter(Boolean)
+    : [];
+
+  if (claudeSummary || codexSummary) {
+    // Prefer Claude as primary if available; surface both in dualAi metadata.
+    summary = claudeSummary || codexSummary;
+    reasoning = dedupeStrings([...claudeReasoning, ...codexReasoning]).slice(0, 10);
+    recommendations = dedupeStrings([...claudeRecs, ...codexRecs]).slice(0, 8);
+    dualAi = {
+      claudeOk: parsed.claude !== null,
+      codexOk: parsed.codex !== null,
+      claudeSummary: claudeSummary || undefined,
+      codexSummary: codexSummary || undefined,
+      errors: parsed.errors,
+    };
+  } else {
+    const detail = parsed.errors.map((e) => `${e.source}: ${e.error}`).join(" | ");
+    summary = `Automatic synthesis unavailable (${detail || "no model output"}). Review raw flags below.`;
     reasoning = flags.map((f) => `${f.severity.toUpperCase()}: ${f.message}`);
     recommendations = flags.length > 0
       ? ["Review each flagged signal manually before depositing capital."]
       : ["No automated concerns — still cross-check audits and TVL independently."];
+    dualAi = {
+      claudeOk: false,
+      codexOk: false,
+      errors: parsed.errors,
+    };
   }
 
   const report: DeployerForensicsReport = {
@@ -296,6 +321,7 @@ export async function analyzeDeployer(
     reasoning,
     recommendations,
     analyzedAt: new Date().toISOString(),
+    dualAi,
   };
 
   cache.set(key, { report, expiresAt: Date.now() + CACHE_TTL });

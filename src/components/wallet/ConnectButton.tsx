@@ -1,57 +1,39 @@
 "use client";
 
-import { WagmiProvider } from "wagmi";
-import {
-  RainbowKitProvider,
-  ConnectButton as RainbowConnectButton,
-  darkTheme,
-} from "@rainbow-me/rainbowkit";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { config } from "@/lib/wallet/config";
-import "@rainbow-me/rainbowkit/styles.css";
-
-const queryClient = new QueryClient();
-
-const rkDark = darkTheme({
-  accentColor: "#5AE4D4",
-  accentColorForeground: "#07080C",
-  borderRadius: "none",
-  fontStack: "system",
-});
-rkDark.colors.modalBackground = "#07080C";
-rkDark.colors.modalBorder = "#2A313D";
+import { ConnectButton as RainbowConnectButton } from "@rainbow-me/rainbowkit";
 
 const pill: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
   gap: 8,
-  padding: "6px 14px",
+  padding: "7px 14px",
   fontFamily: "var(--font-geist-mono), 'Geist Mono', monospace",
   fontSize: 11,
   letterSpacing: "0.14em",
   textTransform: "uppercase",
-  border: "1px solid var(--line-2)",
-  background: "transparent",
+  borderRadius: 10,
+  border: "1px solid var(--line)",
+  background: "var(--surface-2)",
   color: "var(--text)",
   cursor: "pointer",
-  transition: "all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)",
+  transition: "all 0.18s ease",
 };
 
 const accentPill: React.CSSProperties = {
   ...pill,
-  color: "var(--accent)",
-  borderColor: "color-mix(in oklch, var(--accent) 60%, transparent)",
-  background: "var(--accent-soft)",
+  color: "var(--accent-ink)",
+  borderColor: "var(--accent)",
+  background: "var(--accent)",
 };
 
 const dangerPill: React.CSSProperties = {
   ...pill,
   color: "var(--danger)",
   borderColor: "color-mix(in oklch, var(--danger) 60%, transparent)",
-  background: "color-mix(in oklch, var(--danger) 10%, transparent)",
+  background: "color-mix(in oklch, var(--danger) 12%, transparent)",
 };
 
-function ConnectButtonInner() {
+export default function ConnectButton() {
   return (
     <RainbowConnectButton.Custom>
       {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted }) => {
@@ -68,7 +50,7 @@ function ConnectButtonInner() {
             {(() => {
               if (!connected) {
                 return (
-                  <button onClick={openConnectModal} style={accentPill}>
+                  <button onClick={openConnectModal} style={accentPill} type="button">
                     CONNECT WALLET
                   </button>
                 );
@@ -76,7 +58,7 @@ function ConnectButtonInner() {
 
               if (chain.unsupported) {
                 return (
-                  <button onClick={openChainModal} style={dangerPill}>
+                  <button onClick={openChainModal} style={dangerPill} type="button">
                     WRONG NETWORK
                   </button>
                 );
@@ -88,6 +70,7 @@ function ConnectButtonInner() {
                     onClick={openChainModal}
                     style={pill}
                     title="Switch network"
+                    type="button"
                   >
                     {chain.hasIcon && chain.iconUrl ? (
                       <img
@@ -98,7 +81,7 @@ function ConnectButtonInner() {
                     ) : null}
                     <span>{chain.name}</span>
                   </button>
-                  <button onClick={openAccountModal} style={accentPill}>
+                  <button onClick={openAccountModal} style={accentPill} type="button">
                     {account.displayName}
                   </button>
                 </div>
@@ -108,17 +91,5 @@ function ConnectButtonInner() {
         );
       }}
     </RainbowConnectButton.Custom>
-  );
-}
-
-export default function ConnectButton() {
-  return (
-    <WagmiProvider config={config}>
-      <QueryClientProvider client={queryClient}>
-        <RainbowKitProvider theme={rkDark}>
-          <ConnectButtonInner />
-        </RainbowKitProvider>
-      </QueryClientProvider>
-    </WagmiProvider>
   );
 }
