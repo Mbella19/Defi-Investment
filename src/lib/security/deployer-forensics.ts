@@ -12,13 +12,28 @@ import {
   getContractCreation,
   getNormalTxs,
 } from "./etherscan";
-import { dualInvoke, dualExtractJson, dedupeStrings } from "./dual-llm";
+import { tripleInvoke, tripleExtractJson, dedupeStrings } from "./dual-llm";
 
 const cache = new Map<string, { report: DeployerForensicsReport; expiresAt: number }>();
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 
 function cacheKey(chainId: number, address: string): string {
   return `${chainId}:${address.toLowerCase()}`;
+}
+
+/**
+ * Peek at the deployer-forensics cache without triggering fresh analysis.
+ * Returns the report if a non-expired entry exists, null otherwise. Used by
+ * the protocol-analysis pipeline to surface ground-truth deployer data when
+ * a recent forensics report happens to be cached.
+ */
+export function peekCachedForensics(
+  chainId: number,
+  contractAddress: string
+): DeployerForensicsReport | null {
+  const hit = cache.get(cacheKey(chainId, contractAddress));
+  if (!hit || hit.expiresAt <= Date.now()) return null;
+  return hit.report;
 }
 
 function classifyAddress(address: string): FundingSource["riskCategory"] {
@@ -265,8 +280,8 @@ export async function analyzeDeployer(
   let dualAi: DeployerForensicsReport["dualAi"];
 
   const prompt = buildSynthesisPrompt(trace);
-  const raw = await dualInvoke(prompt, { timeoutMs: 180_000 });
-  const parsed = dualExtractJson<{
+  const raw = await tripleInvoke(prompt, { timeoutMs: 180_000 });
+  const parsed = tripleExtractJson<{
     summary: string;
     reasoning: string[];
     recommendations: string[];
@@ -274,11 +289,15 @@ export async function analyzeDeployer(
 
   const claudeSummary = parsed.claude ? String(parsed.claude.summary || "").trim() : "";
   const codexSummary = parsed.codex ? String(parsed.codex.summary || "").trim() : "";
+  const geminiSummary = parsed.gemini ? String(parsed.gemini.summary || "").trim() : "";
   const claudeReasoning = Array.isArray(parsed.claude?.reasoning)
     ? parsed.claude!.reasoning.map(String).filter(Boolean)
     : [];
   const codexReasoning = Array.isArray(parsed.codex?.reasoning)
     ? parsed.codex!.reasoning.map(String).filter(Boolean)
+    : [];
+  const geminiReasoning = Array.isArray(parsed.gemini?.reasoning)
+    ? parsed.gemini!.reasoning.map(String).filter(Boolean)
     : [];
   const claudeRecs = Array.isArray(parsed.claude?.recommendations)
     ? parsed.claude!.recommendations.map(String).filter(Boolean)
@@ -286,17 +305,22 @@ export async function analyzeDeployer(
   const codexRecs = Array.isArray(parsed.codex?.recommendations)
     ? parsed.codex!.recommendations.map(String).filter(Boolean)
     : [];
+  const geminiRecs = Array.isArray(parsed.gemini?.recommendations)
+    ? parsed.gemini!.recommendations.map(String).filter(Boolean)
+    : [];
 
-  if (claudeSummary || codexSummary) {
-    // Prefer Claude as primary if available; surface both in dualAi metadata.
-    summary = claudeSummary || codexSummary;
-    reasoning = dedupeStrings([...claudeReasoning, ...codexReasoning]).slice(0, 10);
-    recommendations = dedupeStrings([...claudeRecs, ...codexRecs]).slice(0, 8);
+  if (claudeSummary || codexSummary || geminiSummary) {
+    // Prefer Claude as primary if available; surface all three in dualAi metadata.
+    summary = claudeSummary || codexSummary || geminiSummary;
+    reasoning = dedupeStrings([...claudeReasoning, ...codexReasoning, ...geminiReasoning]).slice(0, 12);
+    recommendations = dedupeStrings([...claudeRecs, ...codexRecs, ...geminiRecs]).slice(0, 10);
     dualAi = {
       claudeOk: parsed.claude !== null,
       codexOk: parsed.codex !== null,
+      geminiOk: parsed.gemini !== null,
       claudeSummary: claudeSummary || undefined,
       codexSummary: codexSummary || undefined,
+      geminiSummary: geminiSummary || undefined,
       errors: parsed.errors,
     };
   } else {
@@ -309,6 +333,7 @@ export async function analyzeDeployer(
     dualAi = {
       claudeOk: false,
       codexOk: false,
+      geminiOk: false,
       errors: parsed.errors,
     };
   }

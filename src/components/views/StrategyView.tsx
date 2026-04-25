@@ -25,14 +25,12 @@ const RISKS: Array<{ v: Risk; n: string; d: string }> = [
   { v: "high", n: "AGGRESSIVE", d: "8%+ APY. Higher reward, elevated tail risk." },
 ];
 
-const STREAMED_THOUGHTS = [
-  "Indexing 10,422 pools from DeFiLlama…",
-  "Filtering by your APY band…",
-  "Running legitimacy analysis on 184 protocols…",
-  "Cross-referencing audit reports and exploit history…",
-  "Computing safety-weighted allocation…",
-  "Building step-by-step execution plan…",
-];
+type ProgressFeedItem = {
+  ts: number;
+  stage: string;
+  message: string;
+  sub?: { done: number; total: number };
+};
 
 const SEQUENCE: Array<[string, string, string]> = [
   ["T+00s", "DeFiLlama scan", "10,422 pools indexed"],
@@ -75,34 +73,29 @@ export default function StrategyPage() {
   const [asset, setAsset] = useState<AssetType>("all");
 
   const [progress, setProgress] = useState(0);
-  const [thoughtIdx, setThoughtIdx] = useState(0);
+  const [currentMessage, setCurrentMessage] = useState("Initializing strategy pipeline…");
+  const [feed, setFeed] = useState<ProgressFeedItem[]>([]);
+  const [elapsedMs, setElapsedMs] = useState(0);
   const [result, setResult] = useState<StrategyResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const tickerRef = useRef<number | null>(null);
+  const cancelRef = useRef(false);
 
   useEffect(() => {
     return () => {
-      if (tickerRef.current !== null) window.clearInterval(tickerRef.current);
+      cancelRef.current = true;
     };
   }, []);
 
   const run = async () => {
     setStage("thinking");
     setProgress(0);
-    setThoughtIdx(0);
+    setCurrentMessage("Initializing strategy pipeline…");
+    setFeed([]);
+    setElapsedMs(0);
     setError(null);
     setResult(null);
-
-    if (tickerRef.current !== null) window.clearInterval(tickerRef.current);
-
-    let p = 0;
-    tickerRef.current = window.setInterval(() => {
-      p += 0.4;
-      const capped = Math.min(p, 96);
-      setProgress(capped);
-      setThoughtIdx(Math.min(Math.floor(capped / (96 / STREAMED_THOUGHTS.length)), STREAMED_THOUGHTS.length - 1));
-    }, 120);
+    cancelRef.current = false;
 
     try {
       const res = await fetch("/api/strategy", {
@@ -116,18 +109,39 @@ export default function StrategyPage() {
           assetType: asset,
         } satisfies StrategyCriteria),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: "Strategy generation failed" }));
-        throw new Error(data.error || "Strategy generation failed");
+      const start = await res.json();
+      if (!res.ok || !start?.jobId) {
+        throw new Error(start?.error || "Failed to start strategy job");
       }
-      const data = (await res.json()) as StrategyResult;
-      if (tickerRef.current !== null) window.clearInterval(tickerRef.current);
-      setProgress(100);
-      setThoughtIdx(STREAMED_THOUGHTS.length - 1);
-      setResult(data);
-      setStage("result");
+      const jobId: string = start.jobId;
+
+      // Poll for progress until the job resolves. Backend keeps the job in
+      // memory; we just keep the bar in sync with whatever stage it's on.
+      while (!cancelRef.current) {
+        await new Promise((r) => setTimeout(r, 1500));
+        if (cancelRef.current) return;
+        const pollRes = await fetch(`/api/strategy?id=${encodeURIComponent(jobId)}`);
+        const job = await pollRes.json();
+        if (!pollRes.ok) {
+          throw new Error(job?.error || "Lost track of strategy job");
+        }
+
+        if (typeof job.progress === "number") setProgress(job.progress);
+        if (typeof job.message === "string") setCurrentMessage(job.message);
+        if (typeof job.elapsedMs === "number") setElapsedMs(job.elapsedMs);
+        if (Array.isArray(job.events)) setFeed(job.events as ProgressFeedItem[]);
+
+        if (job.status === "done" && job.result) {
+          setProgress(100);
+          setResult(job.result as StrategyResult);
+          setStage("result");
+          return;
+        }
+        if (job.status === "error") {
+          throw new Error(job.error || "Strategy generation failed");
+        }
+      }
     } catch (e) {
-      if (tickerRef.current !== null) window.clearInterval(tickerRef.current);
       setError(e instanceof Error ? e.message : "Failed to generate strategy");
       setStage("input");
     }
@@ -138,7 +152,9 @@ export default function StrategyPage() {
     setResult(null);
     setError(null);
     setProgress(0);
-    setThoughtIdx(0);
+    setCurrentMessage("Initializing strategy pipeline…");
+    setFeed([]);
+    setElapsedMs(0);
   };
 
   return (
@@ -258,7 +274,12 @@ export default function StrategyPage() {
         />
       ) : null}
       {stage === "thinking" ? (
-        <ThinkingPanel progress={progress} idx={thoughtIdx} />
+        <ThinkingPanel
+          progress={progress}
+          message={currentMessage}
+          feed={feed}
+          elapsedMs={elapsedMs}
+        />
       ) : null}
       {stage === "result" && result ? (
         <ResultPanel
@@ -579,8 +600,25 @@ function StrategyForm({
   );
 }
 
-function ThinkingPanel({ progress, idx }: { progress: number; idx: number }) {
-  const thought = STREAMED_THOUGHTS[idx] ?? "";
+function formatElapsed(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "0s";
+  const total = Math.floor(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return m > 0 ? `${m}m ${s.toString().padStart(2, "0")}s` : `${s}s`;
+}
+
+function ThinkingPanel({
+  progress,
+  message,
+  feed,
+  elapsedMs,
+}: {
+  progress: number;
+  message: string;
+  feed: ProgressFeedItem[];
+  elapsedMs: number;
+}) {
   return (
     <div
       className="fadeUp"
@@ -627,8 +665,20 @@ function ThinkingPanel({ progress, idx }: { progress: number; idx: number }) {
               margin: "24px 0",
             }}
           >
-            <Typewriter key={idx} text={thought} speed={18} />
+            <Typewriter key={message} text={message} speed={14} />
           </h2>
+          <div
+            className="mono"
+            style={{
+              marginTop: 12,
+              fontSize: 11,
+              letterSpacing: "0.16em",
+              textTransform: "uppercase",
+              color: "var(--text-dim)",
+            }}
+          >
+            ELAPSED · {formatElapsed(elapsedMs)}
+          </div>
 
           <div style={{ marginTop: 40 }}>
             <div
@@ -680,23 +730,43 @@ function ThinkingPanel({ progress, idx }: { progress: number; idx: number }) {
           </div>
 
           <div style={{ marginTop: 40 }}>
-            <Eyebrow>LIVE FEED</Eyebrow>
+            <Eyebrow>LIVE FEED · BACKEND EVENTS</Eyebrow>
             <div
               className="mono"
               style={{
                 marginTop: 16,
                 fontSize: 11,
                 color: "var(--text-dim)",
-                lineHeight: 1.8,
-                maxHeight: 200,
-                overflow: "hidden",
+                lineHeight: 1.7,
+                maxHeight: 220,
+                overflowY: "auto",
               }}
             >
-              {STREAMED_THOUGHTS.slice(0, idx + 1).map((t, i) => (
-                <div key={i} style={{ opacity: 1 - (idx - i) * 0.2 }}>
-                  <span style={{ color: "var(--accent)" }}>▸</span> {t}
+              {feed.length === 0 ? (
+                <div style={{ opacity: 0.6 }}>
+                  <span style={{ color: "var(--accent)" }}>▸</span> Waiting for first event…
                 </div>
-              ))}
+              ) : (
+                feed.slice().reverse().map((e, i) => {
+                  const sub =
+                    e.sub && e.sub.total > 0
+                      ? ` (${e.sub.done}/${e.sub.total})`
+                      : "";
+                  return (
+                    <div
+                      key={`${e.ts}-${i}`}
+                      style={{ opacity: i === 0 ? 1 : Math.max(0.35, 1 - i * 0.12) }}
+                    >
+                      <span style={{ color: "var(--accent)" }}>▸</span>{" "}
+                      <span style={{ color: "var(--text-2)" }}>
+                        [{e.stage}]
+                      </span>{" "}
+                      {e.message}
+                      {sub}
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
         </div>

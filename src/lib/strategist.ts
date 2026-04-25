@@ -2,11 +2,14 @@ import { spawn } from "child_process";
 import type { DefiLlamaPool, DefiLlamaProtocol } from "@/types/pool";
 import type {
   StrategyCriteria,
+  StrategyAllocation,
   InvestmentStrategy,
   CollaborationTrail,
   CritiquePoint,
   CritiqueCategory,
   CritiqueSeverity,
+  ReviewerSource,
+  ReviewerVerdict,
 } from "@/types/strategy";
 import type { ProtocolAnalysis } from "@/types/analysis";
 import { fetchProtocols } from "./defillama";
@@ -14,7 +17,19 @@ import { fetchAllEnrichedPools } from "./pool-aggregator";
 import { analyzeProtocol } from "./anthropic";
 import { formatCurrency } from "./formatters";
 import { invokeCodex } from "./security/codex-client";
+import { invokeGemini } from "./security/gemini-client";
 import { extractJson } from "./security/claude-client";
+import type { JobStage } from "./strategy-jobs";
+
+export interface StrategyProgressEvent {
+  stage: JobStage;
+  message: string;
+  sub?: { done: number; total: number };
+}
+
+export interface GenerateStrategyOptions {
+  onProgress?: (event: StrategyProgressEvent) => void;
+}
 
 interface ProtocolSummary {
   name: string;
@@ -109,36 +124,34 @@ async function deepAnalyzeProtocols(
     poolsByProject.set(pool.project, existing);
   }
 
-  // Analyze protocols in parallel batches of 5
-  const BATCH_SIZE = 5;
+  // Run all deep analyses fully in parallel. With 3 AI subprocesses per
+  // protocol this is heavy, but batching in serial chunks pushed total wall
+  // time past the browser's tolerance for a synchronous request. Each
+  // protocol's completion bumps the shared counter so progress streams in.
+  const total = summaries.length;
   let completed = 0;
+  onProgress?.(0, total);
 
-  for (let i = 0; i < summaries.length; i += BATCH_SIZE) {
-    const batch = summaries.slice(i, i + BATCH_SIZE);
-    const results = await Promise.allSettled(
-      batch.map(async (summary) => {
-        const proto = protocolMap.get(summary.slug);
-        if (!proto) return null;
-
-        const pools = poolsByProject.get(summary.slug) || [];
-        try {
-          return await analyzeProtocol(proto, pools);
-        } catch (err) {
-          console.error(`Deep analysis failed for ${summary.slug}:`, err);
-          return null;
-        }
-      })
-    );
-
-    results.forEach((result, idx) => {
-      if (result.status === "fulfilled" && result.value) {
-        batch[idx].analysis = result.value;
+  await Promise.allSettled(
+    summaries.map(async (summary) => {
+      const proto = protocolMap.get(summary.slug);
+      if (!proto) {
+        completed += 1;
+        onProgress?.(completed, total);
+        return;
       }
-    });
-
-    completed += batch.length;
-    onProgress?.(completed, summaries.length);
-  }
+      const pools = poolsByProject.get(summary.slug) || [];
+      try {
+        const analysis = await analyzeProtocol(proto, pools);
+        summary.analysis = analysis;
+      } catch (err) {
+        console.error(`Deep analysis failed for ${summary.slug}:`, err);
+      } finally {
+        completed += 1;
+        onProgress?.(completed, total);
+      }
+    })
+  );
 
   return summaries;
 }
@@ -277,9 +290,9 @@ function parseStrategyResponse(text: string): InvestmentStrategy {
   };
 }
 
-/* ========== STAGE 2 — CODEX REVIEW ========== */
+/* ========== STAGE 2 — COLD-EYES REVIEW (CODEX + GEMINI IN PARALLEL) ========== */
 
-interface CodexCritique {
+interface ReviewerCritique {
   verdict: "approve" | "revise" | "reject";
   concerns: Array<{
     category: string;
@@ -291,6 +304,8 @@ interface CodexCritique {
   missingConsiderations: string[];
   overallNote: string;
 }
+/** @deprecated use ReviewerCritique */
+type CodexCritique = ReviewerCritique;
 
 function buildCritiquePrompt(
   criteria: StrategyCriteria,
@@ -374,10 +389,10 @@ Return ONLY this JSON:
 Use "approve" only if you find ZERO high or medium severity concerns. Use "revise" if there are concerns Claude can fix. Use "reject" only if the strategy is fundamentally broken.`;
 }
 
-function normalizeCritique(raw: unknown): CodexCritique {
-  const r = (raw ?? {}) as Partial<CodexCritique> & Record<string, unknown>;
+function normalizeCritique(raw: unknown): ReviewerCritique {
+  const r = (raw ?? {}) as Partial<ReviewerCritique> & Record<string, unknown>;
   const verdict = ["approve", "revise", "reject"].includes(String(r.verdict))
-    ? (r.verdict as CodexCritique["verdict"])
+    ? (r.verdict as ReviewerCritique["verdict"])
     : "revise";
   return {
     verdict,
@@ -402,6 +417,95 @@ function normalizeCritique(raw: unknown): CodexCritique {
   };
 }
 
+/**
+ * Invoke a single reviewer (Codex or Gemini) and parse its critique.
+ * Resolves to null with error on any failure — caller handles partial results.
+ */
+async function runReviewer(
+  source: ReviewerSource,
+  prompt: string,
+  timeoutMs: number
+): Promise<{ critique: ReviewerCritique | null; error: string | null }> {
+  try {
+    const output =
+      source === "codex"
+        ? await invokeCodex(prompt, { timeoutMs })
+        : await invokeGemini(prompt, { timeoutMs });
+    const parsed = extractJson<ReviewerCritique>(output);
+    return { critique: normalizeCritique(parsed), error: null };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { critique: null, error: message };
+  }
+}
+
+/**
+ * Merge critiques from both reviewers into a single deduplicated concern list.
+ * Overlapping concerns (same issue text normalized) are collapsed with their
+ * `sources` list tracking both AIs. Severity is escalated to the highest bucket
+ * either reviewer assigned.
+ */
+function mergeReviewerCritiques(
+  codex: ReviewerCritique | null,
+  gemini: ReviewerCritique | null
+): {
+  concerns: Array<ReviewerCritique["concerns"][number] & { sources: ReviewerSource[] }>;
+  rejectedPoolIds: string[];
+  missingConsiderations: string[];
+  combinedNote: string;
+} {
+  const bucket = new Map<
+    string,
+    ReviewerCritique["concerns"][number] & { sources: ReviewerSource[] }
+  >();
+  const sevRank: Record<string, number> = { high: 3, medium: 2, low: 1 };
+
+  const addConcerns = (source: ReviewerSource, c: ReviewerCritique | null) => {
+    if (!c) return;
+    for (const concern of c.concerns) {
+      const key = `${concern.category}::${concern.issue.toLowerCase().replace(/\s+/g, " ").trim()}`;
+      const existing = bucket.get(key);
+      if (existing) {
+        if (!existing.sources.includes(source)) existing.sources.push(source);
+        if ((sevRank[concern.severity] ?? 0) > (sevRank[existing.severity] ?? 0)) {
+          existing.severity = concern.severity;
+        }
+        if (concern.suggestion.length > existing.suggestion.length) {
+          existing.suggestion = concern.suggestion;
+        }
+      } else {
+        bucket.set(key, { ...concern, sources: [source] });
+      }
+    }
+  };
+
+  addConcerns("codex", codex);
+  addConcerns("gemini", gemini);
+
+  const rejectedPoolIds = Array.from(
+    new Set([...(codex?.rejectedPoolIds ?? []), ...(gemini?.rejectedPoolIds ?? [])])
+  ).slice(0, 30);
+  const missingConsiderations = Array.from(
+    new Set([...(codex?.missingConsiderations ?? []), ...(gemini?.missingConsiderations ?? [])])
+  ).slice(0, 15);
+
+  const notes: string[] = [];
+  if (codex?.overallNote) notes.push(`Codex: ${codex.overallNote}`);
+  if (gemini?.overallNote) notes.push(`Gemini: ${gemini.overallNote}`);
+  const combinedNote = notes.join(" | ");
+
+  const concerns = Array.from(bucket.values())
+    .sort((a, b) => {
+      // Higher severity, then more-sources (consensus) first
+      const sevDiff = (sevRank[b.severity] ?? 0) - (sevRank[a.severity] ?? 0);
+      if (sevDiff !== 0) return sevDiff;
+      return b.sources.length - a.sources.length;
+    })
+    .slice(0, 30);
+
+  return { concerns, rejectedPoolIds, missingConsiderations, combinedNote };
+}
+
 const VALID_CRITIQUE_CATEGORIES: CritiqueCategory[] = [
   "concentration",
   "safety",
@@ -413,8 +517,10 @@ const VALID_CRITIQUE_CATEGORIES: CritiqueCategory[] = [
   "other",
 ];
 
-function critiqueToPoints(c: CodexCritique): CritiquePoint[] {
-  return c.concerns.map((concern) => {
+function critiqueToPoints(
+  concerns: Array<ReviewerCritique["concerns"][number] & { sources?: ReviewerSource[] }>
+): CritiquePoint[] {
+  return concerns.map((concern) => {
     const cat = (
       VALID_CRITIQUE_CATEGORIES.includes(concern.category as CritiqueCategory)
         ? concern.category
@@ -428,16 +534,26 @@ function critiqueToPoints(c: CodexCritique): CritiquePoint[] {
       severity: sev,
       issue: concern.issue.slice(0, 400),
       suggestion: concern.suggestion.slice(0, 400),
+      sources: concern.sources,
     };
   });
 }
 
 /* ========== STAGE 3 — CLAUDE REVISION ========== */
 
+interface MergedCritiqueForRevision {
+  concerns: Array<ReviewerCritique["concerns"][number] & { sources: ReviewerSource[] }>;
+  rejectedPoolIds: string[];
+  missingConsiderations: string[];
+  combinedNote: string;
+  codexVerdict: ReviewerVerdict;
+  geminiVerdict: ReviewerVerdict;
+}
+
 function buildRevisionPrompt(
   criteria: StrategyCriteria,
   initial: InvestmentStrategy,
-  critique: CodexCritique,
+  merged: MergedCritiqueForRevision,
   summaries: ProtocolSummary[]
 ): string {
   const initialJson = JSON.stringify(
@@ -455,20 +571,20 @@ function buildRevisionPrompt(
     2
   );
 
-  const concernsBlock = critique.concerns.length
-    ? critique.concerns
+  const concernsBlock = merged.concerns.length
+    ? merged.concerns
         .map(
           (c, i) =>
-            `${i + 1}. [${c.severity.toUpperCase()} · ${c.category}] ${c.issue}\n   FIX: ${c.suggestion}`
+            `${i + 1}. [${c.severity.toUpperCase()} · ${c.category} · flagged by: ${c.sources.join("+")}] ${c.issue}\n   FIX: ${c.suggestion}`
         )
         .join("\n")
     : "(no specific concerns)";
 
-  const rejectedBlock = critique.rejectedPoolIds.length
-    ? `Pool IDs the reviewer wants REMOVED: ${critique.rejectedPoolIds.join(", ")}`
+  const rejectedBlock = merged.rejectedPoolIds.length
+    ? `Pool IDs reviewers want REMOVED: ${merged.rejectedPoolIds.join(", ")}`
     : "";
-  const missingBlock = critique.missingConsiderations.length
-    ? `Considerations the reviewer thinks were missed:\n- ${critique.missingConsiderations.join("\n- ")}`
+  const missingBlock = merged.missingConsiderations.length
+    ? `Considerations reviewers think were missed:\n- ${merged.missingConsiderations.join("\n- ")}`
     : "";
 
   const protocolCatalogue = summaries
@@ -487,7 +603,7 @@ function buildRevisionPrompt(
     })
     .join("\n\n");
 
-  return `You are revising your DeFi investment strategy after a peer-review by another AI. Your goal: produce ONE final strategy that resolves the reviewer's valid concerns. You may push back IN THE STRATEGY ITSELF (e.g., keep an allocation but justify it more clearly) but you must address every HIGH severity concern.
+  return `You are revising your DeFi investment strategy after a peer-review by two independent AI reviewers (Codex GPT-5.5 and Gemini 3.1 Pro). Your goal: produce ONE final strategy that resolves the reviewers' valid concerns. Concerns flagged by BOTH reviewers are consensus signals — treat them as priority. You may push back IN THE STRATEGY ITSELF (e.g., keep an allocation but justify it more clearly) but you must address every HIGH severity concern.
 
 USER CRITERIA:
 - Budget: $${criteria.budget.toLocaleString()}
@@ -497,10 +613,10 @@ USER CRITERIA:
 YOUR INITIAL PROPOSAL:
 ${initialJson}
 
-REVIEWER (GPT-5.5) FEEDBACK — verdict: ${critique.verdict}
-Overall note: ${critique.overallNote}
+REVIEWER VERDICTS — Codex: ${merged.codexVerdict} · Gemini: ${merged.geminiVerdict}
+Overall notes: ${merged.combinedNote}
 
-Concerns to resolve:
+Concerns to resolve (each tagged with flagging reviewer(s)):
 ${concernsBlock}
 
 ${rejectedBlock}
@@ -548,6 +664,52 @@ RULES:
 
 interface RevisedStrategyShape extends InvestmentStrategy {
   revisionNotes?: string;
+}
+
+/**
+ * Enforce that a parsed revision object has the shape we expect. Returns an
+ * error message if malformed; undefined if valid. Used to gate whether we
+ * accept the revision or fall back to the initial proposal.
+ */
+function validateRevisedStrategy(
+  obj: unknown,
+  criteria: StrategyCriteria
+): string | undefined {
+  if (!obj || typeof obj !== "object") return "revision is not an object";
+  const r = obj as Partial<InvestmentStrategy> & Record<string, unknown>;
+  if (!Array.isArray(r.allocations)) return "revision missing allocations[]";
+  if (r.allocations.length < 2) return `revision has ${r.allocations.length} allocations (need >=2)`;
+  for (let i = 0; i < r.allocations.length; i++) {
+    const a = r.allocations[i] as Partial<StrategyAllocation> | undefined;
+    if (!a || typeof a !== "object") return `allocation ${i} not an object`;
+    if (typeof a.poolId !== "string" || a.poolId.length === 0) return `allocation ${i} missing poolId`;
+    if (typeof a.allocationAmount !== "number" || !Number.isFinite(a.allocationAmount) || a.allocationAmount <= 0)
+      return `allocation ${i} has invalid allocationAmount`;
+    if (typeof a.apy !== "number" || !Number.isFinite(a.apy)) return `allocation ${i} has invalid apy`;
+  }
+  // Budget tolerance: ±1% OR $50, whichever is larger
+  const sum = r.allocations.reduce((acc: number, a) => acc + (a.allocationAmount ?? 0), 0);
+  const tolerance = Math.max(50, criteria.budget * 0.01);
+  if (Math.abs(sum - criteria.budget) > tolerance) {
+    return `allocations sum to $${sum.toFixed(0)} but budget is $${criteria.budget} (off by $${(sum - criteria.budget).toFixed(0)})`;
+  }
+  return undefined;
+}
+
+/**
+ * Recompute projected APY as the allocation-weighted average from the
+ * actual allocations, rather than trusting the model's stated projectedApy.
+ * This catches the case where Claude's revision changes allocations but
+ * forgets to update the top-level projectedApy field.
+ */
+function recomputeWeightedApy(strategy: InvestmentStrategy): number {
+  const total = strategy.allocations.reduce((acc, a) => acc + a.allocationAmount, 0);
+  if (total <= 0) return strategy.projectedApy;
+  const weighted = strategy.allocations.reduce(
+    (acc, a) => acc + a.apy * (a.allocationAmount / total),
+    0
+  );
+  return Number.isFinite(weighted) ? Number(weighted.toFixed(4)) : strategy.projectedApy;
 }
 
 /* ========== HELPERS ========== */
@@ -607,15 +769,29 @@ function diffPoolIds(initial: InvestmentStrategy, revised: InvestmentStrategy): 
 }
 
 export async function generateStrategy(
-  criteria: StrategyCriteria
+  criteria: StrategyCriteria,
+  opts: GenerateStrategyOptions = {}
 ): Promise<{ strategy: InvestmentStrategy; poolsScanned: number; protocolsAnalyzed: number; protocolsDeepAnalyzed: number }> {
+  const emit = (event: StrategyProgressEvent) => {
+    try {
+      opts.onProgress?.(event);
+    } catch {
+      // progress sinks must never break the pipeline
+    }
+  };
+
   // 1. Fetch everything from DeFiLlama
+  emit({ stage: "fetching_data", message: "Fetching pools and protocols from DeFiLlama…" });
   const [allPools, allProtocols] = await Promise.all([
     fetchAllEnrichedPools(),
     fetchProtocols(),
   ]);
 
   // 2. Filter pools by APY range
+  emit({
+    stage: "filtering_pools",
+    message: `Filtering ${allPools.length.toLocaleString()} pools by APY ${criteria.targetApyMin}-${criteria.targetApyMax}%, risk=${criteria.riskAppetite}…`,
+  });
   const qualifying = allPools.filter((p) => {
     if (!p.apy || p.apy <= 0) return false;
     if (!p.tvlUsd || p.tvlUsd <= 0) return false;
@@ -634,16 +810,32 @@ export async function generateStrategy(
   // 3. Build protocol summaries
   const summaries = buildProtocolSummaries(qualifying, allProtocols);
 
-  // 4. Limit to top 30 protocols by TVL for deep analysis (keeps it practical)
-  const protocolsToAnalyze = summaries.slice(0, 30);
+  // 4. Cap deep analysis at the top 10 protocols by TVL. Each runs the
+  // triple-AI ensemble (Claude+Codex+Gemini) plus a Claude synthesis call,
+  // so the wall time scales fast. Beyond ~10 the strategy request reliably
+  // outruns the browser's connection budget and the user sees a generic
+  // "page couldn't load" instead of the strategy.
+  const protocolsToAnalyze = summaries.slice(0, 10);
 
   // 5. Run deep AI security analysis on each protocol
   console.log(`Running deep AI analysis on ${protocolsToAnalyze.length} protocols...`);
+  emit({
+    stage: "deep_analysis",
+    message: `Running triple-AI security analysis on ${protocolsToAnalyze.length} protocols (Claude + Codex + Gemini in parallel per protocol)…`,
+    sub: { done: 0, total: protocolsToAnalyze.length },
+  });
   const analyzedSummaries = await deepAnalyzeProtocols(
     protocolsToAnalyze,
     qualifying,
     allProtocols,
-    (done, total) => console.log(`  Analyzed ${done}/${total} protocols`)
+    (done, total) => {
+      console.log(`  Analyzed ${done}/${total} protocols`);
+      emit({
+        stage: "deep_analysis",
+        message: `Analyzed ${done}/${total} protocols — running ground-truth checks, AI scoring, synthesis, and heuristic vetoes…`,
+        sub: { done, total },
+      });
+    }
   );
 
   const protocolsDeepAnalyzed = analyzedSummaries.filter((s) => s.analysis).length;
@@ -651,33 +843,46 @@ export async function generateStrategy(
 
   // ===== STAGE 1 — Claude proposes initial strategy =====
   console.log("[strategy] stage 1: Claude proposing initial strategy");
+  emit({
+    stage: "claude_proposer",
+    message: `Claude composing initial allocation across ${protocolsDeepAnalyzed} analyzed protocols…`,
+  });
   const initialPrompt = buildStrategyPrompt(criteria, analyzedSummaries, qualifying.length);
   const initialOutput = await invokeClaudeCli(initialPrompt, 600_000);
   const initialStrategy = parseStrategyResponse(initialOutput);
 
-  // ===== STAGE 2 — Codex GPT-5.5 reviews =====
-  console.log("[strategy] stage 2: Codex reviewing proposal");
-  let critique: CodexCritique | null = null;
-  let codexError: string | null = null;
-  try {
-    const critiquePrompt = buildCritiquePrompt(
-      criteria,
-      initialStrategy,
-      analyzedSummaries,
-      qualifying.length
-    );
-    const critiqueOutput = await invokeCodex(critiquePrompt, { timeoutMs: 480_000 });
-    const parsed = extractJson<CodexCritique>(critiqueOutput);
-    critique = normalizeCritique(parsed);
-    console.log(`[strategy] stage 2 done: verdict=${critique.verdict} concerns=${critique.concerns.length}`);
-  } catch (err) {
-    codexError = err instanceof Error ? err.message : String(err);
-    console.warn(`[strategy] stage 2 failed (Codex unavailable): ${codexError}`);
-  }
+  // ===== STAGE 2 — Codex GPT-5.5 + Gemini 3.1 Pro review IN PARALLEL =====
+  console.log("[strategy] stage 2: Codex + Gemini reviewing proposal in parallel");
+  emit({
+    stage: "reviewers",
+    message: `Codex GPT-5.5 + Gemini 3.1 Pro reviewing Claude's ${initialStrategy.allocations?.length ?? "?"}-pool proposal in parallel…`,
+  });
+  const critiquePrompt = buildCritiquePrompt(
+    criteria,
+    initialStrategy,
+    analyzedSummaries,
+    qualifying.length
+  );
+  const [codexResult, geminiResult] = await Promise.all([
+    runReviewer("codex", critiquePrompt, 480_000),
+    runReviewer("gemini", critiquePrompt, 480_000),
+  ]);
 
-  // If reviewer unavailable, return Claude's proposal with collaboration metadata
-  // marking it as single-AI. Don't block the user on Codex outage.
-  if (!critique) {
+  const codexCritique = codexResult.critique;
+  const geminiCritique = geminiResult.critique;
+  const codexVerdictRaw: ReviewerVerdict = codexCritique ? codexCritique.verdict : "unavailable";
+  const geminiVerdictRaw: ReviewerVerdict = geminiCritique ? geminiCritique.verdict : "unavailable";
+  console.log(
+    `[strategy] stage 2 done: codex=${codexVerdictRaw}${codexCritique ? `(${codexCritique.concerns.length})` : ""} gemini=${geminiVerdictRaw}${geminiCritique ? `(${geminiCritique.concerns.length})` : ""}`
+  );
+
+  // If BOTH reviewers unavailable, return Claude's proposal unreviewed.
+  if (!codexCritique && !geminiCritique) {
+    emit({
+      stage: "finalizing",
+      message: "Reviewers unavailable — returning Claude's proposal unreviewed.",
+    });
+    const detail = [codexResult.error, geminiResult.error].filter(Boolean).join(" | ");
     const collaboration: CollaborationTrail = {
       bothAisAvailable: false,
       critiquePoints: [],
@@ -686,9 +891,8 @@ export async function generateStrategy(
       droppedPoolIds: [],
       addedPoolIds: [],
       codexVerdict: "unavailable",
-      revisionNotes: codexError
-        ? `Reviewer unavailable (${codexError.slice(0, 200)}); strategy is from Claude only.`
-        : "Reviewer unavailable; strategy is from Claude only.",
+      reviewerVerdicts: { codex: "unavailable", gemini: "unavailable" },
+      revisionNotes: `Both reviewers unavailable${detail ? ` (${detail.slice(0, 200)})` : ""}; strategy is from Claude only.`,
     };
     return {
       strategy: { ...initialStrategy, collaboration },
@@ -698,18 +902,31 @@ export async function generateStrategy(
     };
   }
 
-  // If Codex approves with no concerns, skip the revision round-trip.
-  if (critique.verdict === "approve" && critique.concerns.length === 0) {
-    console.log("[strategy] stage 3 skipped: Codex approved without concerns");
+  const merged = mergeReviewerCritiques(codexCritique, geminiCritique);
+
+  // If every available reviewer approved with no concerns, skip revision.
+  const availableCritiques: ReviewerCritique[] = [codexCritique, geminiCritique].filter(
+    (c): c is ReviewerCritique => c !== null
+  );
+  const allApproveNoConcerns = availableCritiques.every(
+    (c) => c.verdict === "approve" && c.concerns.length === 0
+  );
+  if (allApproveNoConcerns) {
+    console.log("[strategy] stage 3 skipped: all available reviewers approved without concerns");
+    emit({
+      stage: "finalizing",
+      message: "Reviewers approved with zero concerns — skipping revision.",
+    });
     const collaboration: CollaborationTrail = {
-      bothAisAvailable: true,
+      bothAisAvailable: codexCritique !== null && geminiCritique !== null,
       critiquePoints: [],
       initialProjectedApy: initialStrategy.projectedApy,
       finalProjectedApy: initialStrategy.projectedApy,
       droppedPoolIds: [],
       addedPoolIds: [],
-      codexVerdict: "approve",
-      revisionNotes: critique.overallNote || "Reviewer approved the initial proposal as-is.",
+      codexVerdict: codexVerdictRaw,
+      reviewerVerdicts: { codex: codexVerdictRaw, gemini: geminiVerdictRaw },
+      revisionNotes: merged.combinedNote || "Reviewers approved the initial proposal as-is.",
     };
     return {
       strategy: { ...initialStrategy, collaboration },
@@ -719,67 +936,152 @@ export async function generateStrategy(
     };
   }
 
-  // ===== STAGE 3 — Claude revises in response to critique =====
-  console.log("[strategy] stage 3: Claude revising in response to critique");
+  // ===== STAGE 3 — Claude revises in response to merged critique =====
+  console.log(
+    `[strategy] stage 3: Claude revising against ${merged.concerns.length} merged concerns`
+  );
+  emit({
+    stage: "claude_revision",
+    message: `Claude revising strategy against ${merged.concerns.length} reviewer concern${merged.concerns.length === 1 ? "" : "s"} (codex=${codexVerdictRaw}, gemini=${geminiVerdictRaw})…`,
+  });
   let revisedStrategy: InvestmentStrategy = initialStrategy;
   let revisionFailed = false;
+  let revisionFailureReason: string | null = null;
   try {
     const revisionPrompt = buildRevisionPrompt(
       criteria,
       initialStrategy,
-      critique,
+      {
+        concerns: merged.concerns,
+        rejectedPoolIds: merged.rejectedPoolIds,
+        missingConsiderations: merged.missingConsiderations,
+        combinedNote: merged.combinedNote,
+        codexVerdict: codexVerdictRaw,
+        geminiVerdict: geminiVerdictRaw,
+      },
       analyzedSummaries
     );
     const revisedOutput = await invokeClaudeCli(revisionPrompt, 600_000);
     const parsedRevised = parseStrategyResponse(revisedOutput) as RevisedStrategyShape;
+    const validationError = validateRevisedStrategy(parsedRevised, criteria);
+    if (validationError) {
+      throw new Error(`revision validation failed: ${validationError}`);
+    }
     revisedStrategy = parsedRevised;
   } catch (err) {
     revisionFailed = true;
-    console.warn(
-      `[strategy] stage 3 failed: ${err instanceof Error ? err.message : String(err)}`
-    );
+    revisionFailureReason = err instanceof Error ? err.message : String(err);
+    console.warn(`[strategy] stage 3 failed: ${revisionFailureReason}`);
   }
+
+  // Recompute projected APY from the actual allocations in case the model's
+  // top-level number got out of sync with its revised allocations.
+  const recomputedApy = recomputeWeightedApy(revisedStrategy);
+  const recomputedYearlyReturn = Number((criteria.budget * (recomputedApy / 100)).toFixed(2));
+  revisedStrategy = {
+    ...revisedStrategy,
+    projectedApy: recomputedApy,
+    projectedYearlyReturn: recomputedYearlyReturn,
+  };
 
   const { dropped, added } = diffPoolIds(initialStrategy, revisedStrategy);
   const droppedSet = new Set(dropped);
-  const structuralChange = dropped.length > 0 || added.length > 0;
 
-  const initialPools = new Set(initialStrategy.allocations.map((a) => a.poolId));
-  const concernAddressed = (issue: string, suggestion: string): boolean => {
+  const initialByPoolId = new Map(initialStrategy.allocations.map((a) => [a.poolId, a]));
+  const revisedByPoolId = new Map(revisedStrategy.allocations.map((a) => [a.poolId, a]));
+
+  /**
+   * Deterministic resolver: a concern is "addressed" only when we can verify
+   * the condition actually changed. Pool-specific concerns require ALL cited
+   * pools to be either dropped OR meaningfully re-sized / re-justified.
+   * Concerns that cite no pools are left as unaddressed unless we can prove
+   * the structural property changed (currently: only budget/allocation summing).
+   */
+  const concernAddressed = (point: CritiquePoint): boolean => {
     if (revisionFailed) return false;
-    const haystack = `${issue} ${suggestion}`.toLowerCase();
-    // Find any poolId from the initial strategy mentioned in this concern
-    const mentionedPoolIds = [...initialPools].filter((id) => haystack.includes(id.toLowerCase()));
+    const haystack = `${point.issue} ${point.suggestion}`.toLowerCase();
+    const mentionedPoolIds = [...initialByPoolId.keys()].filter((id) =>
+      haystack.includes(id.toLowerCase())
+    );
+
     if (mentionedPoolIds.length > 0) {
-      // Concern is addressed if all mentioned pools were dropped from the revision
-      return mentionedPoolIds.every((id) => droppedSet.has(id));
+      return mentionedPoolIds.every((id) => {
+        if (droppedSet.has(id)) return true;
+        // Pool kept — check if allocation was reduced by >=20% or reasoning changed substantially
+        const initial = initialByPoolId.get(id);
+        const revised = revisedByPoolId.get(id);
+        if (!initial || !revised) return false;
+        const amountDropped =
+          initial.allocationAmount > 0 &&
+          (initial.allocationAmount - revised.allocationAmount) / initial.allocationAmount >= 0.2;
+        const reasoningChanged =
+          (revised.reasoning || "").trim() !== (initial.reasoning || "").trim() &&
+          (revised.reasoning || "").length >= (initial.reasoning || "").length;
+        return amountDropped || reasoningChanged;
+      });
     }
-    // Non-pool-specific concern: addressed if the revision made structural changes
-    return structuralChange;
+
+    // Non-pool-specific concern: only the allocation category is objectively verifiable
+    if (point.category === "allocation") {
+      const sum = revisedStrategy.allocations.reduce((acc, a) => acc + a.allocationAmount, 0);
+      const tolerance = Math.max(50, criteria.budget * 0.01);
+      return Math.abs(sum - criteria.budget) <= tolerance;
+    }
+    return false;
   };
+
+  const critiquePoints: CritiquePoint[] = critiqueToPoints(merged.concerns).map((p) => ({
+    ...p,
+    addressed: concernAddressed(p),
+  }));
+
+  // If high-severity concerns remain unaddressed after revision, surface that
+  // as an explicit warning on the strategy so the user sees it prominently.
+  const unresolvedHigh = critiquePoints.filter((p) => p.severity === "high" && !p.addressed);
+  const extraWarnings: string[] = [];
+  if (unresolvedHigh.length > 0) {
+    const sources = Array.from(
+      new Set(unresolvedHigh.flatMap((p) => p.sources ?? []))
+    );
+    const sourcesLabel =
+      sources.length === 0 ? "reviewers" : sources.map((s) => (s === "codex" ? "Codex" : "Gemini")).join(" & ");
+    extraWarnings.push(
+      `REVIEWER NOTE — ${unresolvedHigh.length} high-severity concern${
+        unresolvedHigh.length === 1 ? "" : "s"
+      } from ${sourcesLabel} remained unresolved after Claude's revision. Review the dual-AI trail below before depositing.`
+    );
+  }
 
   const revisionNotes =
     (revisedStrategy as RevisedStrategyShape).revisionNotes ||
     (revisionFailed
-      ? "Revision step failed; serving initial proposal with reviewer concerns attached."
-      : critique.overallNote);
+      ? `Revision step failed${revisionFailureReason ? ` (${revisionFailureReason.slice(0, 200)})` : ""}; serving initial proposal with reviewer concerns attached.`
+      : merged.combinedNote);
+
+  const bothReviewersSucceeded = codexCritique !== null && geminiCritique !== null;
 
   const collaboration: CollaborationTrail = {
-    bothAisAvailable: !revisionFailed,
-    critiquePoints: critiqueToPoints(critique).map((p) => ({
-      ...p,
-      addressed: concernAddressed(p.issue, p.suggestion),
-    })),
+    bothAisAvailable: bothReviewersSucceeded && !revisionFailed,
+    critiquePoints,
     initialProjectedApy: initialStrategy.projectedApy,
     finalProjectedApy: revisedStrategy.projectedApy,
     droppedPoolIds: dropped,
     addedPoolIds: added,
-    codexVerdict: critique.verdict,
+    codexVerdict: codexVerdictRaw,
+    reviewerVerdicts: { codex: codexVerdictRaw, gemini: geminiVerdictRaw },
     revisionNotes: String(revisionNotes).slice(0, 600),
   };
 
+  const finalStrategy: InvestmentStrategy = {
+    ...revisedStrategy,
+    warnings: [...(revisedStrategy.warnings || []), ...extraWarnings],
+    collaboration,
+  };
+
+  emit({ stage: "finalizing", message: "Packaging strategy and collaboration trail…" });
+
   return {
-    strategy: { ...revisedStrategy, collaboration },
+    strategy: finalStrategy,
     poolsScanned: qualifying.length,
     protocolsAnalyzed: summaries.length,
     protocolsDeepAnalyzed,

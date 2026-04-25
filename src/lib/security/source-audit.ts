@@ -1,4 +1,5 @@
 import type {
+  AiSource,
   AuditFinding,
   CandidateSnippet,
   Consensus,
@@ -8,7 +9,7 @@ import type {
   VulnerabilityCategory,
 } from "@/types/security";
 import { CHAIN_ID_TO_NAME, getContractSource, normalizeSourceCode } from "./etherscan";
-import { dualInvoke, dualExtractJson, maxSeverity } from "./dual-llm";
+import { tripleInvoke, tripleExtractJson, maxSeverity } from "./dual-llm";
 import { createHash } from "crypto";
 
 const cache = new Map<string, { report: SourceAuditReport; expiresAt: number }>();
@@ -20,6 +21,21 @@ const CONTEXT_LINES = 3;
 
 function cacheKey(chainId: number, address: string): string {
   return `${chainId}:${address.toLowerCase()}`;
+}
+
+/**
+ * Peek at the audit cache without triggering a fresh audit. Returns the report
+ * if a non-expired entry exists, null otherwise. Used by the protocol-analysis
+ * pipeline to surface ground-truth audit data when a recent audit happens to
+ * be cached.
+ */
+export function peekCachedAudit(
+  chainId: number,
+  contractAddress: string
+): SourceAuditReport | null {
+  const hit = cache.get(cacheKey(chainId, contractAddress));
+  if (!hit || hit.expiresAt <= Date.now()) return null;
+  return hit.report;
 }
 
 /* ==================== PATTERN EXTRACTION ==================== */
@@ -252,7 +268,7 @@ function verifySnippet(claimed: string, candidateCode: string): boolean {
 }
 
 interface ConfirmedFinding {
-  source: "claude" | "codex";
+  source: AiSource;
   finding: ModelFinding;
 }
 
@@ -261,7 +277,7 @@ interface ConfirmedFinding {
  * confidence confirmations. Returns confirmed (with source label) and rejected count.
  */
 function reconcilePerSource(
-  source: "claude" | "codex",
+  source: AiSource,
   candidates: CandidateSnippet[],
   modelFindings: ModelFinding[]
 ): { confirmed: ConfirmedFinding[]; rejected: number } {
@@ -290,66 +306,82 @@ function reconcilePerSource(
 }
 
 /**
- * Merge confirmations from both AIs into a single AuditFinding[] keyed by
- * candidate id. When both AIs flag the same candidate we boost confidence and
- * mark consensus="both"; single-AI findings are kept but flagged as such.
+ * Pick the entry with the longest text (usually the most specific).
+ * Ignores undefined entries.
  */
-function mergeDualFindings(
+function pickLongest<T extends ModelFinding | undefined>(entries: T[], field: "title" | "description" | "recommendation"): string {
+  let best = "";
+  for (const e of entries) {
+    if (!e) continue;
+    const v = e[field];
+    if (typeof v === "string" && v.length > best.length) best = v;
+  }
+  return best;
+}
+
+/**
+ * Merge confirmations from all three AIs into a single AuditFinding[] keyed by
+ * candidate id. Consensus buckets:
+ * - all-three: flagged by Claude, Codex, and Gemini
+ * - two-of-three: any two AIs agreed
+ * - one-only: only one AI flagged it
+ * Confidence boost scales with agreement count.
+ */
+function mergeTripleFindings(
   candidates: CandidateSnippet[],
   claudeConfirmed: ConfirmedFinding[],
-  codexConfirmed: ConfirmedFinding[]
-): { findings: AuditFinding[]; bothConfirmed: number; claudeOnly: number; codexOnly: number } {
+  codexConfirmed: ConfirmedFinding[],
+  geminiConfirmed: ConfirmedFinding[]
+): { findings: AuditFinding[]; allThreeConfirmed: number; twoOfThreeConfirmed: number; oneOnly: number } {
   const byId = new Map(candidates.map((c) => [c.id, c]));
   const claudeMap = new Map(claudeConfirmed.map((c) => [c.finding.id, c.finding]));
   const codexMap = new Map(codexConfirmed.map((c) => [c.finding.id, c.finding]));
-  const allIds = new Set<string>([...claudeMap.keys(), ...codexMap.keys()]);
+  const geminiMap = new Map(geminiConfirmed.map((c) => [c.finding.id, c.finding]));
+  const allIds = new Set<string>([...claudeMap.keys(), ...codexMap.keys(), ...geminiMap.keys()]);
 
   const findings: AuditFinding[] = [];
-  let bothConfirmed = 0;
-  let claudeOnly = 0;
-  let codexOnly = 0;
+  let allThreeConfirmed = 0;
+  let twoOfThreeConfirmed = 0;
+  let oneOnly = 0;
 
   for (const id of allIds) {
     const cand = byId.get(id);
     if (!cand) continue;
     const cl = claudeMap.get(id);
     const cx = codexMap.get(id);
-    let consensus: Consensus;
-    let severity: Severity;
-    let title: string;
-    let description: string;
-    let recommendation: string;
-    let confidence: number;
+    const gm = geminiMap.get(id);
 
-    if (cl && cx) {
-      consensus = "both";
-      bothConfirmed++;
-      severity = maxSeverity(cl.severity, cx.severity);
-      // prefer the longer, more specific description
-      description = (cl.description.length >= cx.description.length ? cl.description : cx.description).slice(0, 600);
-      title = (cl.title.length >= cx.title.length ? cl.title : cx.title).slice(0, 140);
-      recommendation = (cl.recommendation.length >= cx.recommendation.length ? cl.recommendation : cx.recommendation).slice(0, 400);
-      // average + consensus boost, capped at 1
-      confidence = Math.min(1, (cl.confidence + cx.confidence) / 2 + 0.1);
-    } else if (cl) {
-      consensus = "claude-only";
-      claudeOnly++;
-      severity = cl.severity;
-      title = cl.title.slice(0, 140);
-      description = cl.description.slice(0, 600);
-      recommendation = cl.recommendation.slice(0, 400);
-      confidence = Math.max(0, Math.min(1, cl.confidence));
-    } else if (cx) {
-      consensus = "codex-only";
-      codexOnly++;
-      severity = cx.severity;
-      title = cx.title.slice(0, 140);
-      description = cx.description.slice(0, 600);
-      recommendation = cx.recommendation.slice(0, 400);
-      confidence = Math.max(0, Math.min(1, cx.confidence));
+    const confirmedBy: AiSource[] = [];
+    if (cl) confirmedBy.push("claude");
+    if (cx) confirmedBy.push("codex");
+    if (gm) confirmedBy.push("gemini");
+
+    let consensus: Consensus;
+    if (confirmedBy.length === 3) {
+      consensus = "all-three";
+      allThreeConfirmed++;
+    } else if (confirmedBy.length === 2) {
+      consensus = "two-of-three";
+      twoOfThreeConfirmed++;
     } else {
-      continue;
+      consensus = "one-only";
+      oneOnly++;
     }
+
+    const present = [cl, cx, gm].filter(Boolean) as ModelFinding[];
+    const severity = present
+      .map((p) => p.severity)
+      .reduce((best, s) => maxSeverity(best, s), present[0].severity);
+    const title = pickLongest([cl, cx, gm], "title").slice(0, 140);
+    const description = pickLongest([cl, cx, gm], "description").slice(0, 600);
+    const recommendation = pickLongest([cl, cx, gm], "recommendation").slice(0, 400);
+
+    // Average confidence across AIs that flagged it, plus consensus boost
+    const avgConfidence =
+      present.reduce((sum, p) => sum + p.confidence, 0) / present.length;
+    // Boost: 0 for 1/3, +0.1 for 2/3, +0.2 for 3/3
+    const consensusBoost = (confirmedBy.length - 1) * 0.1;
+    const confidence = Math.max(0, Math.min(1, avgConfidence + consensusBoost));
 
     findings.push({
       id: cand.id,
@@ -364,15 +396,23 @@ function mergeDualFindings(
       verified: true,
       recommendation,
       consensus,
+      confirmedBy,
       claudeConfidence: cl?.confidence,
       codexConfidence: cx?.confidence,
+      geminiConfidence: gm?.confidence,
     });
   }
 
+  const consensusRank = (c: Consensus | undefined): number => {
+    if (c === "all-three") return 3;
+    if (c === "two-of-three") return 2;
+    return 1;
+  };
+
   findings.sort((a, b) => {
-    // consensus="both" before single-AI findings, then by severity, then by confidence
-    if (a.consensus === "both" && b.consensus !== "both") return -1;
-    if (b.consensus === "both" && a.consensus !== "both") return 1;
+    // Highest consensus first, then severity, then confidence
+    const cRank = consensusRank(b.consensus) - consensusRank(a.consensus);
+    if (cRank !== 0) return cRank;
     const rank: Record<Severity, number> = {
       critical: 5,
       high: 4,
@@ -385,7 +425,7 @@ function mergeDualFindings(
     return b.confidence - a.confidence;
   });
 
-  return { findings, bothConfirmed, claudeOnly, codexOnly };
+  return { findings, allThreeConfirmed, twoOfThreeConfirmed, oneOnly };
 }
 
 function scoreFromFindings(findings: AuditFinding[]): {
@@ -447,18 +487,20 @@ export async function auditContract(
 
   const prompt = buildAuditPrompt(candidates, src.ContractName || "Unknown");
 
-  // Run BOTH Claude Opus 4.7 (max) and Codex GPT-5.5 (xhigh) on the same prompt.
-  // Either failing does not abort the other; partial results are still useful.
-  const raw = await dualInvoke(prompt, { timeoutMs: 360_000 });
-  const parsed = dualExtractJson<{ findings: ModelFinding[] }>(raw);
+  // Run Claude Opus 4.7 (max), Codex GPT-5.5 (xhigh), and Gemini 3.1 Pro in
+  // parallel. Any one failing does not abort the others; partial results still
+  // produce a valid report, with consensus bucketing downweighting one-only flags.
+  const raw = await tripleInvoke(prompt, { timeoutMs: 360_000 });
+  const parsed = tripleExtractJson<{ findings: ModelFinding[] }>(raw);
 
-  if (!parsed.claude && !parsed.codex) {
+  if (!parsed.claude && !parsed.codex && !parsed.gemini) {
     const detail = parsed.errors.map((e) => `${e.source}: ${e.error}`).join(" | ");
-    throw new Error(`Dual AI audit failed: both models unavailable (${detail})`);
+    throw new Error(`Triple AI audit failed: all models unavailable (${detail})`);
   }
 
   const claudeFindings = Array.isArray(parsed.claude?.findings) ? parsed.claude!.findings : [];
   const codexFindings = Array.isArray(parsed.codex?.findings) ? parsed.codex!.findings : [];
+  const geminiFindings = Array.isArray(parsed.gemini?.findings) ? parsed.gemini!.findings : [];
 
   const { confirmed: claudeConfirmed, rejected: claudeRejected } = reconcilePerSource(
     "claude",
@@ -470,11 +512,17 @@ export async function auditContract(
     candidates,
     codexFindings
   );
+  const { confirmed: geminiConfirmed, rejected: geminiRejected } = reconcilePerSource(
+    "gemini",
+    candidates,
+    geminiFindings
+  );
 
-  const { findings, bothConfirmed, claudeOnly, codexOnly } = mergeDualFindings(
+  const { findings, allThreeConfirmed, twoOfThreeConfirmed, oneOnly } = mergeTripleFindings(
     candidates,
     claudeConfirmed,
-    codexConfirmed
+    codexConfirmed,
+    geminiConfirmed
   );
 
   const { score, verdict } = scoreFromFindings(findings);
@@ -482,9 +530,10 @@ export async function auditContract(
   const dualAi: DualAiMeta = {
     claudeOk: parsed.claude !== null,
     codexOk: parsed.codex !== null,
-    bothConfirmed,
-    claudeOnly,
-    codexOnly,
+    geminiOk: parsed.gemini !== null,
+    allThreeConfirmed,
+    twoOfThreeConfirmed,
+    oneOnly,
     errors: parsed.errors,
   };
 
@@ -501,7 +550,7 @@ export async function auditContract(
     overallScore: score,
     overallVerdict: verdict,
     analyzedAt: new Date().toISOString(),
-    rejectedFindings: claudeRejected + codexRejected,
+    rejectedFindings: claudeRejected + codexRejected + geminiRejected,
     dualAi,
   };
 

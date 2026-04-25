@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icons } from "./Icons";
 import type { InvestmentStrategy, StrategyCriteria } from "@/types/strategy";
 
@@ -9,6 +9,30 @@ type Props = {
   onClose: () => void;
   initialBudget?: number;
   initialRisk?: "Safe" | "Balanced" | "Degen";
+};
+
+type ProgressEvent = {
+  ts: number;
+  stage: string;
+  message: string;
+  sub?: { done: number; total: number };
+};
+
+type ProgressState = {
+  percent: number;
+  stage: string;
+  message: string;
+  sub?: { done: number; total: number };
+  elapsedMs: number;
+  events: ProgressEvent[];
+};
+
+const INITIAL_PROGRESS: ProgressState = {
+  percent: 0,
+  stage: "starting",
+  message: "Initializing strategy pipeline…",
+  elapsedMs: 0,
+  events: [],
 };
 
 function riskToApi(r: Props["initialRisk"]): StrategyCriteria["riskAppetite"] {
@@ -30,6 +54,8 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<InvestmentStrategy | null>(null);
+  const [progress, setProgress] = useState<ProgressState>(INITIAL_PROGRESS);
+  const cancelRef = useRef(false);
 
   useEffect(() => {
     if (!open) return;
@@ -37,7 +63,17 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
     setRisk(initialRisk);
     setResult(null);
     setError(null);
+    setProgress(INITIAL_PROGRESS);
   }, [open, initialBudget, initialRisk]);
+
+  useEffect(() => {
+    if (!open) {
+      cancelRef.current = true;
+    }
+    return () => {
+      cancelRef.current = true;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -54,6 +90,9 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
     setLoading(true);
     setError(null);
     setResult(null);
+    setProgress(INITIAL_PROGRESS);
+    cancelRef.current = false;
+
     const range = apyRange(risk);
     const body: StrategyCriteria = {
       budget,
@@ -68,14 +107,54 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error ?? "Strategy request failed");
-      setResult(data as InvestmentStrategy);
+      const start = await res.json();
+      if (!res.ok || !start?.jobId) {
+        throw new Error(start?.error ?? "Failed to start strategy job");
+      }
+      const jobId: string = start.jobId;
+
+      // Poll backend job until it resolves. Backend keeps the job in-memory
+      // and we just mirror its current stage/message into the UI state.
+      while (!cancelRef.current) {
+        await new Promise((r) => setTimeout(r, 1500));
+        if (cancelRef.current) return;
+        const pollRes = await fetch(`/api/strategy?id=${encodeURIComponent(jobId)}`);
+        const job = await pollRes.json();
+        if (!pollRes.ok) {
+          throw new Error(job?.error || "Lost track of strategy job");
+        }
+
+        setProgress({
+          percent: typeof job.progress === "number" ? job.progress : 0,
+          stage: typeof job.stage === "string" ? job.stage : "running",
+          message: typeof job.message === "string" ? job.message : "Working…",
+          sub: job.sub,
+          elapsedMs: typeof job.elapsedMs === "number" ? job.elapsedMs : 0,
+          events: Array.isArray(job.events) ? (job.events as ProgressEvent[]) : [],
+        });
+
+        if (job.status === "done" && job.result?.strategy) {
+          setProgress((p) => ({ ...p, percent: 100 }));
+          setResult(job.result.strategy as InvestmentStrategy);
+          return;
+        }
+        if (job.status === "error") {
+          throw new Error(job.error || "Strategy generation failed");
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Strategy request failed");
     } finally {
       setLoading(false);
     }
+  }
+
+  function formatElapsed(ms: number): string {
+    if (!Number.isFinite(ms) || ms <= 0) return "0s";
+    const total = Math.floor(ms / 1000);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return m > 0 ? `${m}m ${s.toString().padStart(2, "0")}s` : `${s}s`;
   }
 
   return (
@@ -133,7 +212,7 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
               AI Strategy
             </div>
             <div style={{ fontSize: 12, color: "var(--text-dim)" }}>
-              Live DeFiLlama pools · Claude proposes, GPT-5.5 reviews, Claude revises
+              Live DeFiLlama pools · Claude proposes, GPT-5.5 + Gemini review in parallel, Claude revises
             </div>
           </div>
           <button
@@ -146,7 +225,7 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
           </button>
         </header>
 
-        {!result ? (
+        {!result && !loading ? (
           <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 14 }}>
             <div>
               <div className="eyebrow" style={{ fontSize: 10, marginBottom: 6 }}>
@@ -243,9 +322,116 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
               risk scorer. No fabricated pools, no placeholder APYs.
             </div>
           </div>
-        ) : (
+        ) : result ? (
           <StrategyResultView result={result} />
-        )}
+        ) : null}
+
+        {loading && !result ? (
+          <div
+            style={{
+              padding: 14,
+              borderRadius: 12,
+              border: "1px solid var(--line)",
+              background: "var(--surface-2)",
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+            }}
+            aria-live="polite"
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "baseline",
+                gap: 12,
+              }}
+            >
+              <div
+                className="mono"
+                style={{
+                  fontSize: 10,
+                  letterSpacing: "0.16em",
+                  textTransform: "uppercase",
+                  color: "var(--text-dim)",
+                }}
+              >
+                {progress.stage.replace(/_/g, " ")} · {formatElapsed(progress.elapsedMs)}
+              </div>
+              <div
+                className="mono tabular"
+                style={{ fontSize: 13, fontWeight: 600, color: "var(--accent)" }}
+              >
+                {Math.floor(progress.percent)}%
+              </div>
+            </div>
+            <div
+              style={{
+                height: 4,
+                background: "var(--surface-3)",
+                borderRadius: 999,
+                position: "relative",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: `${Math.max(2, progress.percent)}%`,
+                  background: "var(--accent)",
+                  transition: "width 0.4s ease-out",
+                }}
+              />
+            </div>
+            <div style={{ fontSize: 12.5, color: "var(--text-1)", lineHeight: 1.5 }}>
+              {progress.message}
+              {progress.sub && progress.sub.total > 0
+                ? ` (${progress.sub.done}/${progress.sub.total})`
+                : ""}
+            </div>
+            <div
+              className="mono"
+              style={{
+                marginTop: 4,
+                fontSize: 11,
+                color: "var(--text-dim)",
+                lineHeight: 1.7,
+                maxHeight: 140,
+                overflowY: "auto",
+                borderTop: "1px solid var(--line)",
+                paddingTop: 10,
+              }}
+            >
+              {progress.events.length === 0 ? (
+                <div style={{ opacity: 0.6 }}>
+                  <span style={{ color: "var(--accent)" }}>▸</span> Waiting for first backend event…
+                </div>
+              ) : (
+                progress.events
+                  .slice()
+                  .reverse()
+                  .map((e, i) => {
+                    const sub =
+                      e.sub && e.sub.total > 0 ? ` (${e.sub.done}/${e.sub.total})` : "";
+                    return (
+                      <div
+                        key={`${e.ts}-${i}`}
+                        style={{
+                          opacity: i === 0 ? 1 : Math.max(0.4, 1 - i * 0.12),
+                        }}
+                      >
+                        <span style={{ color: "var(--accent)" }}>▸</span>{" "}
+                        <span style={{ color: "var(--text-2)" }}>[{e.stage}]</span>{" "}
+                        {e.message}
+                        {sub}
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+          </div>
+        ) : null}
 
         {error ? (
           <div
@@ -303,7 +489,10 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
                   disabled={loading || budget < 100}
                   onClick={runStrategy}
                 >
-                  {loading ? "Thinking…" : "Generate strategy"} {!loading ? <Icons.arrow size={13} /> : null}
+                  {loading
+                    ? `${Math.floor(progress.percent)}% · ${progress.stage.replace(/_/g, " ")}`
+                    : "Generate strategy"}{" "}
+                  {!loading ? <Icons.arrow size={13} /> : null}
                 </button>
               </>
             )}
@@ -432,18 +621,30 @@ function CollaborationBadge({ result }: { result: InvestmentStrategy }) {
   if (!c) return null;
   const total = c.critiquePoints.length;
   const addressed = c.critiquePoints.filter((p) => p.addressed).length;
-  const dual = c.bothAisAvailable && c.codexVerdict !== "unavailable";
+  const verdicts = c.reviewerVerdicts ?? { codex: c.codexVerdict, gemini: "unavailable" as const };
+  const codexAvailable = verdicts.codex !== "unavailable";
+  const geminiAvailable = verdicts.gemini !== "unavailable";
+  const availableCount = (codexAvailable ? 1 : 0) + (geminiAvailable ? 1 : 0);
+  const allApproved =
+    codexAvailable && geminiAvailable &&
+    verdicts.codex === "approve" &&
+    verdicts.gemini === "approve" &&
+    total === 0;
 
   let label: string;
   let tone: "good" | "warn" | "info";
-  if (!dual) {
-    label = "Single-AI fallback (reviewer unavailable)";
+  if (availableCount === 0) {
+    label = "Single-AI fallback (both reviewers unavailable)";
     tone = "warn";
-  } else if (c.codexVerdict === "approve" && total === 0) {
-    label = "Approved by reviewer (no concerns)";
+  } else if (availableCount === 1) {
+    const who = codexAvailable ? "Codex" : "Gemini";
+    label = `Partial review — only ${who} was available (${addressed}/${total} concerns addressed)`;
+    tone = "warn";
+  } else if (allApproved) {
+    label = "Approved by both reviewers (no concerns)";
     tone = "good";
   } else {
-    label = `${addressed}/${total} reviewer concerns addressed in revision`;
+    label = `${addressed}/${total} concerns from Codex + Gemini addressed in revision`;
     tone = addressed === total ? "good" : "info";
   }
 
@@ -453,6 +654,35 @@ function CollaborationBadge({ result }: { result: InvestmentStrategy }) {
       : tone === "warn"
         ? "var(--warn)"
         : "var(--accent)";
+
+  const verdictChip = (name: string, verdict: string) => {
+    const color =
+      verdict === "approve"
+        ? "var(--good)"
+        : verdict === "revise"
+          ? "var(--warn)"
+          : verdict === "reject"
+            ? "var(--danger)"
+            : "var(--text-dim)";
+    return (
+      <span
+        key={name}
+        className="mono"
+        style={{
+          fontSize: 10,
+          padding: "2px 6px",
+          borderRadius: 999,
+          border: `1px solid color-mix(in oklch, ${color} 45%, var(--line))`,
+          background: `color-mix(in oklch, ${color} 10%, transparent)`,
+          color,
+          letterSpacing: "0.05em",
+          textTransform: "uppercase",
+        }}
+      >
+        {name}: {verdict}
+      </span>
+    );
+  };
 
   return (
     <div
@@ -464,6 +694,7 @@ function CollaborationBadge({ result }: { result: InvestmentStrategy }) {
         gap: 10,
         borderColor: `color-mix(in oklch, ${toneColor} 35%, var(--line))`,
         background: `color-mix(in oklch, ${toneColor} 6%, var(--surface))`,
+        flexWrap: "wrap",
       }}
     >
       <div
@@ -483,11 +714,15 @@ function CollaborationBadge({ result }: { result: InvestmentStrategy }) {
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="eyebrow" style={{ fontSize: 10, color: toneColor, marginBottom: 2 }}>
-          DUAL-AI COLLABORATION
+          TRIPLE-AI COLLABORATION
         </div>
         <div style={{ fontSize: 12.5, color: "var(--text-1)" }}>{label}</div>
+        <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+          {verdictChip("Codex", verdicts.codex)}
+          {verdictChip("Gemini", verdicts.gemini)}
+        </div>
       </div>
-      {dual && c.initialProjectedApy !== c.finalProjectedApy ? (
+      {availableCount > 0 && c.initialProjectedApy !== c.finalProjectedApy ? (
         <div className="mono" style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right" }}>
           APY {c.initialProjectedApy.toFixed(2)}% → {c.finalProjectedApy.toFixed(2)}%
         </div>
@@ -577,6 +812,20 @@ function CollaborationDetails({ result }: { result: InvestmentStrategy }) {
                   >
                     {p.severity} · {p.category.replace("_", " ")}
                   </span>
+                  {p.sources && p.sources.length > 0 ? (
+                    <span
+                      className="mono"
+                      style={{
+                        fontSize: 10,
+                        color: p.sources.length > 1 ? "var(--accent)" : "var(--text-dim)",
+                        letterSpacing: "0.06em",
+                        textTransform: "uppercase",
+                        marginRight: 6,
+                      }}
+                    >
+                      · {p.sources.length > 1 ? "both" : p.sources[0]}
+                    </span>
+                  ) : null}
                   {p.issue}
                 </div>
                 {p.suggestion ? (

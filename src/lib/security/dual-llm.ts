@@ -1,76 +1,97 @@
 import { invokeClaude, extractJson } from "./claude-client";
 import { invokeCodex } from "./codex-client";
+import { invokeGemini } from "./gemini-client";
 
+export type AiSource = "claude" | "codex" | "gemini";
+/** @deprecated use AiSource */
 export type DualSource = "claude" | "codex";
 
+type OkOrErr = { ok: true; text: string } | { ok: false; error: string };
+
+export interface TripleRawResult {
+  claude: OkOrErr;
+  codex: OkOrErr;
+  gemini: OkOrErr;
+}
+/** @deprecated use TripleRawResult */
 export interface DualRawResult {
-  claude: { ok: true; text: string } | { ok: false; error: string };
-  codex: { ok: true; text: string } | { ok: false; error: string };
+  claude: OkOrErr;
+  codex: OkOrErr;
 }
 
-export interface DualOptions {
+export interface InvokeOptions {
   timeoutMs?: number;
+}
+/** @deprecated use InvokeOptions */
+export type DualOptions = InvokeOptions;
+
+function settleToOkErr(res: PromiseSettledResult<string>): OkOrErr {
+  if (res.status === "fulfilled") return { ok: true, text: res.value };
+  const error = res.reason instanceof Error ? res.reason.message : String(res.reason);
+  return { ok: false, error };
 }
 
 /**
- * Run the same prompt through Claude Opus 4.7 (max effort) and Codex GPT-5.5
- * (xhigh effort) in parallel. Either model failing does not abort the other —
- * callers must handle partial results.
+ * Run the same prompt through Claude Opus 4.7 (max), Codex GPT-5.5 (xhigh),
+ * and Gemini 3.1 Pro Preview in parallel. Any model failing does not abort
+ * the others — callers must handle partial results.
  */
-export async function dualInvoke(prompt: string, opts: DualOptions = {}): Promise<DualRawResult> {
+export async function tripleInvoke(prompt: string, opts: InvokeOptions = {}): Promise<TripleRawResult> {
   const timeoutMs = opts.timeoutMs ?? 360_000;
 
-  const [claudeRes, codexRes] = await Promise.allSettled([
+  const [claudeRes, codexRes, geminiRes] = await Promise.allSettled([
     invokeClaude(prompt, { effort: "max", timeoutMs }),
     invokeCodex(prompt, { timeoutMs }),
+    invokeGemini(prompt, { timeoutMs }),
   ]);
 
   return {
-    claude:
-      claudeRes.status === "fulfilled"
-        ? { ok: true, text: claudeRes.value }
-        : { ok: false, error: claudeRes.reason instanceof Error ? claudeRes.reason.message : String(claudeRes.reason) },
-    codex:
-      codexRes.status === "fulfilled"
-        ? { ok: true, text: codexRes.value }
-        : { ok: false, error: codexRes.reason instanceof Error ? codexRes.reason.message : String(codexRes.reason) },
+    claude: settleToOkErr(claudeRes),
+    codex: settleToOkErr(codexRes),
+    gemini: settleToOkErr(geminiRes),
   };
+}
+
+/** @deprecated use tripleInvoke — now returns a TripleRawResult for compatibility. */
+export async function dualInvoke(prompt: string, opts: InvokeOptions = {}): Promise<TripleRawResult> {
+  return tripleInvoke(prompt, opts);
 }
 
 /**
  * Parse each model's output as JSON. Returns nulls for models that failed or
  * produced unparseable output, with the error captured in `errors`.
  */
-export function dualExtractJson<T = unknown>(raw: DualRawResult): {
+export function tripleExtractJson<T = unknown>(raw: TripleRawResult): {
   claude: T | null;
   codex: T | null;
-  errors: { source: DualSource; error: string }[];
+  gemini: T | null;
+  errors: { source: AiSource; error: string }[];
 } {
-  const errors: { source: DualSource; error: string }[] = [];
-
-  let claude: T | null = null;
-  if (raw.claude.ok) {
-    try {
-      claude = extractJson<T>(raw.claude.text);
-    } catch (err) {
-      errors.push({ source: "claude", error: err instanceof Error ? err.message : String(err) });
+  const errors: { source: AiSource; error: string }[] = [];
+  const extract = (source: AiSource, r: OkOrErr): T | null => {
+    if (!r.ok) {
+      errors.push({ source, error: r.error });
+      return null;
     }
-  } else {
-    errors.push({ source: "claude", error: raw.claude.error });
-  }
-
-  let codex: T | null = null;
-  if (raw.codex.ok) {
     try {
-      codex = extractJson<T>(raw.codex.text);
+      return extractJson<T>(r.text);
     } catch (err) {
-      errors.push({ source: "codex", error: err instanceof Error ? err.message : String(err) });
+      errors.push({ source, error: err instanceof Error ? err.message : String(err) });
+      return null;
     }
-  } else {
-    errors.push({ source: "codex", error: raw.codex.error });
-  }
+  };
 
-  return { claude, codex, errors };
+  return {
+    claude: extract("claude", raw.claude),
+    codex: extract("codex", raw.codex),
+    gemini: extract("gemini", raw.gemini),
+    errors,
+  };
+}
+
+/** @deprecated use tripleExtractJson — returns the claude/codex/gemini shape. */
+export function dualExtractJson<T = unknown>(raw: TripleRawResult) {
+  return tripleExtractJson<T>(raw);
 }
 
 const SEVERITY_RANK: Record<string, number> = {
@@ -81,11 +102,14 @@ const SEVERITY_RANK: Record<string, number> = {
   info: 1,
 };
 
-/** Pick the higher of two severity strings. Case-insensitive. */
-export function maxSeverity<S extends string>(a: S, b: S): S {
-  const ra = SEVERITY_RANK[String(a).toLowerCase()] ?? 0;
-  const rb = SEVERITY_RANK[String(b).toLowerCase()] ?? 0;
-  return ra >= rb ? a : b;
+/** Pick the highest severity string. Case-insensitive. Accepts any number of inputs. */
+export function maxSeverity<S extends string>(...severities: S[]): S {
+  if (severities.length === 0) return "" as S;
+  return severities.reduce((best, s) => {
+    const rb = SEVERITY_RANK[String(best).toLowerCase()] ?? 0;
+    const rs = SEVERITY_RANK[String(s).toLowerCase()] ?? 0;
+    return rs > rb ? s : best;
+  });
 }
 
 /**

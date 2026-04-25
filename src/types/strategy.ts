@@ -34,20 +34,28 @@ export type CritiqueCategory =
 
 export type CritiqueSeverity = "high" | "medium" | "low";
 
+/** Which reviewer raised a critique. */
+export type ReviewerSource = "codex" | "gemini";
+
+/** Verdict issued by one reviewer. */
+export type ReviewerVerdict = "approve" | "revise" | "reject" | "unavailable";
+
 export interface CritiquePoint {
   category: CritiqueCategory;
   severity: CritiqueSeverity;
   issue: string;
   suggestion: string;
   addressed?: boolean;
+  /** Which AI(s) raised this concern. Multiple if they both flagged the same thing. */
+  sources?: ReviewerSource[];
 }
 
 export interface CollaborationTrail {
-  /** Did both Claude (proposer/reviser) and Codex (reviewer) succeed? */
+  /** Was the full trio (Claude proposer + Codex + Gemini reviewers) available? */
   bothAisAvailable: boolean;
-  /** Concerns Codex raised about Claude's initial proposal. */
+  /** Concerns the reviewers raised about Claude's initial proposal. */
   critiquePoints: CritiquePoint[];
-  /** APY of the initial Claude proposal, before Codex review and Claude revision. */
+  /** APY of the initial Claude proposal, before reviewer critique and Claude revision. */
   initialProjectedApy: number;
   /** APY of the final revised strategy. */
   finalProjectedApy: number;
@@ -55,8 +63,13 @@ export interface CollaborationTrail {
   droppedPoolIds: string[];
   /** Pool IDs introduced in the revision that weren't in the initial. */
   addedPoolIds: string[];
-  /** Codex's overall verdict on the initial proposal. */
-  codexVerdict: "approve" | "revise" | "reject" | "unavailable";
+  /** @deprecated use reviewerVerdicts.codex — kept for backwards compatibility with older cached strategies. */
+  codexVerdict: ReviewerVerdict;
+  /** Per-reviewer verdicts. Each reviewer may be unavailable independently. */
+  reviewerVerdicts: {
+    codex: ReviewerVerdict;
+    gemini: ReviewerVerdict;
+  };
   /** Plain-language note about what changed and why. */
   revisionNotes: string;
 }
