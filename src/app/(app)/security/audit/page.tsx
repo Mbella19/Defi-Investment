@@ -34,6 +34,19 @@ const SEVERITY_COLORS: Record<string, string> = {
   info: "#6b7280",
 };
 
+const ENGINE_LABEL: Record<string, string> = {
+  slither: "Static",
+  aderyn: "AST",
+  mythril: "Symbolic",
+  regex_pattern: "Pattern",
+  ai_explainer: "AI Panel",
+  onchain_interrogator: "On-chain",
+};
+
+function prettyEngine(t: string): string {
+  return ENGINE_LABEL[t] ?? t;
+}
+
 export default function MultiEngineAuditPage() {
   return (
     <Suspense fallback={<div className="page-wrap" style={{ fontSize: 13, color: "var(--text-dim)" }}>Loading audit console…</div>}>
@@ -153,12 +166,12 @@ function AuditConsole() {
     <div className="page-wrap">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
         <div>
-          <div className="eyebrow">SECURITY · MULTI-ENGINE AUDIT</div>
+          <div className="eyebrow">AUDIT</div>
           <h1 className="display" style={{ fontSize: 28, margin: "6px 0 2px", letterSpacing: "-0.02em" }}>
-            Smart contract audit
+            Read any contract.
           </h1>
           <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
-            Slither + Aderyn + Mythril + on-chain interrogation, reconciled by triple-AI panel
+            Source, state, and every path the code can be pushed down — translated into a verdict you can read.
           </div>
         </div>
         <ThemeToggle />
@@ -331,7 +344,7 @@ function AuditConsole() {
               {r.toolResults.map((t) => (
                 <div key={t.tool} style={{ padding: "10px 12px", background: "var(--surface-2)", borderRadius: 6, border: "1px solid var(--line)" }}>
                   <div style={{ fontWeight: 600, textTransform: "uppercase", fontSize: 11, letterSpacing: "0.06em" }}>
-                    {t.tool}
+                    {prettyEngine(t.tool)}
                   </div>
                   <div style={{ color: t.available ? (t.rawError ? "#f97316" : "var(--text-1)") : "var(--text-dim)", marginTop: 2 }}>
                     {t.available ? `${t.findings.length} finding${t.findings.length === 1 ? "" : "s"} · ${(t.durationMs / 1000).toFixed(1)}s` : "unavailable"}
@@ -377,7 +390,7 @@ function AuditConsole() {
                       </span>
                       <span style={{ fontSize: 13, fontWeight: 600 }}>{f.title}</span>
                       <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim)" }}>
-                        {f.toolsAgreed.join(" + ")}
+                        {f.toolsAgreed.map(prettyEngine).join(" + ")}
                       </span>
                     </div>
                     {f.filePath && (
@@ -400,7 +413,7 @@ function AuditConsole() {
                     )}
                     {f.aiExplanation && (
                       <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 8 }}>
-                        AI panel: {f.aiExplanation.reviewedBy.join(", ")} · consensus: {f.aiExplanation.aiConsensus}
+                        AI panel · {f.aiExplanation.reviewedBy.length} model{f.aiExplanation.reviewedBy.length === 1 ? "" : "s"} · consensus: {f.aiExplanation.aiConsensus}
                       </div>
                     )}
                     {f.codeSnippet && (

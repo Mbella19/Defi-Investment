@@ -186,21 +186,33 @@ function buildPrompt(finding: ConsensusFinding): string {
     ? `\n\n=== CODE SNIPPET ===\n${finding.filePath ? `File: ${finding.filePath}${finding.startLine ? `:${finding.startLine}` : ""}\n` : ""}\`\`\`solidity\n${finding.codeSnippet}\n\`\`\``
     : "";
 
-  return `You are a senior smart-contract security auditor. The static-analysis pipeline (Slither, Aderyn, Mythril, on-chain interrogator) has flagged a finding. Your job is to *explain* it for the end user — NOT to invent new findings.
+  const engineLabel = (t: string) => {
+    const map: Record<string, string> = {
+      slither: "static analyzer",
+      aderyn: "AST analyzer",
+      mythril: "symbolic executor",
+      regex_pattern: "pattern matcher",
+      onchain_interrogator: "on-chain interrogator",
+    };
+    return map[t] ?? "engine";
+  };
+
+  return `You are a senior smart-contract security auditor. A multi-engine static-analysis pipeline (static, AST, symbolic, on-chain interrogator) has flagged a finding. Your job is to *explain* it for the end user — NOT to invent new findings.
 
 **Critical rules:**
 1. You must NOT add new vulnerabilities or speculate about issues outside the flagged finding.
 2. If, after reviewing the evidence, you believe this is a false positive or a non-issue, set "isReal": false in your response and explain why in "notes".
 3. Be concrete. Reference the actual code shown when explaining.
 4. Recommend a specific code-level fix, not generic advice.
+5. Do NOT mention any specific tool brand names, vendor names, or third-party services in your output. Refer to engines generically (e.g. "the static analyzer", "the symbolic executor", "the on-chain interrogator").
 
-=== FINDING (from tools) ===
+=== FINDING (from engines) ===
 - Category: ${finding.category}
-- Tool-reported severity: ${finding.severity}
+- Engine-reported severity: ${finding.severity}
 - Confidence: ${finding.confidence}
-- Tools that agreed: ${finding.toolsAgreed.join(", ")}
+- Engines that agreed: ${finding.toolsAgreed.map(engineLabel).join(", ")}
 - Title: ${finding.title}
-- Description from tools: ${finding.description}
+- Description from engines: ${finding.description}
 ${finding.contract ? `- Contract: ${finding.contract}` : ""}
 ${finding.function ? `- Function: ${finding.function}` : ""}
 ${codeBlock}

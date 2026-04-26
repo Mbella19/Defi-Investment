@@ -1,27 +1,42 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Spark } from "./Spark";
 import { Stat } from "./Stat";
+import { useLiveYields, formatRefreshAge, formatTvl } from "@/hooks/useLiveYields";
 
-function walk(seed: number, n = 60, start = 52, vol = 2.2): number[] {
-  let x = seed * 9301 + 49297;
-  const out: number[] = [start];
-  for (let i = 1; i < n; i++) {
-    x = (x * 9301 + 49297) % 233280;
-    const r = x / 233280 - 0.5;
-    out.push(Math.max(1, out[i - 1] + r * vol + (seed % 3 === 0 ? 0.08 : -0.03)));
-  }
-  return out;
-}
+const TIMEFRAMES = [
+  { id: "7D", days: 7 },
+  { id: "30D", days: 30 },
+  { id: "90D", days: 90 },
+  { id: "1Y", days: 365 },
+] as const;
 
-type Props = {
-  apy?: number;
-  delta?: string;
-};
+type TimeframeId = (typeof TIMEFRAMES)[number]["id"];
 
-export function HeroChart({ apy = 8.42, delta = "0.34" }: Props) {
-  const data = useMemo(() => walk(7, 60, 52, 2.2), []);
+export function HeroChart() {
+  const { data, loading, error, fetchedAt } = useLiveYields();
+  const [tf, setTf] = useState<TimeframeId>("30D");
+
+  const series = data?.series ?? [];
+  const sliced = useMemo(() => {
+    const days = TIMEFRAMES.find((t) => t.id === tf)?.days ?? 30;
+    return series.slice(-days);
+  }, [series, tf]);
+
+  const apyPoints = sliced.map((p) => p.apy);
+  const currentApy = data?.top50Avg30dApy ?? 0;
+  const delta = data?.delta24h ?? 0;
+  const deltaSign = delta >= 0;
+
+  const yLabels = useMemo(() => {
+    if (apyPoints.length < 2) return ["—", "—", "—"];
+    const max = Math.max(...apyPoints);
+    const min = Math.min(...apyPoints);
+    const mid = (max + min) / 2;
+    return [`${max.toFixed(1)}%`, `${mid.toFixed(1)}%`, `${min.toFixed(1)}%`];
+  }, [apyPoints]);
+
   return (
     <div
       style={{
@@ -49,6 +64,7 @@ export function HeroChart({ apy = 8.42, delta = "0.34" }: Props) {
           alignItems: "center",
           gap: 7,
           boxShadow: "var(--shadow-md)",
+          zIndex: 3,
         }}
       >
         <span
@@ -57,27 +73,46 @@ export function HeroChart({ apy = 8.42, delta = "0.34" }: Props) {
             width: 6,
             height: 6,
             borderRadius: 999,
-            background: "var(--accent)",
-            boxShadow: "0 0 8px var(--accent)",
+            background: error ? "var(--danger)" : "var(--accent)",
+            boxShadow: error
+              ? "0 0 8px var(--danger)"
+              : "0 0 8px var(--accent)",
           }}
         />
-        Live · updates every 12s
+        {error
+          ? "Stale · retry pending"
+          : loading && !data
+            ? "Connecting…"
+            : `Live · refreshed ${formatRefreshAge(fetchedAt)}`}
       </div>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-        <div>
-          <div className="eyebrow">30-DAY AVG · TOP 50 POOLS</div>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 8 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          marginBottom: 16,
+          gap: 12,
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div className="eyebrow">{tf} AVG · TOP 50 POOLS</div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
             <span
               className="num display"
               style={{ fontSize: 42, fontWeight: 500, letterSpacing: "-0.035em", lineHeight: 1 }}
             >
-              {apy.toFixed(2)}
+              {currentApy.toFixed(2)}
               <span style={{ color: "var(--text-dim)", fontSize: 24, fontWeight: 400 }}>%</span>
             </span>
-            <span className="delta-up" style={{ fontSize: 13 }}>
-              ▲ {delta}
-            </span>
+            {data ? (
+              <span
+                className={deltaSign ? "delta-up" : "delta-dn"}
+                style={{ fontSize: 13 }}
+              >
+                {deltaSign ? "▲" : "▼"} {Math.abs(delta).toFixed(2)}
+              </span>
+            ) : null}
           </div>
         </div>
         <div
@@ -88,33 +123,53 @@ export function HeroChart({ apy = 8.42, delta = "0.34" }: Props) {
             background: "var(--surface-2)",
             border: "1px solid var(--line)",
             borderRadius: 10,
+            flexShrink: 0,
           }}
         >
-          {["7D", "30D", "90D", "1Y"].map((tl, i) => (
-            <button
-              key={tl}
-              type="button"
-              style={{
-                padding: "5px 12px",
-                fontSize: 11,
-                fontWeight: 500,
-                border: 0,
-                borderRadius: 7,
-                cursor: "pointer",
-                fontFamily: "inherit",
-                background: i === 1 ? "var(--surface)" : "transparent",
-                color: i === 1 ? "var(--text)" : "var(--text-dim)",
-                boxShadow: i === 1 ? "var(--shadow-xs)" : "none",
-              }}
-            >
-              {tl}
-            </button>
-          ))}
+          {TIMEFRAMES.map((t) => {
+            const on = tf === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTf(t.id)}
+                style={{
+                  padding: "5px 12px",
+                  fontSize: 11,
+                  fontWeight: 500,
+                  border: 0,
+                  borderRadius: 7,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  background: on ? "var(--surface)" : "transparent",
+                  color: on ? "var(--text)" : "var(--text-dim)",
+                  boxShadow: on ? "var(--shadow-xs)" : "none",
+                }}
+              >
+                {t.id}
+              </button>
+            );
+          })}
         </div>
       </div>
 
       <div style={{ position: "relative", height: 180 }}>
-        <Spark data={data} color="var(--accent)" height={180} fill animated={false} />
+        {apyPoints.length > 1 ? (
+          <Spark data={apyPoints} color="var(--accent)" height={180} fill animated={false} />
+        ) : (
+          <div
+            style={{
+              height: 180,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--text-muted)",
+              fontSize: 12,
+            }}
+          >
+            {loading ? "Loading 30-day series…" : "Series unavailable"}
+          </div>
+        )}
         <div
           style={{
             position: "absolute",
@@ -127,9 +182,9 @@ export function HeroChart({ apy = 8.42, delta = "0.34" }: Props) {
             pointerEvents: "none",
           }}
         >
-          {["10%", "8%", "6%"].map((y) => (
+          {yLabels.map((y, i) => (
             <span
-              key={y}
+              key={`${y}-${i}`}
               className="mono"
               style={{ fontSize: 9.5, color: "var(--text-muted)", letterSpacing: "0.04em" }}
             >
@@ -149,9 +204,24 @@ export function HeroChart({ apy = 8.42, delta = "0.34" }: Props) {
           borderTop: "1px solid var(--line)",
         }}
       >
-        <Stat label="TVL TRACKED" value="$38.4B" sub="via DeFiLlama" size="sm" />
-        <Stat label="POOLS INDEXED" value="9,812" sub="across 43 chains" size="sm" />
-        <Stat label="DATA REFRESH" value="12s ago" sub="every new block" size="sm" />
+        <Stat
+          label="TVL TRACKED"
+          value={data ? formatTvl(data.totalTvl) : "—"}
+          sub="live feed"
+          size="sm"
+        />
+        <Stat
+          label="POOLS INDEXED"
+          value={data ? data.poolCount.toLocaleString() : "—"}
+          sub={data ? `across ${data.chainCount} chains` : "—"}
+          size="sm"
+        />
+        <Stat
+          label="DATA REFRESH"
+          value={fetchedAt ? formatRefreshAge(fetchedAt) : "—"}
+          sub="auto-refresh 60s"
+          size="sm"
+        />
       </div>
     </div>
   );

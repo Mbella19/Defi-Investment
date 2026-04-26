@@ -54,9 +54,9 @@ export async function runMultiEngineAudit(
   const emit = (e: Omit<AuditJobEvent, "ts">) => opts.onProgress?.(e);
 
   // -------- stage 1: source --------
-  emit({ stage: "fetching_source", message: "Fetching verified source from Etherscan…" });
+  emit({ stage: "fetching_source", message: "Fetching verified contract source…" });
   const source = await getContractSource(chainId, address).catch((err) => {
-    warnings.push(`Etherscan source fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+    warnings.push(`Source fetch failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   });
 
@@ -298,7 +298,7 @@ function writeRecommendations(
 
   // Verification
   if (onchain && !onchain.meta.isVerified) {
-    recs.push("[TRANSPARENCY] Verify contract source on Etherscan so users and auditors can read the deployed bytecode.");
+    recs.push("[TRANSPARENCY] Verify the contract source on the chain's public block explorer so users and auditors can read the deployed bytecode.");
   }
 
   // Failed SCSVS checks not already covered

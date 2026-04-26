@@ -232,7 +232,7 @@ export async function analyzeDeployer(
   const creation = await getContractCreation(chainId, contractAddress);
   if (!creation) {
     throw new Error(
-      `Contract creation record not found for ${contractAddress} on chain ${chainId}. Contract may be too new, not deployed, or Etherscan has no record.`
+      `Contract creation record not found for ${contractAddress} on chain ${chainId}. Contract may be too new, not deployed, or the block explorer has no record.`
     );
   }
 

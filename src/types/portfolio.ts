@@ -44,8 +44,8 @@ export interface AlertEvent {
 }
 
 export const DEFAULT_ALERT_CONFIG: AlertConfig = {
-  apyDropWarning: 20,
-  apyDropCritical: 50,
-  tvlDrainWarning: 30,
-  tvlDrainCritical: 50,
+  apyDropWarning: 35,
+  apyDropCritical: 60,
+  tvlDrainWarning: 40,
+  tvlDrainCritical: 65,
 };

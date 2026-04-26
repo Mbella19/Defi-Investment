@@ -74,10 +74,10 @@ export default function PortfolioPage() {
               className="display"
               style={{ fontSize: 28, margin: "6px 0 2px", letterSpacing: "-0.02em" }}
             >
-              Your real on-chain holdings.
+              Your wallet, in full sight.
             </h1>
             <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
-              Connect a wallet to pull live balances across 7 EVM chains.
+              Connect to see what&rsquo;s actually yours, across every chain that matters.
             </div>
           </div>
 
@@ -108,12 +108,11 @@ export default function PortfolioPage() {
             </div>
             <div style={{ maxWidth: 460 }}>
               <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
-                No wallet connected
+                Connect to begin.
               </div>
               <div style={{ fontSize: 13, color: "var(--text-dim)", lineHeight: 1.5 }}>
-                We never custody funds, never ask for approvals, and never index
-                fake balances. Connect to see real values from on-chain RPCs and
-                CoinGecko prices.
+                We never custody. We never approve. We never sign. Connect, and we
+                read your balances directly from the chain — nothing more, nothing less.
               </div>
             </div>
             <RainbowConnectButton />
@@ -157,9 +156,9 @@ export default function PortfolioPage() {
               >
                 <Icons.wallet size={22} />
               </div>
-              <div style={{ fontSize: 15, fontWeight: 600 }}>No wallet connected</div>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>Connect to begin.</div>
               <div style={{ fontSize: 12.5, color: "var(--text-dim)", lineHeight: 1.5 }}>
-                Connect to pull live balances across 7 EVM chains.
+                See what&rsquo;s yours, across every chain that matters.
               </div>
               <RainbowConnectButton />
             </div>

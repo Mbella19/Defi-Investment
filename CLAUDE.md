@@ -64,13 +64,15 @@ Alongside them, `monitor-scheduler.ts`'s `ensureSchedulerStarted()` is idempoten
 
 ### AI client layer
 
-The three AI providers each shell out to a local CLI:
+Each provider has one exported entry point that branches on a runtime mode:
 
-- `src/lib/security/claude-client.ts` → `claude -p --model claude-opus-4-7 --effort max`
-- `src/lib/security/codex-client.ts` → `codex` CLI
-- `src/lib/security/gemini-client.ts` → `gemini` CLI
+- `src/lib/security/claude-client.ts` → `invokeClaude` (CLI: `claude -p --model claude-opus-4-7 --effort max`; API: Anthropic Messages w/ extended thinking)
+- `src/lib/security/codex-client.ts` → `invokeCodex` (CLI: `codex` exec; API: OpenAI Responses, reasoning effort mapped from xhigh→high)
+- `src/lib/security/gemini-client.ts` → `invokeGemini` (CLI: `gemini -p` w/ approval-mode plan; API: Generative Language `:generateContent`)
 
-All three accept a prompt over stdin and resolve to a string. `extractJson()` in `claude-client.ts` is the shared JSON extractor — it strips markdown fences and returns the outermost balanced `{...}`. Prefer it over ad-hoc parsing when adding a new AI consumer.
+Mode resolution lives in `src/lib/security/ai-mode.ts`. Precedence: per-provider env (`CLAUDE_MODE` / `OPENAI_MODE` / `GEMINI_MODE`) → global `AI_MODE` → default `cli`. API mode requires `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`; model + base URL are also env-overridable. Local dev defaults to CLI for offline parity; hosted deployments set `AI_MODE=api`. See `.env.example`.
+
+All three accept a prompt and resolve to a string regardless of mode, so callers (`tripleInvoke`, `analyzeProtocol`, `generateStrategy`, audit orchestrator) don't branch. Strategist's local Claude wrapper delegates to `invokeClaude` so it inherits the same switching. `extractJson()` in `claude-client.ts` is the shared JSON extractor — strips markdown fences, returns the outermost balanced `{...}`. Prefer it over ad-hoc parsing when adding a new AI consumer.
 
 Two ad-hoc shell scripts exist for second-opinion review during development: `scripts/codex-review.sh` and `scripts/gemini-review.sh`. They take an instruction arg + optional piped context and print the model's response. Useful for security-review of diffs.
 

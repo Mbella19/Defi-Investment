@@ -50,6 +50,20 @@ export interface CritiquePoint {
   issue: string;
   suggestion: string;
   addressed?: boolean;
+  /**
+   * Whether this concern is verifiable by the deterministic resolver. True if
+   * it cites a specific poolId (we can check drop/cut/rewrite) or is in the
+   * "allocation" category (we can check budget sum). False for abstract or
+   * stylistic concerns where the resolver can't prove a change happened.
+   */
+  verifiable?: boolean;
+  /**
+   * If Claude consciously kept the disputed decision in the revision, the
+   * rationale it gave for rejecting this concern. Surfaced in the UI so every
+   * high-severity concern has a recorded outcome (addressed OR explicitly
+   * rejected with a reason).
+   */
+  claudeRejection?: string;
   /** Which AI(s) raised this concern. Multiple if they both flagged the same thing. */
   sources?: ReviewerSource[];
 }

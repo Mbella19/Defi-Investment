@@ -1,4 +1,8 @@
+"use client";
+
+import { useMemo } from "react";
 import { ChainGlyph } from "./ChainGlyph";
+import { useLiveYields } from "@/hooks/useLiveYields";
 
 export type TapeRow = {
   pool: string;
@@ -8,24 +12,60 @@ export type TapeRow = {
   d: number;
 };
 
-const DEFAULT_TAPE: TapeRow[] = [
-  { pool: "USDC", protocol: "Aave v3", chain: "eth", apy: 5.14, d: 0.12 },
-  { pool: "stETH", protocol: "Lido", chain: "eth", apy: 3.22, d: -0.04 },
-  { pool: "sDAI", protocol: "Spark", chain: "eth", apy: 8.75, d: 0.31 },
-  { pool: "USDC", protocol: "Morpho", chain: "base", apy: 6.41, d: 0.08 },
-  { pool: "ETH", protocol: "Pendle PT", chain: "arb", apy: 12.04, d: 0.55 },
-  { pool: "rETH", protocol: "Rocket", chain: "eth", apy: 3.08, d: 0.02 },
-  { pool: "GHO", protocol: "Aave v3", chain: "arb", apy: 7.2, d: -0.15 },
-  { pool: "wstETH/WETH", protocol: "Balancer", chain: "op", apy: 4.9, d: 0.06 },
-  { pool: "USDe", protocol: "Ethena", chain: "eth", apy: 14.6, d: -0.42 },
-];
-
 type Props = {
   rows?: TapeRow[];
+  count?: number;
 };
 
-export function YieldTape({ rows = DEFAULT_TAPE }: Props) {
-  const doubled = [...rows, ...rows];
+const KEEP_CATEGORIES = new Set(["Lending", "LST", "LP", "Yield"]);
+
+export function YieldTape({ rows, count = 14 }: Props) {
+  const { data, error } = useLiveYields();
+
+  const tapeRows = useMemo<TapeRow[]>(() => {
+    if (rows && rows.length > 0) return rows;
+    const pools = data?.pools ?? [];
+    if (pools.length === 0) return [];
+    return pools
+      .filter((p) => KEEP_CATEGORIES.has(p.category) || p.stablecoin)
+      .filter((p) => p.tvlUsd >= 25_000_000)
+      .filter((p) => Number.isFinite(p.apy) && p.apy >= 0.5 && p.apy < 100)
+      .slice(0, count)
+      .map((p) => ({
+        pool: p.symbol,
+        protocol: p.protocol,
+        chain: p.chain,
+        apy: p.apy,
+        d:
+          typeof p.apyPct1D === "number" && Number.isFinite(p.apyPct1D)
+            ? (p.apy * p.apyPct1D) / 100
+            : 0,
+      }));
+  }, [rows, data, count]);
+
+  if (tapeRows.length === 0) {
+    return (
+      <div
+        style={{
+          height: 42,
+          width: "100%",
+          borderTop: "1px solid var(--line)",
+          borderBottom: "1px solid var(--line)",
+          background: "var(--surface)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 11,
+          color: "var(--text-dim)",
+        }}
+      >
+        {error ? "Live tape unavailable — retrying" : "Loading live tape…"}
+      </div>
+    );
+  }
+
+  const doubled = [...tapeRows, ...tapeRows];
+
   return (
     <div
       style={{

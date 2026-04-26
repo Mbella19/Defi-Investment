@@ -457,7 +457,7 @@ export async function auditContract(
   const src = await getContractSource(chainId, contractAddress);
   if (!src) {
     throw new Error(
-      `Source code not verified on Etherscan for ${contractAddress} (chain ${chainId}). An unverified contract cannot be safely audited — treat it as high-risk.`
+      `Source code not verified on the block explorer for ${contractAddress} (chain ${chainId}). An unverified contract cannot be safely audited — treat it as high-risk.`
     );
   }
 

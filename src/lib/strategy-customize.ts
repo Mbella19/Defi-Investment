@@ -92,7 +92,12 @@ export function customizeStrategy(
       : 0;
 
   const projectedApy = Number(weightedApy.toFixed(2));
-  const projectedYearlyReturn = Math.round((budget * projectedApy) / 100);
+  // Compute yield from actual deployed dollars rather than budget × apy.
+  // For 100% allocations these are identical; for leveraged (>100%) or
+  // under-deployed (<100%) strategies, the sum-of-yields form is honest.
+  const projectedYearlyReturn = Math.round(
+    customizedAllocations.reduce((s, a) => s + (a.allocationAmount * a.apy) / 100, 0),
+  );
 
   const customized: InvestmentStrategy = {
     ...original,

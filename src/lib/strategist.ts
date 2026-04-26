@@ -1,4 +1,3 @@
-import { spawn } from "child_process";
 import type { DefiLlamaPool, DefiLlamaProtocol } from "@/types/pool";
 import type {
   StrategyCriteria,
@@ -16,9 +15,10 @@ import { fetchProtocols } from "./defillama";
 import { fetchAllEnrichedPools } from "./pool-aggregator";
 import { analyzeProtocol } from "./anthropic";
 import { formatCurrency } from "./formatters";
+import { getPoolStability, passesStabilityGate, type PoolStability } from "./pool-stability";
 import { invokeCodex } from "./security/codex-client";
 import { invokeGemini } from "./security/gemini-client";
-import { extractJson } from "./security/claude-client";
+import { extractJson, invokeClaude } from "./security/claude-client";
 import type { JobStage } from "./strategy-jobs";
 
 export interface StrategyProgressEvent {
@@ -52,13 +52,17 @@ interface ProtocolSummary {
     autoCompound?: boolean;
     securityScore?: number;
     securityFlags?: string;
+    apyPct7D?: number | null;
+    apyPct30D?: number | null;
+    stability?: PoolStability | null;
   }[];
   analysis?: ProtocolAnalysis;
 }
 
 function buildProtocolSummaries(
   pools: DefiLlamaPool[],
-  protocols: DefiLlamaProtocol[]
+  protocols: DefiLlamaProtocol[],
+  stabilityByPool?: Map<string, PoolStability | null>,
 ): ProtocolSummary[] {
   const protocolMap = new Map<string, DefiLlamaProtocol>();
   for (const p of protocols) {
@@ -99,6 +103,9 @@ function buildProtocolSummaries(
         autoCompound: p.autoCompound,
         securityScore: p.securityData?.securityScore,
         securityFlags: p.securityData?.flags?.join("; "),
+        apyPct7D: p.apyPct7D,
+        apyPct30D: p.apyPct30D,
+        stability: stabilityByPool?.get(p.pool) ?? null,
       })),
     });
   }
@@ -164,9 +171,14 @@ function buildStrategyPrompt(
   const protocolDataLines = summaries.map((s) => {
     const poolLines = s.pools
       .map((p) => {
-        let line = `    ${p.symbol} | ${p.chain} | APY:${p.apy.toFixed(2)}% | TVL:${formatCurrency(p.tvl)} | Stable:${p.stablecoin ? "Y" : "N"} | ID:${p.poolId}`;
-        if (p.source === "beefy") line += ` | Source:Beefy | AutoCompound:Y`;
-        else if (p.autoCompound) line += ` | BeefyVault:Available`;
+        const fmtPct = (v: number | null | undefined) =>
+          v == null ? "n/a" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
+        let line = `    ${p.symbol} | ${p.chain} | APY:${p.apy.toFixed(2)}% | 7dΔ:${fmtPct(p.apyPct7D)} | 30dΔ:${fmtPct(p.apyPct30D)} | TVL:${formatCurrency(p.tvl)} | Stable:${p.stablecoin ? "Y" : "N"} | ID:${p.poolId}`;
+        if (p.stability) {
+          line += ` | Hist:${p.stability.monthsOfHistory.toFixed(1)}mo | 12mAvg:${p.stability.apyMean12m.toFixed(2)}% | 6mCoV:${p.stability.coefficientOfVariation6m.toFixed(2)} | 12mCoV:${p.stability.coefficientOfVariation12m.toFixed(2)} | 24mCoV:${p.stability.coefficientOfVariation24m.toFixed(2)} | maxDD:${p.stability.worstDrawdown.toFixed(1)}pp`;
+        }
+        if (p.source === "beefy") line += ` | Source:AutoCompounder | AutoCompound:Y`;
+        else if (p.autoCompound) line += ` | AutoCompoundVault:Available`;
         return line;
       })
       .join("\n");
@@ -187,13 +199,13 @@ function buildStrategyPrompt(
     let securityLine = "";
     const poolWithSecurity = s.pools.find((p) => p.securityScore !== undefined);
     if (poolWithSecurity && poolWithSecurity.securityScore !== undefined) {
-      securityLine = `\n  CONTRACT SECURITY (GoPlus): Score ${poolWithSecurity.securityScore}/100 | Flags: ${poolWithSecurity.securityFlags || "None"}`;
+      securityLine = `\n  CONTRACT SECURITY: Score ${poolWithSecurity.securityScore}/100 | Flags: ${poolWithSecurity.securityFlags || "None"}`;
     }
 
     // Include market data if available
     let marketLine = "";
     if (s.marketCap) {
-      marketLine = `\n  MARKET DATA (CoinGecko): MCap: ${formatCurrency(s.marketCap)}${s.priceChange24h !== undefined ? ` | 24h: ${s.priceChange24h > 0 ? "+" : ""}${s.priceChange24h.toFixed(2)}%` : ""}`;
+      marketLine = `\n  MARKET DATA: MCap: ${formatCurrency(s.marketCap)}${s.priceChange24h !== undefined ? ` | 24h: ${s.priceChange24h > 0 ? "+" : ""}${s.priceChange24h.toFixed(2)}%` : ""}`;
     }
 
     return `${s.name} (${s.category}) | TVL:${formatCurrency(s.tvl)} | Audits:${s.audits} | Chains:${s.chains.join(",")}
@@ -201,8 +213,18 @@ function buildStrategyPrompt(
   Top pools:\n${poolLines}`;
   }).join("\n\n");
 
+  const volatilityGuidance =
+    criteria.riskAppetite === "low"
+      ? `APY STABILITY (low-risk user): All pools below have ≥12 months history and 12mCoV ≤ 0.6 (CoV = stdev/mean — lower is steadier). Within that surviving set, STRONGLY prefer the steadier end of the range: lower 12mCoV (target <0.4), |7dΔ| < 10%, |30dΔ| < 25%. When 24mCoV is available it's a stronger signal than 12mCoV — use it. Pools with maxDD > 10pp deserve heavy scrutiny even if they passed the gate.`
+      : criteria.riskAppetite === "medium"
+      ? `APY STABILITY (balanced user): All pools below have ≥6 months history and 6mCoV ≤ 0.8 (CoV = stdev/mean — lower is steadier). Within that surviving set, prefer lower 6mCoV (target <0.5), |7dΔ| < 25%, |30dΔ| < 60%. When 12mCoV/24mCoV are also available they reinforce the signal — use them. Pools at the upper end of the CoV range can appear at small weights only with strong justification.`
+      : `APY STABILITY (high-risk user): Multi-year history was NOT required. Note any swings in reasoning but volatility alone is not a disqualifier.`;
   return `You are an expert DeFi investment strategist with deep security knowledge. A user needs a complete investment strategy.
 IMPORTANT: Each protocol below has been through AI deep security analysis. USE the legitimacy scores, verdicts, and red flags to make your allocation decisions. Do NOT allocate to protocols with "caution" verdict unless the user has "high" risk appetite. Favor "high_confidence" protocols heavily.
+
+${volatilityGuidance}
+
+Each pool line includes 7dΔ and 30dΔ — the percent change in APY over the trailing 7 and 30 days. Treat these as volatility/stability signals, NOT as forecasts.
 
 USER PARAMETERS:
 - Budget: $${criteria.budget.toLocaleString()}
@@ -243,7 +265,13 @@ Create a detailed investment strategy. Return ONLY a JSON object with this struc
 
 RULES:
 - Allocations MUST sum to exactly $${criteria.budget.toLocaleString()}
-- Pick 5-15 pools depending on budget size. More diversification for larger budgets
+- Choose the pool count that GENUINELY fits this strategy — not a default. There is no required range. Decide based on conviction, budget, and risk:
+  • If a few protocols are clearly best-in-class for the user's risk profile, concentrate (2-4 pools is fine — even 2 if conviction is overwhelming and concentration is the right call)
+  • If multiple solid protocols compete and diversification meaningfully reduces protocol risk, spread wider (10-20+ pools for large budgets where any single failure must not crater the portfolio)
+  • For small budgets ($1k-$10k), too many pools dilutes capital below useful thresholds — prefer 2-5
+  • For mid budgets ($10k-$100k), typically 4-10 unless one cluster is dominant
+  • For large budgets ($100k+), genuine spread across protocol/chain/asset risk usually warrants 10-25+
+  NEVER pad with low-conviction pools to hit a count. NEVER over-concentrate because picks look strong on paper if a single exploit would be catastrophic. Justify the count you chose in diversificationNotes.
 - CRITICAL: Use the AI safety analysis data. Protocols with legitimacy score below 50 should get minimal or zero allocation for low/medium risk
 - For low risk: only allocate to protocols with legitimacy score >= 70 and "high_confidence" or "moderate_confidence" verdict
 - For medium risk: protocols with score >= 50 are acceptable
@@ -252,9 +280,9 @@ RULES:
 - Include step-by-step instructions on how to actually make each investment
 - Be specific about which chain to use and what the user needs (wallet, bridge, etc.)
 - Include the legitimacyScore, verdict, and redFlags from the analysis data for each allocation
-- If GoPlus contract security data is available, prefer protocols with score >= 70 for low/medium risk. Flag any protocol with honeypot detection or high sell tax
-- If a pool has a Beefy auto-compound vault available, mention it in the steps as an alternative investment method
-- Pools from Beefy (Source:Beefy) auto-compound yields — note this advantage in reasoning
+- If contract security data is available, prefer protocols with score >= 70 for low/medium risk. Flag any protocol with honeypot detection or high sell tax
+- If a pool has an auto-compound vault available, mention it in the steps as an alternative investment method
+- Pools sourced from auto-compounders (Source:AutoCompounder) auto-compound yields — note this advantage in reasoning
 - Return ONLY valid JSON, no other text`;
 }
 
@@ -386,7 +414,7 @@ Return ONLY this JSON:
   "overallNote": "<2-3 sentences on whether the proposal is acceptable as-is or needs revision>"
 }
 
-Use "approve" only if you find ZERO high or medium severity concerns. Use "revise" if there are concerns Claude can fix. Use "reject" only if the strategy is fundamentally broken.`;
+Use "approve" only if you find ZERO high or medium severity concerns. Use "revise" if there are concerns the lead architect can fix. Use "reject" only if the strategy is fundamentally broken.`;
 }
 
 function normalizeCritique(raw: unknown): ReviewerCritique {
@@ -490,8 +518,8 @@ function mergeReviewerCritiques(
   ).slice(0, 15);
 
   const notes: string[] = [];
-  if (codex?.overallNote) notes.push(`Codex: ${codex.overallNote}`);
-  if (gemini?.overallNote) notes.push(`Gemini: ${gemini.overallNote}`);
+  if (codex?.overallNote) notes.push(`Reviewer A: ${codex.overallNote}`);
+  if (gemini?.overallNote) notes.push(`Reviewer B: ${gemini.overallNote}`);
   const combinedNote = notes.join(" | ");
 
   const concerns = Array.from(bucket.values())
@@ -593,11 +621,15 @@ function buildRevisionPrompt(
       const safety = a
         ? `legitimacy=${a.legitimacyScore} verdict=${a.overallVerdict}`
         : "no-deep-analysis";
+      const fmtPct = (v: number | null | undefined) =>
+        v == null ? "n/a" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
       const pools = s.pools
-        .map(
-          (p) =>
-            `    ${p.poolId} | ${p.symbol} | ${p.chain} | APY=${p.apy.toFixed(2)}% | TVL=${formatCurrency(p.tvl)} | stable=${p.stablecoin ? "Y" : "N"}`
-        )
+        .map((p) => {
+          const stab = p.stability
+            ? ` | hist=${p.stability.monthsOfHistory.toFixed(1)}mo | 6mCoV=${p.stability.coefficientOfVariation6m.toFixed(2)} | 12mCoV=${p.stability.coefficientOfVariation12m.toFixed(2)} | 24mCoV=${p.stability.coefficientOfVariation24m.toFixed(2)}`
+            : "";
+          return `    ${p.poolId} | ${p.symbol} | ${p.chain} | APY=${p.apy.toFixed(2)}% | 7dΔ=${fmtPct(p.apyPct7D)} | 30dΔ=${fmtPct(p.apyPct30D)} | TVL=${formatCurrency(p.tvl)} | stable=${p.stablecoin ? "Y" : "N"}${stab}`;
+        })
         .join("\n");
       return `${s.name} (${s.category}) ${safety}\n${pools}`;
     })
@@ -651,19 +683,28 @@ REVISE THE STRATEGY. Return ONLY a JSON object with the SAME structure as your o
   "diversificationNotes": "<paragraph>",
   "warnings": ["...","..."],
   "steps": ["...","..."],
-  "revisionNotes": "<1-2 sentences on what you changed in response to the review and what you kept>"
+  "revisionNotes": "<1-2 sentences on what you changed in response to the review and what you kept>",
+  "rejections": [
+    {
+      "concernIndex": <1-based index of a concern from the list above that you DID NOT address>,
+      "rationale": "<one sentence explaining why you consciously kept the disputed decision instead of acting on this concern>"
+    }
+  ]
 }
 
 RULES:
 - Allocations MUST sum to exactly $${criteria.budget.toLocaleString()}
-- Address EVERY high-severity concern; address medium concerns where possible
-- If you keep an allocation the reviewer flagged, justify it specifically in that allocation's reasoning
+- Address EVERY high-severity concern OR add it to "rejections" with a rationale — silent rejection is not allowed for high-severity concerns
+- Address medium concerns where possible; if not, listing in "rejections" is encouraged but not required
+- "rejections" must use the 1-based concernIndex from the list above (1, 2, 3, …)
+- If you keep an allocation the reviewer flagged, justify it specifically in that allocation's reasoning AND add the concern to "rejections"
 - Use only poolIds from the catalogue
 - Return ONLY valid JSON, no other text`;
 }
 
 interface RevisedStrategyShape extends InvestmentStrategy {
   revisionNotes?: string;
+  rejections?: Array<{ concernIndex?: number; rationale?: string } | unknown>;
 }
 
 /**
@@ -715,46 +756,7 @@ function recomputeWeightedApy(strategy: InvestmentStrategy): number {
 /* ========== HELPERS ========== */
 
 async function invokeClaudeCli(prompt: string, timeoutMs: number): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    const errChunks: Buffer[] = [];
-
-    const proc = spawn(
-      "claude",
-      ["-p", "--output-format", "text", "--model", "claude-opus-4-7", "--effort", "max"],
-      { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env } }
-    );
-
-    const timeout = setTimeout(() => {
-      proc.kill();
-      reject(new Error(`claude CLI timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    proc.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-    proc.stderr.on("data", (chunk: Buffer) => errChunks.push(chunk));
-
-    proc.on("close", (code) => {
-      clearTimeout(timeout);
-      const output = Buffer.concat(chunks).toString("utf-8");
-      if (code === 0 && output.trim()) {
-        resolve(output);
-      } else {
-        const stderr = Buffer.concat(errChunks).toString("utf-8");
-        reject(new Error(`claude CLI exited with code ${code}: ${stderr || "no output"}`));
-      }
-    });
-
-    proc.on("error", (err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
-
-    proc.stdin.on("error", (err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
-    proc.stdin.end(prompt);
-  });
+  return invokeClaude(prompt, { effort: "max", timeoutMs });
 }
 
 function diffPoolIds(initial: InvestmentStrategy, revised: InvestmentStrategy): {
@@ -781,7 +783,7 @@ export async function generateStrategy(
   };
 
   // 1. Fetch everything from DeFiLlama
-  emit({ stage: "fetching_data", message: "Fetching pools and protocols from DeFiLlama…" });
+  emit({ stage: "fetching_data", message: "Fetching pools and protocols from the live yield feed…" });
   const [allPools, allProtocols] = await Promise.all([
     fetchAllEnrichedPools(),
     fetchProtocols(),
@@ -804,11 +806,56 @@ export async function generateStrategy(
       : 50_000;
     if (p.tvlUsd < minTvl) return false;
 
+    // APY-stability gate for safe/balanced tiers. Pools with extreme recent
+    // swings (e.g. APY oscillating 0%→25% on a tiny TVL base) get dropped
+    // before the AI ever sees them — the AI prompt only carries a snapshot
+    // APY, so without this filter chart-noisy pools could land in a "safe"
+    // strategy. Aggressive ("high") keeps full reach.
+    if (criteria.riskAppetite === "low" || criteria.riskAppetite === "medium") {
+      const pct7 = p.apyPct7D == null ? 0 : Math.abs(p.apyPct7D);
+      const pct30 = p.apyPct30D == null ? 0 : Math.abs(p.apyPct30D);
+      const cap7 = criteria.riskAppetite === "low" ? 25 : 60;
+      const cap30 = criteria.riskAppetite === "low" ? 50 : 120;
+      if (pct7 > cap7 || pct30 > cap30) return false;
+    }
+
     return true;
   });
 
+  // 2b. Long-horizon stability gate (safe + balanced only). Fetch full chart
+  // history for the top candidates by TVL and compute multi-year stability
+  // metrics. Pools without enough history (or with high coefficient of
+  // variation over 12/24m) are dropped before the AI sees them. High-risk
+  // skips this gate per spec — a few months of history is fine there.
+  const stabilityByPool = new Map<string, PoolStability | null>();
+  let qualifyingAfterStability = qualifying;
+  if (criteria.riskAppetite === "low" || criteria.riskAppetite === "medium") {
+    const candidates = [...qualifying]
+      .sort((a, b) => (b.tvlUsd || 0) - (a.tvlUsd || 0))
+      .slice(0, 200);
+    emit({
+      stage: "filtering_pools",
+      message: `Fetching multi-year APY history for top ${candidates.length} candidate pools to enforce long-term stability…`,
+    });
+    const stabilityResults = await Promise.all(
+      candidates.map(async (p) => ({ poolId: p.pool, stab: await getPoolStability(p.pool) })),
+    );
+    for (const { poolId, stab } of stabilityResults) {
+      stabilityByPool.set(poolId, stab);
+    }
+    const candidateIds = new Set(candidates.map((c) => c.pool));
+    qualifyingAfterStability = qualifying.filter((p) => {
+      if (!candidateIds.has(p.pool)) return false; // outside the candidate window — drop
+      return passesStabilityGate(stabilityByPool.get(p.pool) ?? null, criteria.riskAppetite);
+    });
+    const dropped = qualifying.length - qualifyingAfterStability.length;
+    console.log(
+      `[strategy] long-term stability gate: ${candidates.length} candidates → ${qualifyingAfterStability.length} survive (dropped ${dropped})`,
+    );
+  }
+
   // 3. Build protocol summaries
-  const summaries = buildProtocolSummaries(qualifying, allProtocols);
+  const summaries = buildProtocolSummaries(qualifyingAfterStability, allProtocols, stabilityByPool);
 
   // 4. Cap deep analysis at the top 10 protocols by TVL. Each runs the
   // triple-AI ensemble (Claude+Codex+Gemini) plus a Claude synthesis call,
@@ -821,12 +868,12 @@ export async function generateStrategy(
   console.log(`Running deep AI analysis on ${protocolsToAnalyze.length} protocols...`);
   emit({
     stage: "deep_analysis",
-    message: `Running triple-AI security analysis on ${protocolsToAnalyze.length} protocols (Claude + Codex + Gemini in parallel per protocol)…`,
+    message: `Running triple-model security analysis on ${protocolsToAnalyze.length} protocols (three reasoning models in parallel per protocol)…`,
     sub: { done: 0, total: protocolsToAnalyze.length },
   });
   const analyzedSummaries = await deepAnalyzeProtocols(
     protocolsToAnalyze,
-    qualifying,
+    qualifyingAfterStability,
     allProtocols,
     (done, total) => {
       console.log(`  Analyzed ${done}/${total} protocols`);
@@ -845,7 +892,7 @@ export async function generateStrategy(
   console.log("[strategy] stage 1: Claude proposing initial strategy");
   emit({
     stage: "claude_proposer",
-    message: `Claude composing initial allocation across ${protocolsDeepAnalyzed} analyzed protocols…`,
+    message: `The lead architect is composing an initial allocation across ${protocolsDeepAnalyzed} analyzed protocols…`,
   });
   const initialPrompt = buildStrategyPrompt(criteria, analyzedSummaries, qualifying.length);
   const initialOutput = await invokeClaudeCli(initialPrompt, 600_000);
@@ -855,7 +902,7 @@ export async function generateStrategy(
   console.log("[strategy] stage 2: Codex + Gemini reviewing proposal in parallel");
   emit({
     stage: "reviewers",
-    message: `Codex GPT-5.5 + Gemini 3.1 Pro reviewing Claude's ${initialStrategy.allocations?.length ?? "?"}-pool proposal in parallel…`,
+    message: `Two independent reviewers are stress-testing the architect's ${initialStrategy.allocations?.length ?? "?"}-pool proposal in parallel…`,
   });
   const critiquePrompt = buildCritiquePrompt(
     criteria,
@@ -880,7 +927,7 @@ export async function generateStrategy(
   if (!codexCritique && !geminiCritique) {
     emit({
       stage: "finalizing",
-      message: "Reviewers unavailable — returning Claude's proposal unreviewed.",
+      message: "Reviewers unavailable — returning the architect's proposal unreviewed.",
     });
     const detail = [codexResult.error, geminiResult.error].filter(Boolean).join(" | ");
     const collaboration: CollaborationTrail = {
@@ -892,7 +939,7 @@ export async function generateStrategy(
       addedPoolIds: [],
       codexVerdict: "unavailable",
       reviewerVerdicts: { codex: "unavailable", gemini: "unavailable" },
-      revisionNotes: `Both reviewers unavailable${detail ? ` (${detail.slice(0, 200)})` : ""}; strategy is from Claude only.`,
+      revisionNotes: `Both reviewers unavailable${detail ? ` (${detail.slice(0, 200)})` : ""}; strategy is from the lead architect only.`,
     };
     return {
       strategy: { ...initialStrategy, collaboration },
@@ -942,7 +989,7 @@ export async function generateStrategy(
   );
   emit({
     stage: "claude_revision",
-    message: `Claude revising strategy against ${merged.concerns.length} reviewer concern${merged.concerns.length === 1 ? "" : "s"} (codex=${codexVerdictRaw}, gemini=${geminiVerdictRaw})…`,
+    message: `The architect is revising the strategy against ${merged.concerns.length} reviewer concern${merged.concerns.length === 1 ? "" : "s"} (reviewer A=${codexVerdictRaw}, reviewer B=${geminiVerdictRaw})…`,
   });
   let revisedStrategy: InvestmentStrategy = initialStrategy;
   let revisionFailed = false;
@@ -991,23 +1038,23 @@ export async function generateStrategy(
   const revisedByPoolId = new Map(revisedStrategy.allocations.map((a) => [a.poolId, a]));
 
   /**
-   * Deterministic resolver: a concern is "addressed" only when we can verify
-   * the condition actually changed. Pool-specific concerns require ALL cited
-   * pools to be either dropped OR meaningfully re-sized / re-justified.
-   * Concerns that cite no pools are left as unaddressed unless we can prove
-   * the structural property changed (currently: only budget/allocation summing).
+   * Returns the result of verifying whether `point` is addressed AND whether
+   * it was *verifiable in principle*. A concern is verifiable when it cites a
+   * specific poolId (we can check drop / cut / rewrite) or is in the
+   * "allocation" category (we can check budget sum). Abstract concerns
+   * (style, reasoning, missing data with no poolId) cannot be deterministically
+   * verified — those are tagged advisory and excluded from the X/Y headline.
    */
-  const concernAddressed = (point: CritiquePoint): boolean => {
-    if (revisionFailed) return false;
+  const resolveConcern = (point: CritiquePoint): { addressed: boolean; verifiable: boolean } => {
+    if (revisionFailed) return { addressed: false, verifiable: false };
     const haystack = `${point.issue} ${point.suggestion}`.toLowerCase();
     const mentionedPoolIds = [...initialByPoolId.keys()].filter((id) =>
       haystack.includes(id.toLowerCase())
     );
 
     if (mentionedPoolIds.length > 0) {
-      return mentionedPoolIds.every((id) => {
+      const addressed = mentionedPoolIds.every((id) => {
         if (droppedSet.has(id)) return true;
-        // Pool kept — check if allocation was reduced by >=20% or reasoning changed substantially
         const initial = initialByPoolId.get(id);
         const revised = revisedByPoolId.get(id);
         if (!initial || !revised) return false;
@@ -1019,36 +1066,61 @@ export async function generateStrategy(
           (revised.reasoning || "").length >= (initial.reasoning || "").length;
         return amountDropped || reasoningChanged;
       });
+      return { addressed, verifiable: true };
     }
 
-    // Non-pool-specific concern: only the allocation category is objectively verifiable
     if (point.category === "allocation") {
       const sum = revisedStrategy.allocations.reduce((acc, a) => acc + a.allocationAmount, 0);
       const tolerance = Math.max(50, criteria.budget * 0.01);
-      return Math.abs(sum - criteria.budget) <= tolerance;
+      return { addressed: Math.abs(sum - criteria.budget) <= tolerance, verifiable: true };
     }
-    return false;
+    return { addressed: false, verifiable: false };
   };
 
-  const critiquePoints: CritiquePoint[] = critiqueToPoints(merged.concerns).map((p) => ({
-    ...p,
-    addressed: concernAddressed(p),
-  }));
+  // Map Claude's per-concern rejection rationales (1-based concernIndex from
+  // the prompt) onto the critique points so the UI can show what Claude said
+  // when it consciously kept a disputed decision.
+  const rejectionMap = new Map<number, string>();
+  const rawRejections = (revisedStrategy as RevisedStrategyShape).rejections;
+  if (Array.isArray(rawRejections)) {
+    for (const r of rawRejections) {
+      if (!r || typeof r !== "object") continue;
+      const obj = r as { concernIndex?: unknown; rationale?: unknown };
+      const idx = typeof obj.concernIndex === "number" ? obj.concernIndex : NaN;
+      const rationale = typeof obj.rationale === "string" ? obj.rationale.trim() : "";
+      if (Number.isInteger(idx) && idx >= 1 && rationale.length > 0) {
+        rejectionMap.set(idx, rationale.slice(0, 400));
+      }
+    }
+  }
 
-  // If high-severity concerns remain unaddressed after revision, surface that
-  // as an explicit warning on the strategy so the user sees it prominently.
-  const unresolvedHigh = critiquePoints.filter((p) => p.severity === "high" && !p.addressed);
+  const critiquePoints: CritiquePoint[] = critiqueToPoints(merged.concerns).map((p, i) => {
+    const { addressed, verifiable } = resolveConcern(p);
+    const rejection = rejectionMap.get(i + 1);
+    return {
+      ...p,
+      addressed,
+      verifiable,
+      claudeRejection: rejection,
+    };
+  });
+
+  // High-severity concerns that were not addressed AND not explicitly rejected
+  // with a rationale → those are the truly silent ones and warrant a warning.
+  const unresolvedHigh = critiquePoints.filter(
+    (p) => p.severity === "high" && !p.addressed && !p.claudeRejection,
+  );
   const extraWarnings: string[] = [];
   if (unresolvedHigh.length > 0) {
     const sources = Array.from(
       new Set(unresolvedHigh.flatMap((p) => p.sources ?? []))
     );
     const sourcesLabel =
-      sources.length === 0 ? "reviewers" : sources.map((s) => (s === "codex" ? "Codex" : "Gemini")).join(" & ");
+      sources.length === 0 ? "reviewers" : sources.map((s) => (s === "codex" ? "Reviewer A" : "Reviewer B")).join(" & ");
     extraWarnings.push(
       `REVIEWER NOTE — ${unresolvedHigh.length} high-severity concern${
         unresolvedHigh.length === 1 ? "" : "s"
-      } from ${sourcesLabel} remained unresolved after Claude's revision. Review the dual-AI trail below before depositing.`
+      } from ${sourcesLabel} remained unaddressed and the lead architect provided no rejection rationale. Review the dual-reviewer trail below before depositing.`
     );
   }
 

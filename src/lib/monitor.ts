@@ -1,6 +1,15 @@
 import type { PortfolioPosition, AlertConfig, AlertEvent } from "@/types/portfolio";
 import type { DefiLlamaPool } from "@/types/pool";
 
+// Pools that started below this entry TVL produce too much noise — small
+// LPs naturally swing 30–50% on routine flow. We still alert on their APY
+// drops (yield collapse is meaningful at any size), just not on TVL movement.
+const MIN_ENTRY_TVL_FOR_DRAIN_ALERT = 1_000_000;
+// DeFiLlama occasionally drops a pool from its index temporarily (re-indexing,
+// chain reorg, schema change). For freshly opened positions the lookup race
+// is the most likely cause of a "missing" result, not a real depreciation.
+const MIN_POSITION_AGE_DAYS_FOR_MISSING_ALERT = 7;
+
 export function runMonitorScan(
   positions: PortfolioPosition[],
   currentPools: DefiLlamaPool[],
@@ -54,7 +63,7 @@ export function runMonitorScan(
       }
     }
 
-    if (currentPool && pos.entryTvl > 0) {
+    if (currentPool && pos.entryTvl >= MIN_ENTRY_TVL_FOR_DRAIN_ALERT) {
       const currentTvl = currentPool.tvlUsd || 0;
       const drainPercent = ((pos.entryTvl - currentTvl) / pos.entryTvl) * 100;
 
@@ -94,18 +103,23 @@ export function runMonitorScan(
     }
 
     if (!currentPool) {
-      alerts.push({
-        id: `missing-${pos.id}`,
-        type: "tvl_drain",
-        severity: "warning",
-        positionId: pos.id,
-        protocol: pos.protocol,
-        symbol: pos.symbol,
-        chain: pos.chain,
-        message: "Pool no longer found on DeFiLlama",
-        detail: "This pool may have been removed or deprecated",
-        timestamp: new Date().toISOString(),
-      });
+      const ageDays = pos.entryDate
+        ? (Date.now() - new Date(pos.entryDate).getTime()) / (1000 * 60 * 60 * 24)
+        : Infinity;
+      if (ageDays >= MIN_POSITION_AGE_DAYS_FOR_MISSING_ALERT) {
+        alerts.push({
+          id: `missing-${pos.id}`,
+          type: "tvl_drain",
+          severity: "warning",
+          positionId: pos.id,
+          protocol: pos.protocol,
+          symbol: pos.symbol,
+          chain: pos.chain,
+          message: "Pool no longer found in the live yield feed",
+          detail: "This pool may have been removed or deprecated",
+          timestamp: new Date().toISOString(),
+        });
+      }
     }
   }
 

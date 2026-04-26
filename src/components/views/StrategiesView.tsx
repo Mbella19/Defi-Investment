@@ -68,7 +68,7 @@ export default function StrategiesPage() {
   return (
     <div style={{ padding: "40px 48px 96px", maxWidth: 1440, margin: "0 auto" }}>
       <section style={{ marginBottom: 40 }}>
-        <Eyebrow>Strategy Monitor / S.ACTIVE</Eyebrow>
+        <Eyebrow>Portfolios / In Motion</Eyebrow>
         <h1
           className="serif"
           style={{
@@ -80,10 +80,10 @@ export default function StrategiesPage() {
             color: "var(--text)",
           }}
         >
-          Active
+          Live
           <br />
           <span style={{ color: "var(--accent)", fontStyle: "italic", fontWeight: 300 }}>
-            Strategies.
+            Portfolios.
           </span>
         </h1>
         <p
@@ -94,8 +94,8 @@ export default function StrategiesPage() {
             maxWidth: 620,
           }}
         >
-          Monitor activated strategies. The system checks pool APYs and alerts you
-          when conditions drift from the entry thesis.
+          The portfolios you&rsquo;ve put to work. We watch them so you don&rsquo;t
+          have to — and tell you the moment the thesis bends.
         </p>
       </section>
 

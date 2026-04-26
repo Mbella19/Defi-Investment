@@ -30,8 +30,10 @@ const CRUMBS: Record<string, string[]> = {
   "/": ["Home"],
   "/discover": ["Home", "Discover"],
   "/portfolio": ["Home", "Portfolio"],
-  "/security": ["Home", "Security"],
+  "/security/audit": ["Home", "Security", "Audit"],
   "/tools": ["Home", "Tools"],
+  "/tools/simulator": ["Home", "Tools", "Yield Simulator"],
+  "/tools/correlation": ["Home", "Tools", "Correlation"],
 };
 
 function crumbsFor(pathname: string): string[] {

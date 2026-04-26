@@ -65,15 +65,15 @@ function buildScoringPrompt(
   const maxApy = apys.length > 0 ? Math.max(...apys) : 0;
 
   const sentimentBlock = sentimentText ? `\nMARKET SENTIMENT DATA:\n${sentimentText}\n` : "";
-  const marketBlock = marketData ? `\nTOKEN MARKET DATA (CoinGecko):\n${formatMarketDataForPrompt(marketData)}\n` : "";
-  const securityBlock = securityData ? `\nCONTRACT SECURITY (GoPlus):\n${formatSecurityForPrompt(securityData)}\n` : "";
+  const marketBlock = marketData ? `\nTOKEN MARKET DATA:\n${formatMarketDataForPrompt(marketData)}\n` : "";
+  const securityBlock = securityData ? `\nCONTRACT SECURITY:\n${formatSecurityForPrompt(securityData)}\n` : "";
   const groundTruthBlock = `\n${formatGroundTruthForPrompt(groundTruth)}\n`;
 
   return `${SCORING_SYSTEM}
 
 Analyze the DeFi protocol "${protocol.name}" for investment legitimacy.
 
-PROTOCOL DATA FROM DEFILLAMA:
+PROTOCOL DATA:
 - Name: ${protocol.name}
 - Category: ${protocol.category}
 - Website: ${protocol.url}
@@ -82,7 +82,7 @@ PROTOCOL DATA FROM DEFILLAMA:
 - Total TVL: ${formatCurrency(protocol.tvl)}
 - TVL Change 1d: ${protocol.change_1d !== null ? `${protocol.change_1d}%` : "N/A"}
 - TVL Change 7d: ${protocol.change_7d !== null ? `${protocol.change_7d}%` : "N/A"}
-- Listed on DeFiLlama Since: ${protocol.listedAt ? formatDate(protocol.listedAt) : "Unknown"}
+- Listed Since: ${protocol.listedAt ? formatDate(protocol.listedAt) : "Unknown"}
 - Audits Count (claimed): ${protocol.audits}
 - Audit Links: ${protocol.audit_links?.join(", ") || "None listed"}
 - Chains Supported: ${protocol.chains.join(", ")}

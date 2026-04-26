@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Icons } from "./Icons";
 import type { InvestmentStrategy, StrategyCriteria } from "@/types/strategy";
 import { getDepositUrl } from "@/lib/deposit-url";
@@ -127,6 +128,7 @@ function apyRange(
 }
 
 export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialRisk = "Balanced" }: Props) {
+  const router = useRouter();
   const [budget, setBudget] = useState<number>(initialBudget);
   const [risk, setRisk] = useState<RiskBand>(initialRisk);
   const [stablesOnly, setStablesOnly] = useState(false);
@@ -324,10 +326,10 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.01em" }}>
-              AI Strategy
+              The Strategist
             </div>
             <div style={{ fontSize: 12, color: "var(--text-dim)" }}>
-              Live DeFiLlama pools · Claude proposes, GPT-5.5 + Gemini review in parallel, Claude revises
+              A portfolio, written for you — proposed, defended, and revised before it reaches you.
             </div>
           </div>
           <button
@@ -496,7 +498,7 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
                 lineHeight: 1.5,
               }}
             >
-              Uses live DeFiLlama yields, GoPlus security checks, and a protocol
+              Uses live yield telemetry, contract security checks, and a protocol
               risk scorer. No fabricated pools, no placeholder APYs.
             </div>
           </div>
@@ -522,6 +524,13 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
             }}
             onActivated={() => {
               clearDraft();
+              // Brief delay so the user sees the "MONITORING ACTIVE" success
+              // state before the modal closes and we navigate them to the
+              // strategies page where the new row is now visible.
+              setTimeout(() => {
+                onClose();
+                router.push("/strategies");
+              }, 700);
             }}
           />
         ) : null}
@@ -728,6 +737,7 @@ function StrategyResultView({
   const [activating, setActivating] = useState(false);
   const [activated, setActivated] = useState(false);
   const [activateError, setActivateError] = useState<string | null>(null);
+  const [leverageMode, setLeverageMode] = useState(false);
 
   const safePicks = picks.length === result.allocations.length ? picks : makeDefaultPicks(result);
   const totalPercent = totalIncludedPercent(safePicks);
@@ -737,9 +747,14 @@ function StrategyResultView({
     [result, safePicks, budget],
   );
 
-  const sumOk = Math.abs(totalPercent - 100) < 0.5;
+  // In normal mode, allocations must sum to ~100%. In leverage mode any
+  // positive sum is valid — values >100% mean recursive/leveraged exposure
+  // (loop-borrow, leveraged LP), values <100% mean some capital is parked.
+  const sumOk = leverageMode ? totalPercent > 0 : Math.abs(totalPercent - 100) < 0.5;
   const hasPicks = includedCount > 0;
   const isCustomized = customized.removedPoolIds.length > 0 || customized.changedPoolIds.length > 0;
+  const leverageRatio = totalPercent / 100;
+  const totalDeployed = Math.round((budget * totalPercent) / 100);
 
   function updatePick(poolId: string, patch: Partial<AllocationPick>) {
     onPicksChange(
@@ -790,7 +805,9 @@ function StrategyResultView({
             ${customized.strategy.projectedYearlyReturn.toLocaleString(undefined, { maximumFractionDigits: 0 })}
           </div>
           <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginTop: 2 }}>
-            at current rates — not guaranteed
+            {leverageMode && Math.abs(leverageRatio - 1) > 0.01
+              ? `${leverageRatio.toFixed(2)}× exposure · pre-borrow-cost`
+              : "at current rates — not guaranteed"}
           </div>
         </div>
       </div>
@@ -814,7 +831,34 @@ function StrategyResultView({
           }}
         >
           <div style={{ fontSize: 13, fontWeight: 600 }}>Allocations · pick & weight</div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <label
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 10.5,
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                color: leverageMode ? "var(--accent)" : "var(--text-dim)",
+                cursor: "pointer",
+                fontFamily: "var(--font-mono, ui-monospace, monospace)",
+                padding: "4px 8px",
+                border: `1px solid ${leverageMode ? "color-mix(in oklch, var(--accent) 38%, transparent)" : "var(--line)"}`,
+                background: leverageMode ? "var(--accent-soft)" : "transparent",
+                borderRadius: 6,
+                userSelect: "none",
+              }}
+              title="Allow allocations >100% (leveraged / recursive positions). Borrow rates and liquidation risk are not modeled."
+            >
+              <input
+                type="checkbox"
+                checked={leverageMode}
+                onChange={(e) => setLeverageMode(e.target.checked)}
+                style={{ cursor: "pointer", accentColor: "var(--accent)" }}
+              />
+              Leverage
+            </label>
             <span
               className="mono"
               style={{
@@ -822,9 +866,15 @@ function StrategyResultView({
                 color: sumOk ? "var(--good)" : "var(--warn)",
                 letterSpacing: "0.04em",
               }}
-              title="Sum of percents across included pools. Must equal 100% to activate."
+              title={
+                leverageMode
+                  ? `Total exposure: ${leverageRatio.toFixed(2)}× of $${budget.toLocaleString()} = $${totalDeployed.toLocaleString()}`
+                  : "Sum of percents across included pools. Must equal 100% to activate."
+              }
             >
-              {totalPercent.toFixed(1)}% / 100%
+              {leverageMode
+                ? `${leverageRatio.toFixed(2)}× · $${totalDeployed.toLocaleString()} deployed`
+                : `${totalPercent.toFixed(1)}% / 100%`}
             </span>
             <button
               type="button"
@@ -912,13 +962,14 @@ function StrategyResultView({
                     <input
                       type="number"
                       min={0}
-                      max={100}
+                      max={leverageMode ? 500 : 100}
                       step={0.1}
                       value={pick.percent}
                       disabled={!pick.included}
                       onChange={(e) => {
                         const v = Number(e.target.value);
-                        if (Number.isFinite(v)) updatePick(a.poolId, { percent: Math.max(0, Math.min(100, v)) });
+                        const cap = leverageMode ? 500 : 100;
+                        if (Number.isFinite(v)) updatePick(a.poolId, { percent: Math.max(0, Math.min(cap, v)) });
                       }}
                       className="mono"
                       style={{
@@ -995,7 +1046,7 @@ function StrategyResultView({
                   <Link
                     href={`/security/audit?address=${a.contractAddress}&chain=${encodeURIComponent(a.auditChain ?? a.chain)}&autostart=1`}
                     className="m-icon-btn"
-                    title="Run multi-engine smart-contract audit (Slither + Aderyn + Mythril + on-chain interrogation, reconciled by triple-AI panel)"
+                    title="Run multi-engine smart-contract audit (static, AST, symbolic, and on-chain interrogation reconciled by a triple-AI panel)"
                     style={{
                       fontSize: 11,
                       fontWeight: 500,
@@ -1066,23 +1117,42 @@ function StrategyResultView({
             {activateError}
           </div>
         ) : null}
-        {!sumOk || !hasPicks ? (
+        {!hasPicks ? (
           <div style={{ fontSize: 11.5, color: "var(--warn)" }}>
-            {!hasPicks
-              ? "Select at least one pool to activate."
-              : `Allocations sum to ${totalPercent.toFixed(1)}% — must equal 100% (use Normalize).`}
+            Select at least one pool to activate.
+          </div>
+        ) : leverageMode && leverageRatio > 1 ? (
+          <div style={{ fontSize: 11.5, color: "var(--warn)" }}>
+            Leveraged exposure ({leverageRatio.toFixed(2)}×) — borrow rates, liquidation thresholds, and unwind costs are not modeled. You are responsible for managing the loop.
+          </div>
+        ) : leverageMode && leverageRatio < 1 ? (
+          <div style={{ fontSize: 11.5, color: "var(--text-dim)" }}>
+            {((1 - leverageRatio) * 100).toFixed(1)}% of capital is uninvested — only ${totalDeployed.toLocaleString()} of ${budget.toLocaleString()} will be deployed.
+          </div>
+        ) : !sumOk ? (
+          <div style={{ fontSize: 11.5, color: "var(--text-dim)" }}>
+            Allocations sum to {totalPercent.toFixed(1)}% — we&apos;ll auto-normalize to 100% on activation.
           </div>
         ) : null}
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <button
             type="button"
             className="btn btn-primary"
-            disabled={activating || activated || !sumOk || !hasPicks}
+            disabled={activating || activated || !hasPicks}
             onClick={async () => {
               setActivateError(null);
               setActivating(true);
               try {
-                await activateStrategy(customized.strategy, criteria);
+                // In normal mode, auto-normalize picks that don't sum to ~100%.
+                // In leverage mode, accept the user's chosen exposure as-is —
+                // they explicitly opted into >100% or under-deployment.
+                let picksForActivation = safePicks;
+                if (!leverageMode && !sumOk) {
+                  picksForActivation = normalizePicks(safePicks);
+                  onPicksChange(picksForActivation);
+                }
+                const finalCustomized = customizeStrategy(result, picksForActivation, budget);
+                await activateStrategy(finalCustomized.strategy, criteria);
                 setActivated(true);
                 onActivated();
               } catch (err) {
@@ -1147,7 +1217,18 @@ function CollaborationBadge({ result }: { result: InvestmentStrategy }) {
   const c = result.collaboration;
   if (!c) return null;
   const total = c.critiquePoints.length;
-  const addressed = c.critiquePoints.filter((p) => p.addressed).length;
+  // Older cached strategies may not have `verifiable` set — fall back to the
+  // legacy "everything is verifiable" assumption so they still render.
+  const hasVerifiableField = c.critiquePoints.some((p) => p.verifiable !== undefined);
+  const verifiable = hasVerifiableField
+    ? c.critiquePoints.filter((p) => p.verifiable)
+    : c.critiquePoints;
+  const advisory = hasVerifiableField
+    ? c.critiquePoints.filter((p) => !p.verifiable)
+    : [];
+  const verifiableTotal = verifiable.length;
+  const verifiableAddressed = verifiable.filter((p) => p.addressed).length;
+  const advisoryRejected = advisory.filter((p) => p.claudeRejection).length;
   const verdicts = c.reviewerVerdicts ?? { codex: c.codexVerdict, gemini: "unavailable" as const };
   const codexAvailable = verdicts.codex !== "unavailable";
   const geminiAvailable = verdicts.gemini !== "unavailable";
@@ -1158,21 +1239,35 @@ function CollaborationBadge({ result }: { result: InvestmentStrategy }) {
     verdicts.gemini === "approve" &&
     total === 0;
 
+  const buildHeadline = () => {
+    if (verifiableTotal === 0 && advisory.length === 0) return "no concerns raised";
+    const parts: string[] = [];
+    if (verifiableTotal > 0) parts.push(`${verifiableAddressed}/${verifiableTotal} verifiable concerns addressed`);
+    if (advisory.length > 0) {
+      const advisoryNote =
+        advisoryRejected > 0
+          ? `${advisory.length} advisory note${advisory.length === 1 ? "" : "s"} (${advisoryRejected} explicitly rejected)`
+          : `${advisory.length} advisory note${advisory.length === 1 ? "" : "s"}`;
+      parts.push(advisoryNote);
+    }
+    return parts.join(" · ");
+  };
+
   let label: string;
   let tone: "good" | "warn" | "info";
   if (availableCount === 0) {
     label = "Single-AI fallback (both reviewers unavailable)";
     tone = "warn";
   } else if (availableCount === 1) {
-    const who = codexAvailable ? "Codex" : "Gemini";
-    label = `Partial review — only ${who} was available (${addressed}/${total} concerns addressed)`;
+    const who = codexAvailable ? "Reviewer A" : "Reviewer B";
+    label = `Partial review — only ${who} was available · ${buildHeadline()}`;
     tone = "warn";
   } else if (allApproved) {
     label = "Approved by both reviewers (no concerns)";
     tone = "good";
   } else {
-    label = `${addressed}/${total} concerns from Codex + Gemini addressed in revision`;
-    tone = addressed === total ? "good" : "info";
+    label = buildHeadline();
+    tone = verifiableTotal > 0 && verifiableAddressed === verifiableTotal ? "good" : "info";
   }
 
   const toneColor =
@@ -1245,13 +1340,13 @@ function CollaborationBadge({ result }: { result: InvestmentStrategy }) {
         </div>
         <div
           style={{ fontSize: 12.5, color: "var(--text-1)", cursor: "help" }}
-          title="A concern is counted as 'addressed' only when the revised strategy verifiably acted on it: the cited pool was dropped, its allocation was cut by ≥20%, or its reasoning was rewritten. The check is deterministic — Claude can't self-mark concerns resolved. Expand 'Reviewer concerns' below to see each one and its resolution."
+          title="Verifiable concerns cite a specific poolId or relate to budget summing — the resolver checks whether the lead architect dropped the pool, cut its allocation by ≥20%, or rewrote the reasoning. Advisory notes are abstract or stylistic and can't be deterministically verified; for high-severity ones the architect must provide a rejection rationale. Expand 'Reviewer concerns' below to see each one's outcome."
         >
           {label}
         </div>
         <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
-          {verdictChip("Codex", verdicts.codex)}
-          {verdictChip("Gemini", verdicts.gemini)}
+          {verdictChip("Reviewer A", verdicts.codex)}
+          {verdictChip("Reviewer B", verdicts.gemini)}
         </div>
       </div>
       {availableCount > 0 && c.initialProjectedApy !== c.finalProjectedApy ? (
@@ -1325,7 +1420,11 @@ function CollaborationDetails({ result }: { result: InvestmentStrategy }) {
                   width: 8,
                   height: 8,
                   borderRadius: 999,
-                  background: p.addressed ? "var(--good)" : sevColor,
+                  background: p.addressed
+                    ? "var(--good)"
+                    : p.claudeRejection
+                      ? "var(--warn)"
+                      : sevColor,
                   marginTop: 5,
                   flexShrink: 0,
                 }}
@@ -1355,7 +1454,7 @@ function CollaborationDetails({ result }: { result: InvestmentStrategy }) {
                         marginRight: 6,
                       }}
                     >
-                      · {p.sources.length > 1 ? "both" : p.sources[0]}
+                      · {p.sources.length > 1 ? "both reviewers" : p.sources[0] === "codex" ? "reviewer A" : "reviewer B"}
                     </span>
                   ) : null}
                   {p.issue}
@@ -1365,16 +1464,52 @@ function CollaborationDetails({ result }: { result: InvestmentStrategy }) {
                     Fix suggested: {p.suggestion}
                   </div>
                 ) : null}
-                <div
-                  className="mono"
-                  style={{
-                    fontSize: 10,
-                    color: p.addressed ? "var(--good)" : "var(--text-dim)",
-                    marginTop: 3,
-                  }}
-                >
-                  {p.addressed ? "✓ ADDRESSED IN REVISION" : "○ NOTED — KEPT BY CLAUDE WITH JUSTIFICATION"}
-                </div>
+                {(() => {
+                  const isVerifiable = p.verifiable !== false; // legacy strategies: assume verifiable
+                  let outcomeLabel: string;
+                  let outcomeColor: string;
+                  if (p.addressed) {
+                    outcomeLabel = "✓ ADDRESSED IN REVISION";
+                    outcomeColor = "var(--good)";
+                  } else if (p.claudeRejection) {
+                    outcomeLabel = "● EXPLICITLY REJECTED BY ARCHITECT";
+                    outcomeColor = "var(--warn)";
+                  } else if (!isVerifiable) {
+                    outcomeLabel = "◌ ADVISORY — NOT DETERMINISTICALLY VERIFIABLE";
+                    outcomeColor = "var(--text-dim)";
+                  } else {
+                    outcomeLabel = "○ NOT ADDRESSED — NO RATIONALE GIVEN";
+                    outcomeColor = "var(--danger)";
+                  }
+                  return (
+                    <>
+                      <div
+                        className="mono"
+                        style={{
+                          fontSize: 10,
+                          color: outcomeColor,
+                          marginTop: 3,
+                          letterSpacing: "0.06em",
+                        }}
+                      >
+                        {outcomeLabel}
+                      </div>
+                      {p.claudeRejection ? (
+                        <div
+                          style={{
+                            fontSize: 11.5,
+                            color: "var(--text-2)",
+                            marginTop: 3,
+                            paddingLeft: 8,
+                            borderLeft: "2px solid var(--warn)",
+                          }}
+                        >
+                          Architect rationale: {p.claudeRejection}
+                        </div>
+                      ) : null}
+                    </>
+                  );
+                })()}
               </div>
             </div>
           );

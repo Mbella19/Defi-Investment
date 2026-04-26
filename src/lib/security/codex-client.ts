@@ -2,29 +2,34 @@ import { spawn } from "child_process";
 import { mkdtemp, readFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
+import { getAiMode, requireEnv } from "./ai-mode";
 
 export interface CodexInvokeOptions {
-  /** Override model (defaults to whatever ~/.codex/config.toml has — typically gpt-5.5). */
+  /** Override model. CLI: ~/.codex/config.toml default. API: OPENAI_MODEL env or gpt-5.5. */
   model?: string;
-  /** Override reasoning effort. Defaults to user's config (typically "xhigh"). */
+  /** Override reasoning effort. CLI: user's config (typically "xhigh"). API: maps to OpenAI effort levels. */
   effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   timeoutMs?: number;
-  /** Working directory for codex. Defaults to current. */
+  /** Working directory for codex (CLI mode only). */
   cwd?: string;
 }
 
-/**
- * Invoke the local `codex` CLI (OpenAI Codex / GPT-5.5) non-interactively.
- * Mirrors invokeClaude's contract: prompt over stdin, returns final assistant text.
- *
- * Uses `--sandbox read-only` for safety — codex never writes files during these
- * security review calls. Output capture is via `-o <file>` so we get only the
- * final assistant message, not the run log noise.
- */
 const STDERR_CAP_BYTES = 64 * 1024;
 const TIMEOUT_GRACE_MS = 1_500;
+const DEFAULT_API_MODEL = "gpt-5.5";
 
-export async function invokeCodex(prompt: string, opts: CodexInvokeOptions = {}): Promise<string> {
+/**
+ * Invoke OpenAI's reasoning model. Routes to the local `codex` CLI or the
+ * OpenAI Responses API depending on AI_MODE / OPENAI_MODE (defaults to "cli").
+ */
+export function invokeCodex(prompt: string, opts: CodexInvokeOptions = {}): Promise<string> {
+  if (getAiMode("codex") === "api") {
+    return invokeCodexApi(prompt, opts);
+  }
+  return invokeCodexCli(prompt, opts);
+}
+
+async function invokeCodexCli(prompt: string, opts: CodexInvokeOptions): Promise<string> {
   const timeoutMs = opts.timeoutMs ?? 360_000;
 
   const outDir = await mkdtemp(join(tmpdir(), "codex-out-"));
@@ -46,8 +51,6 @@ export async function invokeCodex(prompt: string, opts: CodexInvokeOptions = {})
       const errChunks: Buffer[] = [];
       let errBytes = 0;
 
-      // detached:true puts the child in its own process group so we can signal
-      // the whole subtree on timeout (codex spawns an LLM client subprocess).
       const proc = spawn("codex", args, {
         stdio: ["pipe", "pipe", "pipe"],
         env: { ...process.env },
@@ -73,12 +76,11 @@ export async function invokeCodex(prompt: string, opts: CodexInvokeOptions = {})
 
       const timeout = setTimeout(() => {
         killTree("SIGTERM");
-        // Escalate to SIGKILL if the process group ignores SIGTERM.
         setTimeout(() => killTree("SIGKILL"), TIMEOUT_GRACE_MS).unref();
         settle(() => reject(new Error(`codex CLI timed out after ${timeoutMs}ms`)));
       }, timeoutMs);
 
-      proc.stdout.on("data", () => {/* discard event log; final message lives in outFile */});
+      proc.stdout.on("data", () => {/* discard event log */});
       proc.stderr.on("data", (c: Buffer) => {
         if (errBytes < STDERR_CAP_BYTES) {
           errChunks.push(c);
@@ -111,7 +113,6 @@ export async function invokeCodex(prompt: string, opts: CodexInvokeOptions = {})
         settle(() => reject(err));
       });
 
-      // EPIPE on early child exit must not crash the parent process.
       proc.stdin.on("error", (err) => {
         clearTimeout(timeout);
         settle(() => reject(err));
@@ -120,5 +121,73 @@ export async function invokeCodex(prompt: string, opts: CodexInvokeOptions = {})
     });
   } finally {
     await rm(outDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Map our 5-level effort to OpenAI's 4-level Responses API effort. */
+function mapEffort(effort: CodexInvokeOptions["effort"]): "minimal" | "low" | "medium" | "high" {
+  switch (effort) {
+    case "minimal": return "minimal";
+    case "low": return "low";
+    case "medium": return "medium";
+    case "high":
+    case "xhigh":
+    default: return "high";
+  }
+}
+
+async function invokeCodexApi(prompt: string, opts: CodexInvokeOptions): Promise<string> {
+  const apiKey = requireEnv("OPENAI_API_KEY");
+  const model = opts.model ?? process.env.OPENAI_MODEL ?? DEFAULT_API_MODEL;
+  const timeoutMs = opts.timeoutMs ?? 360_000;
+  const baseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com").replace(/\/$/, "");
+  const effort = mapEffort(opts.effort ?? "xhigh");
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${baseUrl}/v1/responses`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        input: prompt,
+        reasoning: { effort },
+      }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`OpenAI API ${res.status}: ${errText.slice(0, 500) || res.statusText}`);
+    }
+    const data = (await res.json()) as {
+      output_text?: string;
+      output?: Array<{
+        type: string;
+        content?: Array<{ type: string; text?: string }>;
+      }>;
+    };
+    let text = (data.output_text ?? "").trim();
+    if (!text && Array.isArray(data.output)) {
+      text = data.output
+        .filter((b) => b.type === "message")
+        .flatMap((b) => b.content ?? [])
+        .filter((c) => (c.type === "output_text" || c.type === "text") && typeof c.text === "string")
+        .map((c) => c.text as string)
+        .join("")
+        .trim();
+    }
+    if (!text) throw new Error("OpenAI API returned no text output");
+    return text;
+  } catch (err) {
+    if ((err as Error).name === "AbortError") {
+      throw new Error(`OpenAI API timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
 }

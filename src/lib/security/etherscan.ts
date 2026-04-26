@@ -59,7 +59,7 @@ async function call<T>(params: Record<string, string>, revalidateSeconds = 3600)
   const url = `${ETHERSCAN_V2_BASE}?${search.toString()}`;
 
   const res = await fetch(url, { next: { revalidate: revalidateSeconds } });
-  if (!res.ok) throw new Error(`Etherscan HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`Block explorer HTTP ${res.status}`);
   const json = (await res.json()) as EtherscanResponse<T>;
 
   if (json.status === "0" && typeof json.result === "string") {
@@ -68,10 +68,10 @@ async function call<T>(params: Record<string, string>, revalidateSeconds = 3600)
       throw new Error("SOURCE_UNVERIFIED");
     }
     if (msg.toLowerCase().includes("rate limit")) {
-      throw new Error("Etherscan rate limit exceeded");
+      throw new Error("Block explorer rate limit exceeded");
     }
     if (msg.toLowerCase().includes("invalid api key")) {
-      throw new Error("Invalid Etherscan API key");
+      throw new Error("Invalid block explorer API key");
     }
   }
 
@@ -180,6 +180,50 @@ export async function getNormalTxs(
         sort: opts.sort ?? "asc",
       },
       1800
+    );
+    return Array.isArray(result) ? result : [];
+  } catch {
+    return [];
+  }
+}
+
+export interface EtherscanTokenTx {
+  blockNumber: string;
+  timeStamp: string;
+  hash: string;
+  from: string;
+  to: string;
+  value: string;
+  tokenName: string;
+  tokenSymbol: string;
+  tokenDecimal: string;
+  contractAddress: string;
+}
+
+/**
+ * ERC-20 token transfers for an address. Used by the drain-detection heuristic
+ * since real DeFi exploits move tokens (USDC/USDT/wBTC/etc.), not native ETH —
+ * `getNormalTxs` only sees `tx.value` which is zero for token-only transfers.
+ */
+export async function getTokenTxs(
+  chainId: number,
+  address: string,
+  opts: { startblock?: number; endblock?: number; page?: number; offset?: number; sort?: "asc" | "desc" } = {}
+): Promise<EtherscanTokenTx[]> {
+  try {
+    const result = await call<EtherscanTokenTx[]>(
+      {
+        chainid: String(chainId),
+        module: "account",
+        action: "tokentx",
+        address: address.toLowerCase(),
+        startblock: String(opts.startblock ?? 0),
+        endblock: String(opts.endblock ?? 99999999),
+        page: String(opts.page ?? 1),
+        offset: String(opts.offset ?? 1000),
+        sort: opts.sort ?? "desc",
+      },
+      900
     );
     return Array.isArray(result) ? result : [];
   } catch {

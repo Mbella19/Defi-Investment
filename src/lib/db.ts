@@ -50,4 +50,29 @@ function migrate(db: InstanceType<typeof Database>) {
     CREATE INDEX IF NOT EXISTS idx_alerts_strategy ON strategy_alerts(strategy_id);
     CREATE INDEX IF NOT EXISTS idx_alerts_read ON strategy_alerts(read);
   `);
+
+  // Repair malformed alert.pool_id values written before the bugfix:
+  // they were stored as "<strategyId>-<realPoolId>-<index>" instead of
+  // just "<realPoolId>", so the DeFiLlama pool deep-link 500'd. Strip the
+  // strategy_id prefix and the trailing "-<index>" suffix in-place. Safe to
+  // run on every boot — it's a no-op once rows are clean.
+  const malformed = db
+    .prepare(
+      "SELECT id, strategy_id, pool_id FROM strategy_alerts WHERE pool_id IS NOT NULL AND pool_id LIKE strategy_id || '-%'",
+    )
+    .all() as Array<{ id: string; strategy_id: string; pool_id: string }>;
+  if (malformed.length > 0) {
+    const updateStmt = db.prepare("UPDATE strategy_alerts SET pool_id = ? WHERE id = ?");
+    const fix = db.transaction((rows: typeof malformed) => {
+      for (const r of rows) {
+        const stripped = r.pool_id.slice(r.strategy_id.length + 1);
+        // Drop the trailing "-<index>" (allocations[i] in the strategy)
+        const repaired = stripped.replace(/-\d+$/, "");
+        if (repaired && repaired !== r.pool_id) {
+          updateStmt.run(repaired, r.id);
+        }
+      }
+    });
+    fix(malformed);
+  }
 }

@@ -260,12 +260,17 @@ export async function monitorActiveStrategies(
     }));
 
     const baseAlerts: AlertEvent[] = runMonitorScan(positions, allPools, DEFAULT_ALERT_CONFIG);
+    // Map the synthesized positionId back to the real DeFiLlama pool ID so
+    // the alert can be deep-linked to the actual pool page (otherwise we'd
+    // store "<strategyId>-<realPoolId>-<index>" as the pool_id and the
+    // "Pool data" link would 500).
+    const positionToPool = new Map(positions.map((p) => [p.id, p.poolId]));
     for (const alert of baseAlerts) {
       tryInsert(
         sId,
         alert.type,
         alert.severity,
-        alert.positionId,
+        positionToPool.get(alert.positionId) ?? null,
         alert.protocol,
         alert.symbol,
         alert.chain,

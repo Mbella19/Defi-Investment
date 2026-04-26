@@ -201,6 +201,36 @@ export default function AlertBell() {
                     >
                       {alert.detail}
                     </div>
+                    <div
+                      style={{
+                        marginTop: 8,
+                        display: "flex",
+                        gap: 6,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      {alert.poolId ? (
+                        <a
+                          href={`https://defillama.com/yields/pool/${alert.poolId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mono"
+                          style={{
+                            fontSize: 9.5,
+                            letterSpacing: "0.16em",
+                            textTransform: "uppercase",
+                            color: "var(--accent)",
+                            background: "var(--accent-soft)",
+                            border: "1px solid color-mix(in oklch, var(--accent) 32%, transparent)",
+                            padding: "4px 8px",
+                            borderRadius: 5,
+                            textDecoration: "none",
+                          }}
+                        >
+                          Manage funds →
+                        </a>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
               ))

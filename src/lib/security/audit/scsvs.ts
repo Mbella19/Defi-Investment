@@ -72,7 +72,7 @@ const RULES: ScsvsRule[] = [
     evaluate: ({ onchain }) => {
       if (!onchain) return { status: "indeterminate" };
       return onchain.meta.isVerified
-        ? { status: "pass", evidence: ["Source code published & verified on Etherscan."] }
+        ? { status: "pass", evidence: ["Source code published & verified on a public block explorer."] }
         : { status: "fail", evidence: ["Source code is NOT verified — bytecode is opaque."] };
     },
   },
@@ -131,7 +131,7 @@ const RULES: ScsvsRule[] = [
   {
     id: "V3.2",
     category: "V3_blockchain_data",
-    description: "On-chain randomness is not used; if needed, a VRF (Chainlink) is used instead.",
+    description: "On-chain randomness is not used; if needed, a verifiable randomness function (VRF) is used instead.",
     failOnCategories: ["weak_prng"],
     requiredTools: ["slither"],
   },

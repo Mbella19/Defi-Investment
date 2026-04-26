@@ -15,7 +15,7 @@ const items: Item[] = [
   { href: "/", label: "Home", icon: Icons.home, match: (p) => p === "/" },
   { href: "/discover", label: "Discover", icon: Icons.compass },
   { href: "/portfolio", label: "Portfolio", icon: Icons.wallet },
-  { href: "/security", label: "Security", icon: Icons.shield },
+  { href: "/security/audit", label: "Security", icon: Icons.shield },
   { href: "/tools", label: "Tools", icon: Icons.tools },
 ];
 

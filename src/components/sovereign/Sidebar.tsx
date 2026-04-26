@@ -17,7 +17,7 @@ const nav: NavItem[] = [
   { href: "/discover", label: "Discover", icon: Icons.compass },
   { href: "/strategies", label: "Strategies", icon: Icons.activity },
   { href: "/portfolio", label: "Portfolio", icon: Icons.wallet },
-  { href: "/security", label: "Security", icon: Icons.shield },
+  { href: "/security/audit", label: "Security", icon: Icons.shield },
   { href: "/tools", label: "Tools", icon: Icons.tools },
 ];
 
@@ -83,7 +83,7 @@ export function Sidebar() {
             className="mono"
             style={{ fontSize: 10, color: "var(--text-2)", letterSpacing: "0.12em" }}
           >
-            LIVE · DEFILLAMA
+            LIVE FEED
           </span>
         </div>
         <div style={{ fontSize: 11.5, color: "var(--text-dim)", lineHeight: 1.45 }}>

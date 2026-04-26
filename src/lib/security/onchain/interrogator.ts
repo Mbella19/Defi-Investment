@@ -535,7 +535,7 @@ function deriveFindings(
       severity: "high",
       category: "code_quality",
       title: "Contract source code is not verified",
-      description: "Source code is not published to Etherscan. The bytecode cannot be matched to readable Solidity, so static analysis and human review are not possible. Treat as opaque — do not interact unless the protocol explicitly justifies why.",
+      description: "Source code is not published to a public block explorer. The bytecode cannot be matched to readable Solidity, so static analysis and human review are not possible. Treat as opaque — do not interact unless the protocol explicitly justifies why.",
       confidence: "confirmed",
     }));
   }

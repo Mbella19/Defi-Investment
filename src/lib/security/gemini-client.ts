@@ -1,10 +1,11 @@
 import { spawn } from "child_process";
+import { getAiMode, requireEnv } from "./ai-mode";
 
 export interface GeminiInvokeOptions {
   /** Model id. Defaults to gemini-3.1-pro-preview. */
   model?: string;
   timeoutMs?: number;
-  /** Working directory for gemini. Defaults to current. */
+  /** Working directory for gemini (CLI mode only). */
   cwd?: string;
 }
 
@@ -13,22 +14,23 @@ const STDERR_CAP_BYTES = 64 * 1024;
 const TIMEOUT_GRACE_MS = 1_500;
 
 /**
- * Invoke the local `gemini` CLI non-interactively. Mirrors invokeClaude /
- * invokeCodex contracts: pipe prompt over stdin, return final assistant text.
- *
- * Uses --approval-mode plan for a read-only sandbox — gemini will not edit
- * files during these review calls.
+ * Invoke Gemini. Routes to the local `gemini` CLI or the Google Generative
+ * Language API depending on AI_MODE / GEMINI_MODE (defaults to "cli").
  */
-export async function invokeGemini(prompt: string, opts: GeminiInvokeOptions = {}): Promise<string> {
+export function invokeGemini(prompt: string, opts: GeminiInvokeOptions = {}): Promise<string> {
+  if (getAiMode("gemini") === "api") {
+    return invokeGeminiApi(prompt, opts);
+  }
+  return invokeGeminiCli(prompt, opts);
+}
+
+function invokeGeminiCli(prompt: string, opts: GeminiInvokeOptions): Promise<string> {
   const timeoutMs = opts.timeoutMs ?? 360_000;
   const model = opts.model ?? DEFAULT_MODEL;
 
-  // gemini -p takes the prompt as an arg but also accepts stdin which is
-  // "appended to input on stdin". Passing an empty -p and piping the real
-  // prompt via stdin keeps long prompts off argv (argv has OS size limits).
   const args = ["-p", "", "-m", model, "--approval-mode", "plan"];
 
-  return await new Promise<string>((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
     const stdoutChunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
     let errBytes = 0;
@@ -97,4 +99,57 @@ export async function invokeGemini(prompt: string, opts: GeminiInvokeOptions = {
     });
     proc.stdin.end(prompt);
   });
+}
+
+async function invokeGeminiApi(prompt: string, opts: GeminiInvokeOptions): Promise<string> {
+  const apiKey = requireEnv("GEMINI_API_KEY");
+  const model = opts.model ?? process.env.GEMINI_MODEL ?? DEFAULT_MODEL;
+  const timeoutMs = opts.timeoutMs ?? 360_000;
+  const baseUrl = (process.env.GEMINI_BASE_URL ?? "https://generativelanguage.googleapis.com").replace(/\/$/, "");
+
+  const url = `${baseUrl}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+      }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`Gemini API ${res.status}: ${errText.slice(0, 500) || res.statusText}`);
+    }
+    const data = (await res.json()) as {
+      candidates?: Array<{
+        content?: { parts?: Array<{ text?: string }> };
+        finishReason?: string;
+      }>;
+      promptFeedback?: { blockReason?: string };
+    };
+    if (data.promptFeedback?.blockReason) {
+      throw new Error(`Gemini API blocked prompt: ${data.promptFeedback.blockReason}`);
+    }
+    const parts = data.candidates?.[0]?.content?.parts ?? [];
+    const text = parts
+      .map((p) => p.text ?? "")
+      .join("")
+      .trim();
+    if (!text) throw new Error("Gemini API returned no text content");
+    return text;
+  } catch (err) {
+    if ((err as Error).name === "AbortError") {
+      throw new Error(`Gemini API timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
