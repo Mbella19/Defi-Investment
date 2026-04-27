@@ -8,6 +8,13 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const rawStrategies = Array.isArray(body?.strategies) ? body.strategies : [];
 
+    if (rawStrategies.length > 50) {
+      return Response.json(
+        { error: `Too many strategies (${rawStrategies.length}); max 50 per request` },
+        { status: 400 },
+      );
+    }
+
     const strategies: MonitoredStrategy[] = rawStrategies
       .map((s: unknown) => {
         const x = s as Partial<MonitoredStrategy>;

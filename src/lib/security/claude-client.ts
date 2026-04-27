@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { getAiMode, requireEnv } from "./ai-mode";
+import { getAiMode, requireEnv, resolveBaseUrl } from "./ai-mode";
 
 export interface ClaudeInvokeOptions {
   model?: string;
@@ -20,6 +20,8 @@ export function invokeClaude(prompt: string, opts: ClaudeInvokeOptions = {}): Pr
   return invokeClaudeCli(prompt, opts);
 }
 
+const TIMEOUT_GRACE_MS = 1_500;
+
 function invokeClaudeCli(prompt: string, opts: ClaudeInvokeOptions): Promise<string> {
   const model = opts.model ?? DEFAULT_MODEL;
   const effort = opts.effort ?? "max";
@@ -29,14 +31,35 @@ function invokeClaudeCli(prompt: string, opts: ClaudeInvokeOptions): Promise<str
     const chunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
 
+    // detached:true puts the child in its own process group so we can signal
+    // the entire subtree on timeout — matches codex/gemini. The claude CLI
+    // spawns helpers (auth flow etc.) and bare proc.kill() leaks them.
     const proc = spawn("claude", ["-p", "--output-format", "text", "--model", model, "--effort", effort], {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env },
+      detached: true,
     });
 
+    let settled = false;
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
+
+    const killTree = (signal: NodeJS.Signals) => {
+      if (proc.pid === undefined) return;
+      try {
+        process.kill(-proc.pid, signal);
+      } catch {
+        try { proc.kill(signal); } catch { /* already gone */ }
+      }
+    };
+
     const timeout = setTimeout(() => {
-      proc.kill();
-      reject(new Error(`claude CLI timed out after ${timeoutMs}ms`));
+      killTree("SIGTERM");
+      setTimeout(() => killTree("SIGKILL"), TIMEOUT_GRACE_MS).unref();
+      settle(() => reject(new Error(`claude CLI timed out after ${timeoutMs}ms`)));
     }, timeoutMs);
 
     proc.stdout.on("data", (c: Buffer) => chunks.push(c));
@@ -44,22 +67,26 @@ function invokeClaudeCli(prompt: string, opts: ClaudeInvokeOptions): Promise<str
 
     proc.on("close", (code) => {
       clearTimeout(timeout);
+      if (settled) return;
       const output = Buffer.concat(chunks).toString("utf-8");
       if (code === 0 && output.trim()) {
-        resolve(output);
+        settle(() => resolve(output));
       } else {
         const stderr = Buffer.concat(errChunks).toString("utf-8");
-        reject(new Error(`claude CLI exited ${code}: ${stderr || "no output"}`));
+        settle(() => reject(new Error(`claude CLI exited ${code}: ${stderr || "no output"}`)));
       }
     });
 
     proc.on("error", (err) => {
       clearTimeout(timeout);
-      reject(err);
+      settle(() => reject(err));
     });
 
-    proc.stdin.write(prompt);
-    proc.stdin.end();
+    proc.stdin.on("error", (err) => {
+      clearTimeout(timeout);
+      settle(() => reject(err));
+    });
+    proc.stdin.end(prompt);
   });
 }
 
@@ -84,7 +111,7 @@ async function invokeClaudeApi(prompt: string, opts: ClaudeInvokeOptions): Promi
   const model = opts.model ?? process.env.ANTHROPIC_MODEL ?? DEFAULT_MODEL;
   const effort = opts.effort ?? "max";
   const timeoutMs = opts.timeoutMs ?? 180_000;
-  const baseUrl = (process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com").replace(/\/$/, "");
+  const baseUrl = resolveBaseUrl("ANTHROPIC_BASE_URL", "https://api.anthropic.com");
 
   const budget = thinkingBudget(effort);
   const responseBudget = 8192;

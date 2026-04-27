@@ -37,3 +37,25 @@ export function requireEnv(name: string): string {
   }
   return v.trim();
 }
+
+/**
+ * Resolve `*_BASE_URL` env vars for the AI providers. Validates that the
+ * value parses as a URL and uses http/https — anything else (file:, data:,
+ * javascript:, etc.) would be silently concatenated into a fetch otherwise.
+ * Strips trailing slash for consistent path concatenation.
+ */
+export function resolveBaseUrl(envName: string, fallback: string): string {
+  const raw = process.env[envName];
+  if (!raw || !raw.trim()) return fallback.replace(/\/$/, "");
+  const value = raw.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`${envName} is not a valid URL: ${JSON.stringify(value)}`);
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(`${envName} must use http or https; got ${parsed.protocol}`);
+  }
+  return value.replace(/\/$/, "");
+}

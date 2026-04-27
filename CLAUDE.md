@@ -58,9 +58,30 @@ A full audit takes 5–10 minutes, so it runs as a background job (`audit/jobs.t
 
 ### Background scheduler & job stores
 
-Two in-memory job stores back the long-running pipelines: `strategy-jobs.ts` for `generateStrategy` and `audit/jobs.ts` for `runMultiEngineAudit`. Both are `Map<id, Job>` with TTL pruning and append-only `events[]` arrays for progress streaming — clients poll `…/status` and render a live event log. New long-running pipelines should follow the same shape.
+Two in-memory job stores back the long-running pipelines: `strategy-jobs.ts` for `generateStrategy` and `audit/jobs.ts` for `runMultiEngineAudit`. Both are `Map<id, Job>` with TTL pruning (a periodic `setInterval(...).unref()` sweep on top of the on-write checks) and append-only `events[]` arrays for progress streaming — clients poll `…/status` and render a live event log. New long-running pipelines should follow the same shape.
 
-Alongside them, `monitor-scheduler.ts`'s `ensureSchedulerStarted()` is idempotently invoked from strategy API routes; on first call it spawns a 15-min `setInterval` that runs `monitorActiveStrategies()` to scan stored strategies and write new `strategy_alerts` rows. The scheduler lives inside the Next server process — a serverless deployment would need to externalize it.
+Alongside them, `monitor-scheduler.ts`'s `ensureSchedulerStarted()` is idempotently invoked from strategy API routes; on first call it spawns a 15-min `setInterval` that runs `monitorActiveStrategies()` to scan stored strategies and write new `strategy_alerts` rows. The scheduler lives inside the Next server process — for serverless deployments, `vercel.json` configures Vercel Cron to POST `/api/strategies/monitor` every 15 min instead. That route accepts `Authorization: Bearer ${CRON_SECRET}` (required in prod, optional in dev) and runs one `monitorActiveStrategies()` sweep per invocation. GET on the same route returns scheduler status with a `stale` flag if no scan has run in 30+ min.
+
+### Auth & per-route guards
+
+SIWE (EIP-4361) is the only auth path. The flow:
+
+1. `GET /api/auth/nonce` → `src/lib/auth/nonce-store.ts` issues a single-use 10-min nonce.
+2. Client signs the EIP-4361 message with the connected wallet.
+3. `POST /api/auth/verify` → `src/lib/auth/siwe.ts` regex-parses the message, calls viem's `verifyMessage`, consumes the nonce, then `src/lib/auth/session.ts` mints an HMAC-signed `sov_session` cookie (24h TTL, `HttpOnly`, `SameSite=Lax`, `Secure` in prod). No JWT lib — just Node `crypto`.
+4. `POST /api/auth/logout` clears the cookie. `GET /api/auth/me` returns `{ wallet }` or null.
+
+`SESSION_SECRET` (≥32 chars) is required — auth-protected routes return 503 if it's unset.
+
+Wallet-scoped routes use `requireWallet(request)` from `src/lib/auth/guard.ts`, which returns either `{ wallet }` or `{ response }` (a 401/503). All `/api/strategies*` routes scope queries by `wallet_address = ?` from the session and **ignore any client-supplied wallet/walletAddress params** — that's the auth boundary, not just a convenience.
+
+### Rate limiting
+
+`enforceRateLimit(request, endpoint, { max, windowMs })` from `src/lib/rate-limit.ts` is a fixed-window token bucket keyed by authenticated wallet (preferred) or IP. Returns `null` to pass, or a 429 `Response` with `Retry-After`. Per-endpoint caps live at the top of each route handler — current values: `strategy` 5/h, `audit` 3/h, `analyze` 20/h, `forensics` 20/h. The store is in-process — for multi-instance deployments swap to Redis.
+
+### SSRF guard
+
+`safeFetch(url, init)` in `src/lib/security/ground-truth.ts` is the only outbound fetch path used for caller-influenced URLs (audit links, etc.). It enforces scheme allowlist (http/https), rejects literal private IPs (IPv4 RFC1918 + loopback/link-local; IPv6 ULA + loopback), DNS-resolves hostnames and re-checks every resolved address, and follows redirects manually (max 3) re-validating each hop. Use it instead of bare `fetch()` whenever the URL is user-supplied or comes from upstream API responses.
 
 ### AI client layer
 
@@ -99,3 +120,6 @@ DeFiLlama (protocols, pools, TVL), CoinGecko (token market data), GoPlus (contra
 - **Long timeouts are intentional.** Scoring/synthesis use 360s timeouts; strategy proposer/reviser use 600s. The AI CLIs at max effort are slow — don't shorten without a reason.
 - **React Compiler is on.** Don't reach for `useMemo` / `useCallback` for performance — the compiler memoizes function components automatically. Hand-written memoization is only justified when memoizing on a value the compiler can't see (e.g., refs, mutable instances).
 - **GEMINI.md is the parallel file for Gemini reviews.** The local `gemini` CLI loads it the way Claude loads `CLAUDE.md`. The two have drifted before — when you change architecture-affecting facts here, mirror the relevant bit in `GEMINI.md`, or at least don't let it contradict.
+- **Use `fetchWithTimeout` + `warnUpstream` for upstream APIs.** All DeFiLlama / CoinGecko / GoPlus / Beefy / Etherscan calls go through `src/lib/fetch-utils.ts`'s `fetchWithTimeout` (10s default via AbortController) and log failures via `warnUpstream(source, err)`. Don't bare-`fetch()` upstreams — a hung connection will block a route past its `maxDuration`.
+- **Use `boundCache(map, maxSize)` before `cache.set()`.** Long-lived process caches in `anthropic.ts`, `source-audit.ts`, `deployer-forensics.ts` are bounded to 500 entries via `src/lib/cache-utils.ts` — TTL prune first, then FIFO drop. New caches should follow the same shape rather than growing unboundedly.
+- **Use `getRpcUrl(chainId)` from `src/lib/rpc.ts` for viem clients.** Resolves per-chain `RPC_URL_*` env first, then `ALCHEMY_API_KEY`, then `INFURA_API_KEY`, then falls back to viem's public RPC. Don't `http()` with no argument — public RPCs rate-limit aggressively under load.

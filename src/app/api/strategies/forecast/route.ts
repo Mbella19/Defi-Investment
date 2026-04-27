@@ -51,9 +51,17 @@ export async function GET(request: Request) {
   }
 
   const ids = poolIds.length > 0 ? poolIds : [single!];
+  if (ids.length > MAX_POOL_IDS) {
+    return Response.json(
+      { error: `Too many poolIds (${ids.length}); max ${MAX_POOL_IDS} per request` },
+      { status: 400 },
+    );
+  }
   const results = await buildForecasts(ids);
   return Response.json({ forecasts: results });
 }
+
+const MAX_POOL_IDS = 50;
 
 export async function POST(request: Request) {
   try {
@@ -61,6 +69,12 @@ export async function POST(request: Request) {
     const ids = Array.isArray(body.poolIds) ? body.poolIds.filter((s): s is string => typeof s === "string") : [];
     if (ids.length === 0) {
       return Response.json({ error: "poolIds required" }, { status: 400 });
+    }
+    if (ids.length > MAX_POOL_IDS) {
+      return Response.json(
+        { error: `Too many poolIds (${ids.length}); max ${MAX_POOL_IDS} per request` },
+        { status: 400 },
+      );
     }
 
     const results = await buildForecasts(ids);

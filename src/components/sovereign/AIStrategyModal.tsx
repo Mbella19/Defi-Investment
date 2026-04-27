@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icons } from "./Icons";
@@ -742,10 +742,7 @@ function StrategyResultView({
   const safePicks = picks.length === result.allocations.length ? picks : makeDefaultPicks(result);
   const totalPercent = totalIncludedPercent(safePicks);
   const includedCount = safePicks.filter((p) => p.included).length;
-  const customized = useMemo(
-    () => customizeStrategy(result, safePicks, budget),
-    [result, safePicks, budget],
-  );
+  const customized = customizeStrategy(result, safePicks, budget);
 
   // In normal mode, allocations must sum to ~100%. In leverage mode any
   // positive sum is valid — values >100% mean recursive/leveraged exposure

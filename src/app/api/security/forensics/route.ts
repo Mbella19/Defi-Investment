@@ -1,5 +1,6 @@
 import { analyzeDeployer } from "@/lib/security/deployer-forensics";
 import { CHAIN_NAME_TO_ID } from "@/lib/security/etherscan";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -19,6 +20,8 @@ function isValidAddress(addr: string): boolean {
 }
 
 export async function POST(request: Request) {
+  const limited = enforceRateLimit(request, "forensics", { max: 20, windowMs: 60 * 60 * 1000 });
+  if (limited) return limited;
   try {
     const body = await request.json();
     const { address, chain } = body as { address?: string; chain?: string | number };

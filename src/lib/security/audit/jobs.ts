@@ -22,6 +22,7 @@ export interface AuditJob {
 
 const JOB_TTL_MS = 60 * 60 * 1000; // 1h after completion
 const STUCK_TTL_MS = 90 * 60 * 1000; // 1.5h before pruning a stuck job
+const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
 const jobs = new Map<string, AuditJob>();
 
 function pruneExpired() {
@@ -32,6 +33,11 @@ function pruneExpired() {
     if (now - ref > cutoff) jobs.delete(id);
   }
 }
+
+// Background sweep so abandoned audits don't accumulate audit reports
+// (each ~100-500KB) when the polling client closes the tab.
+const _pruneTimer = setInterval(pruneExpired, PRUNE_INTERVAL_MS);
+if (typeof _pruneTimer.unref === "function") _pruneTimer.unref();
 
 export function createAuditJob(contractAddress: string, chainId: number): AuditJob {
   pruneExpired();

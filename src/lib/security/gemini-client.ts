@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { getAiMode, requireEnv } from "./ai-mode";
+import { getAiMode, requireEnv, resolveBaseUrl } from "./ai-mode";
 
 export interface GeminiInvokeOptions {
   /** Model id. Defaults to gemini-3.1-pro-preview. */
@@ -28,6 +28,11 @@ function invokeGeminiCli(prompt: string, opts: GeminiInvokeOptions): Promise<str
   const timeoutMs = opts.timeoutMs ?? 360_000;
   const model = opts.model ?? DEFAULT_MODEL;
 
+  // `-p ""` (empty prompt) + piping the real prompt over stdin: this forces
+  // the gemini CLI into non-interactive prompt mode without putting the full
+  // prompt onto argv. Long prompts (>100KB) would blow ARG_MAX otherwise, and
+  // some gemini versions won't read stdin unless `-p` is present at all.
+  // `--approval-mode plan` keeps the CLI from trying to execute tool calls.
   const args = ["-p", "", "-m", model, "--approval-mode", "plan"];
 
   return new Promise<string>((resolve, reject) => {
@@ -105,7 +110,7 @@ async function invokeGeminiApi(prompt: string, opts: GeminiInvokeOptions): Promi
   const apiKey = requireEnv("GEMINI_API_KEY");
   const model = opts.model ?? process.env.GEMINI_MODEL ?? DEFAULT_MODEL;
   const timeoutMs = opts.timeoutMs ?? 360_000;
-  const baseUrl = (process.env.GEMINI_BASE_URL ?? "https://generativelanguage.googleapis.com").replace(/\/$/, "");
+  const baseUrl = resolveBaseUrl("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com");
 
   const url = `${baseUrl}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 

@@ -26,6 +26,7 @@ import type {
   ToolFinding,
 } from "@/types/audit";
 import { CHAIN_ID_TO_NAME, getContractCreation, getContractSource } from "../etherscan";
+import { getRpcUrl } from "@/lib/rpc";
 
 /* ==================== CHAIN CLIENTS ==================== */
 
@@ -49,7 +50,10 @@ function getClient(chainId: number): PublicClient | null {
   if (!chain) return null;
   const cached = clientCache.get(chainId);
   if (cached) return cached;
-  const client = createPublicClient({ chain, transport: http() }) as PublicClient;
+  const client = createPublicClient({
+    chain,
+    transport: http(getRpcUrl(chainId)),
+  }) as PublicClient;
   clientCache.set(chainId, client);
   return client;
 }

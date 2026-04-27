@@ -1,5 +1,6 @@
 import type { BeefyVault, BeefyVaultWithYield } from "@/types/beefy";
 import type { DefiLlamaPool } from "@/types/pool";
+import { fetchWithTimeout, warnUpstream } from "./fetch-utils";
 
 const BASE = "https://api.beefy.finance";
 
@@ -42,11 +43,12 @@ function isStablecoin(vault: BeefyVault): boolean {
  */
 export async function fetchBeefyVaults(): Promise<BeefyVault[]> {
   try {
-    const res = await fetch(`${BASE}/vaults`, { next: { revalidate: 600 } });
+    const res = await fetchWithTimeout(`${BASE}/vaults`, { next: { revalidate: 600 } });
     if (!res.ok) return [];
     const data = await res.json();
     return (data as BeefyVault[]).filter((v) => v.status === "active");
-  } catch {
+  } catch (err) {
+    warnUpstream("beefy/vaults", err);
     return [];
   }
 }
@@ -56,10 +58,11 @@ export async function fetchBeefyVaults(): Promise<BeefyVault[]> {
  */
 export async function fetchBeefyApys(): Promise<Record<string, number>> {
   try {
-    const res = await fetch(`${BASE}/apy`, { next: { revalidate: 300 } });
+    const res = await fetchWithTimeout(`${BASE}/apy`, { next: { revalidate: 300 } });
     if (!res.ok) return {};
     return await res.json();
-  } catch {
+  } catch (err) {
+    warnUpstream("beefy/apy", err);
     return {};
   }
 }
@@ -69,7 +72,7 @@ export async function fetchBeefyApys(): Promise<Record<string, number>> {
  */
 export async function fetchBeefyTvls(): Promise<Record<string, number>> {
   try {
-    const res = await fetch(`${BASE}/tvl`, { next: { revalidate: 300 } });
+    const res = await fetchWithTimeout(`${BASE}/tvl`, { next: { revalidate: 300 } });
     if (!res.ok) return {};
     // Beefy returns { chainName: { vaultId: tvl } } — flatten it
     const data = await res.json();
@@ -80,7 +83,8 @@ export async function fetchBeefyTvls(): Promise<Record<string, number>> {
       }
     }
     return flat;
-  } catch {
+  } catch (err) {
+    warnUpstream("beefy/tvl", err);
     return {};
   }
 }

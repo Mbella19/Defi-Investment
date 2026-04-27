@@ -1,10 +1,11 @@
 import type { DefiLlamaPool, DefiLlamaChain, DefiLlamaProtocol, ChainOption } from "@/types/pool";
+import { fetchWithTimeout } from "./fetch-utils";
 
 const YIELDS_BASE = "https://yields.llama.fi";
 const API_BASE = "https://api.llama.fi";
 
 export async function fetchAllPools(): Promise<DefiLlamaPool[]> {
-  const res = await fetch(`${YIELDS_BASE}/pools`, {
+  const res = await fetchWithTimeout(`${YIELDS_BASE}/pools`, {
     next: { revalidate: 300 },
   });
   if (!res.ok) throw new Error(`Failed to fetch pools: ${res.status}`);
@@ -13,7 +14,7 @@ export async function fetchAllPools(): Promise<DefiLlamaPool[]> {
 }
 
 export async function fetchChains(): Promise<DefiLlamaChain[]> {
-  const res = await fetch(`${API_BASE}/v2/chains`, {
+  const res = await fetchWithTimeout(`${API_BASE}/v2/chains`, {
     next: { revalidate: 3600 },
   });
   if (!res.ok) throw new Error(`Failed to fetch chains: ${res.status}`);
@@ -29,7 +30,7 @@ export async function fetchChainOptions(): Promise<ChainOption[]> {
 }
 
 export async function fetchProtocols(): Promise<DefiLlamaProtocol[]> {
-  const res = await fetch(`${API_BASE}/protocols`, {
+  const res = await fetchWithTimeout(`${API_BASE}/protocols`, {
     next: { revalidate: 600 },
   });
   if (!res.ok) throw new Error(`Failed to fetch protocols: ${res.status}`);
@@ -42,7 +43,7 @@ export async function fetchProtocol(slug: string): Promise<DefiLlamaProtocol | n
 }
 
 export async function fetchPoolHistory(poolId: string) {
-  const res = await fetch(`${YIELDS_BASE}/chart/${poolId}`, {
+  const res = await fetchWithTimeout(`${YIELDS_BASE}/chart/${encodeURIComponent(poolId)}`, {
     next: { revalidate: 1800 },
   });
   if (!res.ok) throw new Error(`Failed to fetch pool history: ${res.status}`);
@@ -51,7 +52,7 @@ export async function fetchPoolHistory(poolId: string) {
 }
 
 export async function fetchProtocolDetail(slug: string): Promise<ProtocolDetail> {
-  const res = await fetch(`${API_BASE}/protocol/${slug}`, {
+  const res = await fetchWithTimeout(`${API_BASE}/protocol/${encodeURIComponent(slug)}`, {
     next: { revalidate: 600 },
   });
   if (!res.ok) throw new Error(`Failed to fetch protocol detail: ${res.status}`);

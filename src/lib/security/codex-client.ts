@@ -2,7 +2,7 @@ import { spawn } from "child_process";
 import { mkdtemp, readFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { getAiMode, requireEnv } from "./ai-mode";
+import { getAiMode, requireEnv, resolveBaseUrl } from "./ai-mode";
 
 export interface CodexInvokeOptions {
   /** Override model. CLI: ~/.codex/config.toml default. API: OPENAI_MODEL env or gpt-5.5. */
@@ -140,7 +140,7 @@ async function invokeCodexApi(prompt: string, opts: CodexInvokeOptions): Promise
   const apiKey = requireEnv("OPENAI_API_KEY");
   const model = opts.model ?? process.env.OPENAI_MODEL ?? DEFAULT_API_MODEL;
   const timeoutMs = opts.timeoutMs ?? 360_000;
-  const baseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com").replace(/\/$/, "");
+  const baseUrl = resolveBaseUrl("OPENAI_BASE_URL", "https://api.openai.com");
   const effort = mapEffort(opts.effort ?? "xhigh");
 
   const ctrl = new AbortController();

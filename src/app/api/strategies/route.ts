@@ -1,19 +1,23 @@
 import { getDb } from "@/lib/db";
 import { ensureSchedulerStarted } from "@/lib/monitor-scheduler";
+import { requireWallet } from "@/lib/auth/guard";
 import type { ActiveStrategy } from "@/types/active-strategy";
 import type { InvestmentStrategy, StrategyCriteria } from "@/types/strategy";
 
 export async function GET(request: Request) {
   try {
+    const auth = requireWallet(request);
+    if ("response" in auth) return auth.response;
     ensureSchedulerStarted();
-    const { searchParams } = new URL(request.url);
-    const wallet = searchParams.get("wallet");
 
     const db = getDb();
 
-    const rows = wallet
-      ? db.prepare("SELECT * FROM active_strategies WHERE wallet_address = ? ORDER BY created_at DESC").all(wallet)
-      : db.prepare("SELECT * FROM active_strategies ORDER BY created_at DESC").all();
+    // Always scope by the authenticated wallet — never the client-supplied
+    // query param. Anyone with the URL would otherwise be able to read any
+    // wallet's strategies just by passing ?wallet=0x….
+    const rows = db
+      .prepare("SELECT * FROM active_strategies WHERE wallet_address = ? ORDER BY created_at DESC")
+      .all(auth.wallet);
 
     // Attach alert counts
     const alertStmt = db.prepare(
@@ -45,12 +49,14 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const auth = requireWallet(request);
+    if ("response" in auth) return auth.response;
     ensureSchedulerStarted();
+
     const body = await request.json();
-    const { strategy, criteria, walletAddress } = body as {
+    const { strategy, criteria } = body as {
       strategy: InvestmentStrategy;
       criteria: StrategyCriteria;
-      walletAddress?: string;
     };
 
     if (!strategy || !criteria) {
@@ -60,12 +66,14 @@ export async function POST(request: Request) {
     const id = crypto.randomUUID();
     const db = getDb();
 
+    // wallet_address always comes from the authenticated session — ignore
+    // anything the client sends in the body.
     db.prepare(`
       INSERT INTO active_strategies (id, wallet_address, strategy_json, criteria_json, status, projected_apy, total_budget)
       VALUES (?, ?, ?, ?, 'active', ?, ?)
     `).run(
       id,
-      walletAddress || null,
+      auth.wallet,
       JSON.stringify(strategy),
       JSON.stringify(criteria),
       strategy.projectedApy,

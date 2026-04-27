@@ -287,33 +287,11 @@ RULES:
 }
 
 function parseStrategyResponse(text: string): InvestmentStrategy {
-  let jsonStr = text.trim();
-
-  const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (jsonMatch) {
-    jsonStr = jsonMatch[1].trim();
-  }
-
-  const startIdx = jsonStr.indexOf("{");
-  if (startIdx !== -1) {
-    let depth = 0;
-    let endIdx = startIdx;
-    for (let i = startIdx; i < jsonStr.length; i++) {
-      if (jsonStr[i] === "{") depth++;
-      else if (jsonStr[i] === "}") {
-        depth--;
-        if (depth === 0) {
-          endIdx = i;
-          break;
-        }
-      }
-    }
-    jsonStr = jsonStr.substring(startIdx, endIdx + 1);
-  }
-
-  const parsed = JSON.parse(jsonStr);
+  // Use the shared extractJson helper — its brace matcher tracks string
+  // state, so a `}` literal inside a JSON string can't close the object early.
+  const parsed = extractJson<Partial<InvestmentStrategy>>(text);
   return {
-    ...parsed,
+    ...(parsed as InvestmentStrategy),
     generatedAt: new Date().toISOString(),
   };
 }
@@ -332,9 +310,6 @@ interface ReviewerCritique {
   missingConsiderations: string[];
   overallNote: string;
 }
-/** @deprecated use ReviewerCritique */
-type CodexCritique = ReviewerCritique;
-
 function buildCritiquePrompt(
   criteria: StrategyCriteria,
   proposal: InvestmentStrategy,
@@ -897,6 +872,16 @@ export async function generateStrategy(
   const initialPrompt = buildStrategyPrompt(criteria, analyzedSummaries, qualifying.length);
   const initialOutput = await invokeClaudeCli(initialPrompt, 600_000);
   const initialStrategy = parseStrategyResponse(initialOutput);
+
+  // Validate the lead architect's proposal *before* it can flow down any
+  // fast-path branch (both reviewers unavailable / both approve no concerns).
+  // Without this, a malformed initial strategy reaches the DB.
+  const initialValidationError = validateRevisedStrategy(initialStrategy, criteria);
+  if (initialValidationError) {
+    throw new Error(
+      `Initial strategy failed validation and cannot be saved: ${initialValidationError}`,
+    );
+  }
 
   // ===== STAGE 2 — Codex GPT-5.5 + Gemini 3.1 Pro review IN PARALLEL =====
   console.log("[strategy] stage 2: Codex + Gemini reviewing proposal in parallel");

@@ -53,12 +53,22 @@ type EtherscanResponse<T> = {
   result: T;
 };
 
+/** Strip `apikey=...` from any string before logging it. Etherscan has no
+ *  header-based auth, so the key has to live in the query — but it must
+ *  never reach console output, error reporters, or thrown error messages. */
+function scrubApiKey(text: string): string {
+  return text.replace(/([?&])apikey=[^&\s]*/gi, "$1apikey=REDACTED");
+}
+
 async function call<T>(params: Record<string, string>, revalidateSeconds = 3600): Promise<T> {
   const apikey = resolveApiKey();
   const search = new URLSearchParams({ ...params, apikey });
   const url = `${ETHERSCAN_V2_BASE}?${search.toString()}`;
 
-  const res = await fetch(url, { next: { revalidate: revalidateSeconds } });
+  const res = await fetch(url, { next: { revalidate: revalidateSeconds } }).catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(scrubApiKey(`Block explorer fetch failed: ${msg}`));
+  });
   if (!res.ok) throw new Error(`Block explorer HTTP ${res.status}`);
   const json = (await res.json()) as EtherscanResponse<T>;
 

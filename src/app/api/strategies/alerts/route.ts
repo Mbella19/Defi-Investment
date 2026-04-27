@@ -1,37 +1,27 @@
 import { getDb } from "@/lib/db";
+import { requireWallet } from "@/lib/auth/guard";
 import type { StrategyAlert } from "@/types/active-strategy";
 
 export async function GET(request: Request) {
   try {
+    const auth = requireWallet(request);
+    if ("response" in auth) return auth.response;
     const { searchParams } = new URL(request.url);
-    const wallet = searchParams.get("wallet");
     const unreadOnly = searchParams.get("unread") === "true";
     const limit = parseInt(searchParams.get("limit") || "50", 10);
 
     const db = getDb();
 
-    let query: string;
-    const queryParams: unknown[] = [];
-
-    if (wallet) {
-      query = `
-        SELECT sa.* FROM strategy_alerts sa
-        JOIN active_strategies s ON sa.strategy_id = s.id
-        WHERE s.wallet_address = ?
-        ${unreadOnly ? "AND sa.read = 0" : ""}
-        ORDER BY sa.created_at DESC
-        LIMIT ?
-      `;
-      queryParams.push(wallet, limit);
-    } else {
-      query = `
-        SELECT * FROM strategy_alerts
-        ${unreadOnly ? "WHERE read = 0" : ""}
-        ORDER BY created_at DESC
-        LIMIT ?
-      `;
-      queryParams.push(limit);
-    }
+    // Always scope to the authenticated wallet's strategies.
+    const query = `
+      SELECT sa.* FROM strategy_alerts sa
+      JOIN active_strategies s ON sa.strategy_id = s.id
+      WHERE s.wallet_address = ?
+      ${unreadOnly ? "AND sa.read = 0" : ""}
+      ORDER BY sa.created_at DESC
+      LIMIT ?
+    `;
+    const queryParams: unknown[] = [auth.wallet, limit];
 
     const rows = db.prepare(query).all(...queryParams) as Record<string, unknown>[];
 
@@ -51,12 +41,10 @@ export async function GET(request: Request) {
       createdAt: row.created_at as string,
     }));
 
-    // Also return total unread count
-    const countRow = wallet
-      ? db.prepare(
-          "SELECT COUNT(*) as count FROM strategy_alerts sa JOIN active_strategies s ON sa.strategy_id = s.id WHERE s.wallet_address = ? AND sa.read = 0"
-        ).get(wallet) as { count: number }
-      : db.prepare("SELECT COUNT(*) as count FROM strategy_alerts WHERE read = 0").get() as { count: number };
+    // Total unread for this wallet only.
+    const countRow = db.prepare(
+      "SELECT COUNT(*) as count FROM strategy_alerts sa JOIN active_strategies s ON sa.strategy_id = s.id WHERE s.wallet_address = ? AND sa.read = 0"
+    ).get(auth.wallet) as { count: number };
 
     return Response.json({ alerts, unreadCount: countRow.count });
   } catch (error) {
@@ -67,28 +55,32 @@ export async function GET(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
+    const auth = requireWallet(request);
+    if ("response" in auth) return auth.response;
     const body = await request.json();
-    const { alertIds, markAllRead, wallet } = body as {
+    const { alertIds, markAllRead } = body as {
       alertIds?: string[];
       markAllRead?: boolean;
-      wallet?: string;
     };
 
     const db = getDb();
 
     if (markAllRead) {
-      if (wallet) {
-        db.prepare(
-          `UPDATE strategy_alerts SET read = 1
-           WHERE strategy_id IN (SELECT id FROM active_strategies WHERE wallet_address = ?)
-           AND read = 0`
-        ).run(wallet);
-      } else {
-        db.prepare("UPDATE strategy_alerts SET read = 1 WHERE read = 0").run();
-      }
+      db.prepare(
+        `UPDATE strategy_alerts SET read = 1
+         WHERE strategy_id IN (SELECT id FROM active_strategies WHERE wallet_address = ?)
+         AND read = 0`
+      ).run(auth.wallet);
     } else if (alertIds && alertIds.length > 0) {
-      const placeholders = alertIds.map(() => "?").join(",");
-      db.prepare(`UPDATE strategy_alerts SET read = 1 WHERE id IN (${placeholders})`).run(...alertIds);
+      // Cap to keep the IN list bounded, then scope by wallet via JOIN so
+      // a caller can't mark someone else's alerts.
+      const capped = alertIds.slice(0, 100);
+      const placeholders = capped.map(() => "?").join(",");
+      db.prepare(
+        `UPDATE strategy_alerts SET read = 1
+         WHERE id IN (${placeholders})
+         AND strategy_id IN (SELECT id FROM active_strategies WHERE wallet_address = ?)`,
+      ).run(...capped, auth.wallet);
     }
 
     return Response.json({ message: "Alerts updated" });

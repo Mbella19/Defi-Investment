@@ -10,10 +10,12 @@ import type {
 } from "@/types/security";
 import { CHAIN_ID_TO_NAME, getContractSource, normalizeSourceCode } from "./etherscan";
 import { tripleInvoke, tripleExtractJson, maxSeverity } from "./dual-llm";
+import { boundCache } from "@/lib/cache-utils";
 import { createHash } from "crypto";
 
 const cache = new Map<string, { report: SourceAuditReport; expiresAt: number }>();
 const CACHE_TTL = 24 * 60 * 60 * 1000;
+const CACHE_MAX = 500;
 
 const MAX_CANDIDATES = 24;
 const MIN_CONFIDENCE = 0.7;
@@ -481,6 +483,7 @@ export async function auditContract(
       analyzedAt: new Date().toISOString(),
       rejectedFindings: 0,
     };
+    boundCache(cache, CACHE_MAX);
     cache.set(key, { report, expiresAt: Date.now() + CACHE_TTL });
     return report;
   }
@@ -554,6 +557,7 @@ export async function auditContract(
     dualAi,
   };
 
+  boundCache(cache, CACHE_MAX);
   cache.set(key, { report, expiresAt: Date.now() + CACHE_TTL });
   return report;
 }

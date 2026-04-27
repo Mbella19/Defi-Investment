@@ -1,16 +1,23 @@
 import { getDb } from "@/lib/db";
+import { requireWallet } from "@/lib/auth/guard";
 import type { ActiveStrategy } from "@/types/active-strategy";
 import type { InvestmentStrategy, StrategyCriteria } from "@/types/strategy";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = requireWallet(request);
+    if ("response" in auth) return auth.response;
     const { id } = await params;
     const db = getDb();
 
-    const row = db.prepare("SELECT * FROM active_strategies WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    // Scope by wallet — return 404 (not 403) for someone else's strategy so
+    // we don't leak existence information to unauthorized callers.
+    const row = db
+      .prepare("SELECT * FROM active_strategies WHERE id = ? AND wallet_address = ?")
+      .get(id, auth.wallet) as Record<string, unknown> | undefined;
     if (!row) {
       return Response.json({ error: "Strategy not found" }, { status: 404 });
     }
@@ -44,6 +51,8 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = requireWallet(request);
+    if ("response" in auth) return auth.response;
     const { id } = await params;
     const body = await request.json();
     const { status } = body as { status: "active" | "paused" | "archived" };
@@ -54,8 +63,8 @@ export async function PATCH(
 
     const db = getDb();
     const result = db.prepare(
-      "UPDATE active_strategies SET status = ?, updated_at = datetime('now') WHERE id = ?"
-    ).run(status, id);
+      "UPDATE active_strategies SET status = ?, updated_at = datetime('now') WHERE id = ? AND wallet_address = ?"
+    ).run(status, id, auth.wallet);
 
     if (result.changes === 0) {
       return Response.json({ error: "Strategy not found" }, { status: 404 });
@@ -69,14 +78,18 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const auth = requireWallet(request);
+    if ("response" in auth) return auth.response;
     const { id } = await params;
     const db = getDb();
 
-    const result = db.prepare("DELETE FROM active_strategies WHERE id = ?").run(id);
+    const result = db
+      .prepare("DELETE FROM active_strategies WHERE id = ? AND wallet_address = ?")
+      .run(id, auth.wallet);
     if (result.changes === 0) {
       return Response.json({ error: "Strategy not found" }, { status: 404 });
     }

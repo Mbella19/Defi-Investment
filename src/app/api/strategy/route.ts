@@ -7,6 +7,7 @@ import {
   getJob,
   publicView,
 } from "@/lib/strategy-jobs";
+import { enforceRateLimit } from "@/lib/rate-limit";
 import type { StrategyCriteria } from "@/types/strategy";
 
 // Pipeline runs >> 60s; the route just kicks off the job and returns the id.
@@ -17,6 +18,11 @@ export const runtime = "nodejs";
 export const fetchCache = "force-no-store";
 
 export async function POST(request: Request) {
+  // 5 strategy generations per hour per wallet/IP — each one is a 5-10min
+  // triple-AI pipeline costing $1-5, so this needs to be tight.
+  const limited = enforceRateLimit(request, "strategy", { max: 5, windowMs: 60 * 60 * 1000 });
+  if (limited) return limited;
+
   let criteria: StrategyCriteria;
   try {
     criteria = await request.json();
@@ -24,8 +30,11 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  if (!criteria.budget || criteria.budget <= 0) {
-    return Response.json({ error: "Invalid budget" }, { status: 400 });
+  if (!criteria.budget || criteria.budget <= 0 || criteria.budget > 10_000_000) {
+    return Response.json(
+      { error: "Budget must be between $1 and $10,000,000" },
+      { status: 400 },
+    );
   }
   if (
     !criteria.targetApyMin ||

@@ -20,8 +20,11 @@ import { tripleInvoke, tripleExtractJson } from "./security/dual-llm";
 import { invokeClaude, extractJson } from "./security/claude-client";
 import { gatherGroundTruth, formatGroundTruthForPrompt } from "./security/ground-truth";
 
+import { boundCache } from "./cache-utils";
+
 const analysisCache = new Map<string, { data: ProtocolAnalysis; expiresAt: number }>();
 const CACHE_TTL = 60 * 60 * 1000;
+const ANALYSIS_CACHE_MAX = 500;
 
 const SCORING_TIMEOUT_MS = 360_000;
 const SYNTHESIS_TIMEOUT_MS = 360_000;
@@ -582,6 +585,7 @@ export async function analyzeProtocol(
     finalAnalysis.redFlags = [...vetoFlags, ...finalAnalysis.redFlags];
   }
 
+  boundCache(analysisCache, ANALYSIS_CACHE_MAX);
   analysisCache.set(protocol.slug, {
     data: finalAnalysis,
     expiresAt: Date.now() + CACHE_TTL,

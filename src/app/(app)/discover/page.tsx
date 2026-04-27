@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   Icons,
   ChainGlyph,
@@ -73,22 +73,17 @@ export default function DiscoverPage() {
 
   const pools = data?.pools ?? [];
 
-  const filtered = useMemo(() => {
-    const chainFn =
-      CHAIN_FILTERS.find((c) => c.id === chain)?.match ?? CHAIN_FILTERS[0].match;
-    return pools
-      .filter((p) => chainFn(p.chain))
-      .filter((p) => type === "All" || p.category === type)
-      .filter((p) => riskMatches(p, risk))
-      .slice(0, 60);
-  }, [pools, chain, type, risk]);
+  const chainFn =
+    CHAIN_FILTERS.find((c) => c.id === chain)?.match ?? CHAIN_FILTERS[0].match;
+  const filtered = pools
+    .filter((p) => chainFn(p.chain))
+    .filter((p) => type === "All" || p.category === type)
+    .filter((p) => riskMatches(p, risk))
+    .slice(0, 60);
 
-  const mobileFiltered = useMemo(() => {
-    if (RISK_BANDS.includes(mobileChip as (typeof RISK_BANDS)[number])) {
-      return pools.filter((p) => riskMatches(p, mobileChip as (typeof RISK_BANDS)[number])).slice(0, 12);
-    }
-    return pools.filter((p) => p.category === mobileChip).slice(0, 12);
-  }, [pools, mobileChip]);
+  const mobileFiltered = RISK_BANDS.includes(mobileChip as (typeof RISK_BANDS)[number])
+    ? pools.filter((p) => riskMatches(p, mobileChip as (typeof RISK_BANDS)[number])).slice(0, 12)
+    : pools.filter((p) => p.category === mobileChip).slice(0, 12);
 
   const headerCount = data ? data.poolCount.toLocaleString() : "…";
   const headerAge = fetchedAt ? formatRefreshAge(fetchedAt) : "…";

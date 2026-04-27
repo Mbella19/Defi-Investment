@@ -1,7 +1,7 @@
 import { spawn, type SpawnOptions } from "child_process";
 import { mkdtemp, rm, writeFile, mkdir } from "fs/promises";
 import { tmpdir } from "os";
-import { join, dirname } from "path";
+import { join, dirname, resolve, sep } from "path";
 import type { ContractSource } from "../etherscan";
 import { normalizeSourceCode } from "../etherscan";
 
@@ -159,9 +159,17 @@ export async function materializeSource(source: ContractSource): Promise<SourceW
 
   const written: Record<string, string> = {};
   let primary: string | null = null;
+  const rootBoundary = resolve(root) + sep;
   for (const [relRaw, content] of Object.entries(parsedFiles)) {
     const rel = sanitizeRelPath(relRaw) || "main.sol";
-    const abs = join(root, rel);
+    const abs = resolve(root, rel);
+    // Boundary check: even though sanitizeRelPath strips `..` segments, an
+    // absolute path or a path that resolves outside the root would escape.
+    // Defense-in-depth in case of a future-mode where paths come from a
+    // less-trusted source than the current Etherscan-only flow.
+    if (!abs.startsWith(rootBoundary)) {
+      throw new Error(`Refusing to write file outside workspace: ${relRaw}`);
+    }
     await mkdir(dirname(abs), { recursive: true });
     await writeFile(abs, content, "utf-8");
     written[rel] = abs;

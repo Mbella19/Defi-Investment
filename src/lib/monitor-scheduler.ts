@@ -5,30 +5,35 @@ const INITIAL_DELAY_MS = 30 * 1000;
 
 let started = false;
 let timer: NodeJS.Timeout | null = null;
-let inflight = false;
+// Tracking the in-flight scan as a Promise (rather than a boolean flag)
+// guarantees concurrent callers coalesce onto the same run instead of racing
+// the flag's set/clear edges.
+let inflight: Promise<void> | null = null;
 let lastRunAt: number | null = null;
 let lastResult: { scanned: number; newAlerts: number; error?: string } | null = null;
 
-async function runScan(): Promise<void> {
-  if (inflight) return;
-  inflight = true;
-  try {
-    const result = await monitorActiveStrategies();
-    lastResult = { scanned: result.scanned, newAlerts: result.newAlerts.length };
-    lastRunAt = Date.now();
-    if (result.newAlerts.length > 0) {
-      console.log(
-        `[monitor-scheduler] scanned ${result.scanned} strategies, ${result.newAlerts.length} new alerts`,
-      );
+function runScan(): Promise<void> {
+  if (inflight) return inflight;
+  inflight = (async () => {
+    try {
+      const result = await monitorActiveStrategies();
+      lastResult = { scanned: result.scanned, newAlerts: result.newAlerts.length };
+      lastRunAt = Date.now();
+      if (result.newAlerts.length > 0) {
+        console.log(
+          `[monitor-scheduler] scanned ${result.scanned} strategies, ${result.newAlerts.length} new alerts`,
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "scan failed";
+      lastResult = { scanned: 0, newAlerts: 0, error: message };
+      lastRunAt = Date.now();
+      console.error("[monitor-scheduler] scan failed:", message);
+    } finally {
+      inflight = null;
     }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "scan failed";
-    lastResult = { scanned: 0, newAlerts: 0, error: message };
-    lastRunAt = Date.now();
-    console.error("[monitor-scheduler] scan failed:", message);
-  } finally {
-    inflight = false;
-  }
+  })();
+  return inflight;
 }
 
 export function ensureSchedulerStarted(): void {
@@ -53,7 +58,7 @@ export function getSchedulerStatus(): {
 } {
   return {
     started,
-    inflight,
+    inflight: inflight !== null,
     lastRunAt,
     lastResult,
     intervalMs: SCAN_INTERVAL_MS,

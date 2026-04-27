@@ -1,3 +1,4 @@
+import dns from "dns/promises";
 import type { DefiLlamaProtocol } from "@/types/pool";
 import type { GroundTruthChecks } from "@/types/analysis";
 import { getDb } from "@/lib/db";
@@ -9,6 +10,95 @@ const AUDIT_LINK_TIMEOUT_MS = 8_000;
 const EXPLOIT_LOOKBACK_DAYS = 30;
 const TVL_CRASH_1D_PCT = -40;
 const TVL_CRASH_7D_PCT = -55;
+const MAX_REDIRECTS = 3;
+
+/* ===================== SSRF GUARD ===================== */
+
+function isPrivateIPv4(ip: string): boolean {
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((p) => Number.isNaN(p) || p < 0 || p > 255)) return true;
+  const [a, b] = parts;
+  if (a === 0) return true;
+  if (a === 10) return true; // 10.0.0.0/8
+  if (a === 127) return true; // loopback
+  if (a === 169 && b === 254) return true; // link-local
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12
+  if (a === 192 && b === 168) return true; // 192.168/16
+  if (a >= 224) return true; // multicast/reserved
+  return false;
+}
+
+function isPrivateIPv6(ip: string): boolean {
+  const lower = ip.toLowerCase();
+  if (lower === "::" || lower === "::1") return true;
+  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique local
+  if (lower.startsWith("fe80")) return true; // link-local
+  if (lower.startsWith("::ffff:")) {
+    const v4 = lower.slice(7);
+    return isPrivateIPv4(v4);
+  }
+  return false;
+}
+
+/**
+ * Reject URLs that resolve to private/loopback/link-local addresses, or use
+ * non-http(s) schemes. This is the SSRF guard for the audit-link checker —
+ * a malicious DeFiLlama protocol entry could otherwise list
+ * http://localhost:6379/ as an "audit link" and probe internal services.
+ */
+async function isPublicUrl(url: string): Promise<boolean> {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+  const host = u.hostname;
+  // Strip surrounding brackets from IPv6 literal hosts before testing
+  const bareHost = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  // Literal-IP fast path
+  if (/^[\d.]+$/.test(bareHost)) return !isPrivateIPv4(bareHost);
+  if (bareHost.includes(":")) return !isPrivateIPv6(bareHost);
+  // Hostname → DNS resolve and check every A/AAAA record
+  try {
+    const records = await dns.lookup(bareHost, { all: true });
+    if (records.length === 0) return false;
+    for (const r of records) {
+      if (r.family === 4 && isPrivateIPv4(r.address)) return false;
+      if (r.family === 6 && isPrivateIPv6(r.address)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * fetch with manual redirect-following so we re-validate every hop against
+ * the SSRF guard. A simple `redirect: "follow"` would let an attacker chain
+ * a public-looking URL into a 302 → http://169.254.169.254/.
+ */
+async function safeFetch(
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  let current = url;
+  for (let i = 0; i <= MAX_REDIRECTS; i++) {
+    if (!(await isPublicUrl(current))) {
+      throw new Error(`URL blocked (private/non-http): ${current}`);
+    }
+    const res = await fetch(current, { ...init, redirect: "manual" });
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get("location");
+      if (!loc) return res;
+      current = new URL(loc, current).toString();
+      continue;
+    }
+    return res;
+  }
+  throw new Error(`Too many redirects for ${url}`);
+}
 
 /**
  * HEAD-request each audit link concurrently to verify it actually resolves.
@@ -30,15 +120,14 @@ async function verifyAuditLinks(
       try {
         // Many static audit hosts (PDF on S3, GitHub raw, etc.) reject HEAD with 405.
         // Use HEAD first and fall back to a ranged GET so we don't false-flag good links.
-        let res = await fetch(url, {
+        // safeFetch enforces SSRF protections at every redirect hop.
+        let res = await safeFetch(url, {
           method: "HEAD",
-          redirect: "follow",
           signal: controller.signal,
         });
         if (res.status === 405 || res.status === 501) {
-          res = await fetch(url, {
+          res = await safeFetch(url, {
             method: "GET",
-            redirect: "follow",
             headers: { Range: "bytes=0-0" },
             signal: controller.signal,
           });

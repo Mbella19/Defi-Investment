@@ -1,4 +1,5 @@
-import type { PortfolioPosition, AlertConfig, DEFAULT_ALERT_CONFIG } from "@/types/portfolio";
+import type { PortfolioPosition, AlertConfig } from "@/types/portfolio";
+import { DEFAULT_ALERT_CONFIG } from "@/types/portfolio";
 import type { InvestmentStrategy } from "@/types/strategy";
 
 const KEYS = {
@@ -53,12 +54,7 @@ export function saveAlertConfig(config: AlertConfig): void {
 }
 
 export function loadAlertConfig(): AlertConfig {
-  return load<AlertConfig>(KEYS.alerts, {
-    apyDropWarning: 20,
-    apyDropCritical: 50,
-    tvlDrainWarning: 30,
-    tvlDrainCritical: 50,
-  });
+  return load<AlertConfig>(KEYS.alerts, DEFAULT_ALERT_CONFIG);
 }
 
 // Saved strategies

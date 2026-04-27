@@ -1,4 +1,5 @@
 import type { CoinGeckoPrice, CoinGeckoTokenDetail, CoinGeckoPricePoint, TokenMarketData } from "@/types/coingecko";
+import { fetchWithTimeout, warnUpstream } from "./fetch-utils";
 
 const BASE = "https://api.coingecko.com/api/v3";
 
@@ -10,8 +11,8 @@ export async function fetchTokenPrices(geckoIds: string[]): Promise<Map<string, 
   if (geckoIds.length === 0) return map;
 
   try {
-    const ids = geckoIds.slice(0, 250).join(",");
-    const res = await fetch(
+    const ids = geckoIds.slice(0, 250).map(encodeURIComponent).join(",");
+    const res = await fetchWithTimeout(
       `${BASE}/simple/price?ids=${ids}&vs_currencies=usd&include_market_cap=true&include_24hr_vol=true&include_24hr_change=true`,
       { next: { revalidate: 120 } }
     );
@@ -28,8 +29,8 @@ export async function fetchTokenPrices(geckoIds: string[]): Promise<Map<string, 
         usd_24h_change: v.usd_24h_change ?? 0,
       });
     }
-  } catch {
-    // Graceful degradation — return empty map
+  } catch (err) {
+    warnUpstream("coingecko/simple-price", err);
   }
   return map;
 }
@@ -39,13 +40,14 @@ export async function fetchTokenPrices(geckoIds: string[]): Promise<Map<string, 
  */
 export async function fetchTokenDetail(geckoId: string): Promise<CoinGeckoTokenDetail | null> {
   try {
-    const res = await fetch(
-      `${BASE}/coins/${geckoId}?localization=false&tickers=false&community_data=true&developer_data=true&sparkline=false`,
+    const res = await fetchWithTimeout(
+      `${BASE}/coins/${encodeURIComponent(geckoId)}?localization=false&tickers=false&community_data=true&developer_data=true&sparkline=false`,
       { next: { revalidate: 600 } }
     );
     if (!res.ok) return null;
     return await res.json();
-  } catch {
+  } catch (err) {
+    warnUpstream("coingecko/coin-detail", err);
     return null;
   }
 }
@@ -55,8 +57,8 @@ export async function fetchTokenDetail(geckoId: string): Promise<CoinGeckoTokenD
  */
 export async function fetchPriceHistory(geckoId: string, days: number = 30): Promise<CoinGeckoPricePoint[]> {
   try {
-    const res = await fetch(
-      `${BASE}/coins/${geckoId}/market_chart?vs_currency=usd&days=${days}`,
+    const res = await fetchWithTimeout(
+      `${BASE}/coins/${encodeURIComponent(geckoId)}/market_chart?vs_currency=usd&days=${days}`,
       { next: { revalidate: 1800 } }
     );
     if (!res.ok) return [];
@@ -65,7 +67,8 @@ export async function fetchPriceHistory(geckoId: string, days: number = 30): Pro
       timestamp,
       price,
     }));
-  } catch {
+  } catch (err) {
+    warnUpstream("coingecko/market-chart", err);
     return [];
   }
 }

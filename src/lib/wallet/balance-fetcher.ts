@@ -1,6 +1,7 @@
 import { createPublicClient, http, formatUnits } from "viem";
 import { mainnet, arbitrum, optimism, polygon, base, bsc, avalanche } from "viem/chains";
 import { CHAIN_TOKEN_LISTS } from "./token-lists";
+import { getRpcUrl } from "@/lib/rpc";
 import type { WalletTokenBalance } from "@/types/wallet";
 
 const chains = [mainnet, arbitrum, optimism, polygon, base, bsc, avalanche];
@@ -16,13 +17,14 @@ const balanceOfAbi = [
   },
 ] as const;
 
-// Create one public client per chain (uses default public RPCs)
+// Create one public client per chain. RPC URL comes from getRpcUrl which
+// reads ALCHEMY_API_KEY / INFURA_API_KEY / per-chain RPC_URL_* env vars.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const clients: Record<number, any> = {};
 for (const chain of chains) {
   clients[chain.id] = createPublicClient({
     chain,
-    transport: http(),
+    transport: http(getRpcUrl(chain.id)),
   });
 }
 

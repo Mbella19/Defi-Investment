@@ -1,7 +1,10 @@
 import { analyzeProtocol } from "@/lib/anthropic";
 import { fetchProtocol, fetchAllPools } from "@/lib/defillama";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 export async function POST(request: Request) {
+  const limited = enforceRateLimit(request, "analyze", { max: 20, windowMs: 60 * 60 * 1000 });
+  if (limited) return limited;
   try {
     const { protocolSlug } = await request.json();
 

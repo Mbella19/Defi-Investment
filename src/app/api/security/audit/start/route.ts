@@ -6,6 +6,7 @@ import {
   failAuditJob,
 } from "@/lib/security/audit/jobs";
 import { CHAIN_NAME_TO_ID } from "@/lib/security/etherscan";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 // Multi-engine audit takes 5-10 minutes; this route fires the job and returns
 // the id. Client polls /api/security/audit/status?id=<jobId>.
@@ -30,6 +31,11 @@ function isValidAddress(addr: string): boolean {
 }
 
 export async function POST(request: Request) {
+  // Multi-engine audits are 5-10min each and run Slither/Aderyn/Mythril
+  // plus 25× triple-AI explanations. Tight per-caller cap.
+  const limited = enforceRateLimit(request, "audit", { max: 3, windowMs: 60 * 60 * 1000 });
+  if (limited) return limited;
+
   let body: { address?: string; chain?: string | number; skipMythril?: boolean; skipAi?: boolean };
   try {
     body = await request.json();

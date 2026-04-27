@@ -39,6 +39,7 @@ export interface StrategyJob {
 
 const JOB_TTL_MS = 30 * 60 * 1000;
 const STUCK_TTL_MS = 60 * 60 * 1000;
+const PRUNE_INTERVAL_MS = 5 * 60 * 1000;
 const jobs = new Map<string, StrategyJob>();
 
 function pruneExpired() {
@@ -49,6 +50,11 @@ function pruneExpired() {
     if (now - ref > cutoff) jobs.delete(id);
   }
 }
+
+// Background sweep: clients that close their tab leave abandoned jobs
+// behind. The on-read prune above only fires when somebody else reads.
+const _pruneTimer = setInterval(pruneExpired, PRUNE_INTERVAL_MS);
+if (typeof _pruneTimer.unref === "function") _pruneTimer.unref();
 
 export function createJob(): StrategyJob {
   pruneExpired();

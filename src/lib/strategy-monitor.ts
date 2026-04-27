@@ -13,6 +13,8 @@ import { getDb } from "@/lib/db";
 import { fetchAllPools, fetchProtocols } from "@/lib/defillama";
 import { runMonitorScan } from "@/lib/monitor";
 import { sendDiscordAlertBatch, isDiscordWebhookConfigured } from "@/lib/discord-notifier";
+import { getPoolStability, type PoolStability } from "@/lib/pool-stability";
+import { getRpcUrl } from "@/lib/rpc";
 import { DEFAULT_ALERT_CONFIG } from "@/types/portfolio";
 import type { AlertEvent } from "@/types/portfolio";
 import type { PortfolioPosition } from "@/types/portfolio";
@@ -52,7 +54,10 @@ function getClient(chainId: number): PublicClient | null {
   if (!chain) return null;
   const cached = clientCache.get(chainId);
   if (cached) return cached;
-  const client = createPublicClient({ chain, transport: http() }) as PublicClient;
+  const client = createPublicClient({
+    chain,
+    transport: http(getRpcUrl(chainId)),
+  }) as PublicClient;
   clientCache.set(chainId, client);
   return client;
 }
@@ -72,6 +77,10 @@ const PROTOCOL_TVL_CRASH_7D_PCT = 55;
 const EXPLOIT_LOOKBACK_HOURS = 72;
 const PAUSE_CHECK_LIMIT_PER_STRATEGY = 5;
 const PAUSE_CHECK_TIMEOUT_MS = 6_000;
+// APY/TVL drops must persist across this many consecutive 15-min scans before
+// firing — kills single-snapshot dips that DeFiLlama's spot endpoint catches
+// during transient utilization swings.
+const REQUIRED_CONFIRMATIONS = 2;
 
 async function isContractPaused(address: string, chainId: number): Promise<boolean> {
   if (!isAddress(address)) return false;
@@ -197,6 +206,25 @@ export async function monitorActiveStrategies(
   const recentExploits = loadRecentExploits();
   const protocolIndex = buildProtocolIndex(allProtocols);
 
+  const uniquePoolIds = new Set<string>();
+  for (const row of rows as Record<string, unknown>[]) {
+    try {
+      const strategy = JSON.parse(row.strategy_json as string) as InvestmentStrategy;
+      for (const alloc of strategy.allocations) {
+        if (alloc.poolId) uniquePoolIds.add(alloc.poolId);
+      }
+    } catch {
+      // malformed strategy json — skip; runMonitorScan will also skip it
+    }
+  }
+  const stabilityResults = await Promise.allSettled(
+    [...uniquePoolIds].map(async (poolId) => [poolId, await getPoolStability(poolId)] as const),
+  );
+  const stabilityByPool = new Map<string, PoolStability | null>();
+  for (const r of stabilityResults) {
+    if (r.status === "fulfilled") stabilityByPool.set(r.value[0], r.value[1]);
+  }
+
   const dedupStmt = db.prepare(
     `SELECT COUNT(*) as count FROM strategy_alerts
      WHERE strategy_id = ? AND type = ? AND COALESCE(pool_id, '') = COALESCE(?, '')
@@ -206,6 +234,26 @@ export async function monitorActiveStrategies(
   const insertStmt = db.prepare(
     `INSERT INTO strategy_alerts (id, strategy_id, type, severity, pool_id, protocol, symbol, chain, message, detail)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+
+  // Breach-state CRUD — track consecutive scans where a position-level alert
+  // condition is met. Reset to zero (delete) the moment the condition clears.
+  const readBreachStmt = db.prepare(
+    `SELECT pool_id, alert_type, consecutive_breaches FROM strategy_breach_state WHERE strategy_id = ?`,
+  );
+  const upsertBreachStmt = db.prepare(
+    `INSERT INTO strategy_breach_state (strategy_id, pool_id, alert_type, severity, consecutive_breaches)
+     VALUES (?, ?, ?, ?, 1)
+     ON CONFLICT(strategy_id, pool_id, alert_type) DO UPDATE SET
+       consecutive_breaches = consecutive_breaches + 1,
+       severity = excluded.severity,
+       last_breach_at = datetime('now')`,
+  );
+  const deleteBreachStmt = db.prepare(
+    `DELETE FROM strategy_breach_state WHERE strategy_id = ? AND pool_id = ? AND alert_type = ?`,
+  );
+  const readSingleBreachStmt = db.prepare(
+    `SELECT consecutive_breaches FROM strategy_breach_state WHERE strategy_id = ? AND pool_id = ? AND alert_type = ?`,
   );
 
   const newAlerts: StrategyMonitorAlert[] = [];
@@ -259,61 +307,122 @@ export async function monitorActiveStrategies(
       riskAppetite: criteria.riskAppetite,
     }));
 
-    const baseAlerts: AlertEvent[] = runMonitorScan(positions, allPools, DEFAULT_ALERT_CONFIG);
+    const baseAlerts: AlertEvent[] = runMonitorScan(
+      positions,
+      allPools,
+      DEFAULT_ALERT_CONFIG,
+      stabilityByPool,
+    );
     // Map the synthesized positionId back to the real DeFiLlama pool ID so
     // the alert can be deep-linked to the actual pool page (otherwise we'd
     // store "<strategyId>-<realPoolId>-<index>" as the pool_id and the
     // "Pool data" link would 500).
     const positionToPool = new Map(positions.map((p) => [p.id, p.poolId]));
-    for (const alert of baseAlerts) {
-      tryInsert(
-        sId,
-        alert.type,
-        alert.severity,
-        positionToPool.get(alert.positionId) ?? null,
-        alert.protocol,
-        alert.symbol,
-        alert.chain,
-        alert.message,
-        alert.detail,
-      );
+
+    // Skip breach-state mutation entirely if DeFiLlama gave us nothing this
+    // tick — otherwise we'd wipe the breach counter on every API outage.
+    if (allPools.length > 0) {
+      const triggeredKeys = new Set<string>();
+      const triggeredAlerts: Array<{ key: string; poolId: string; alert: AlertEvent }> = [];
+      for (const alert of baseAlerts) {
+        const poolId = positionToPool.get(alert.positionId);
+        if (!poolId) continue;
+        const key = `${poolId}|${alert.type}`;
+        triggeredKeys.add(key);
+        triggeredAlerts.push({ key, poolId, alert });
+      }
+
+      // Recovered positions: clear any breach rows whose underlying condition
+      // is no longer triggering this scan.
+      const existingBreaches = readBreachStmt.all(sId) as Array<{
+        pool_id: string;
+        alert_type: string;
+        consecutive_breaches: number;
+      }>;
+      for (const row of existingBreaches) {
+        const k = `${row.pool_id}|${row.alert_type}`;
+        if (!triggeredKeys.has(k)) {
+          deleteBreachStmt.run(sId, row.pool_id, row.alert_type);
+        }
+      }
+
+      // For each currently triggered alert: bump the breach counter and only
+      // emit once it reaches the confirmation threshold.
+      for (const { poolId, alert } of triggeredAlerts) {
+        upsertBreachStmt.run(sId, poolId, alert.type, alert.severity);
+        const { consecutive_breaches } = readSingleBreachStmt.get(
+          sId,
+          poolId,
+          alert.type,
+        ) as { consecutive_breaches: number };
+        if (consecutive_breaches < REQUIRED_CONFIRMATIONS) continue;
+        tryInsert(
+          sId,
+          alert.type,
+          alert.severity,
+          poolId,
+          alert.protocol,
+          alert.symbol,
+          alert.chain,
+          alert.message,
+          alert.detail,
+        );
+      }
     }
 
-    const seenProtocols = new Set<string>();
+    // Group allocations by protocol so a multi-pool exposure surfaces every
+    // affected position in the alert detail. Earlier code keyed dedup by
+    // protocol but then attached the FIRST pool's id and symbol to the alert,
+    // silently dropping every subsequent exposure (auditor #16).
+    const allocsByProtocol = new Map<string, StrategyAllocation[]>();
     for (const alloc of strategy.allocations) {
       const protoKey = normalizeName(alloc.protocol);
-      if (seenProtocols.has(protoKey)) continue;
-      seenProtocols.add(protoKey);
+      if (!protoKey) continue;
+      const list = allocsByProtocol.get(protoKey);
+      if (list) list.push(alloc);
+      else allocsByProtocol.set(protoKey, [alloc]);
+    }
 
-      const proto = findProtocol(alloc, protocolIndex);
+    for (const allocs of allocsByProtocol.values()) {
+      const sample = allocs[0];
+      const proto = findProtocol(sample, protocolIndex);
       if (!proto) continue;
 
       const change1d = proto.change_1d ?? 0;
       const change7d = proto.change_7d ?? 0;
+      if (change1d > -PROTOCOL_TVL_CRASH_1D_PCT && change7d > -PROTOCOL_TVL_CRASH_7D_PCT) continue;
+
+      const totalExposure = allocs.reduce((sum, a) => sum + a.allocationAmount, 0);
+      const positions = allocs
+        .map((a) => `${a.symbol} on ${a.chain} ($${a.allocationAmount.toLocaleString()})`)
+        .join(", ");
+      const exposureLine = `Affected positions (${allocs.length}): ${positions}. Total exposure: $${totalExposure.toLocaleString()}.`;
 
       if (change1d <= -PROTOCOL_TVL_CRASH_1D_PCT) {
         tryInsert(
           sId,
           "protocol_tvl_crash",
           "critical",
-          alloc.poolId,
-          alloc.protocol,
-          alloc.symbol,
-          alloc.chain,
+          // Protocol-wide event — null pool_id so the deep-link doesn't
+          // misleadingly point at one pool when multiple are affected.
+          null,
+          sample.protocol,
+          sample.symbol,
+          sample.chain,
           `${proto.name} TVL crashed ${Math.abs(change1d).toFixed(0)}% in 24h`,
-          `Protocol-wide TVL fell from prior day. Current TVL: $${(proto.tvl / 1e6).toFixed(1)}M. Possible exploit, depeg, or coordinated exit — verify before adding funds.`,
+          `Protocol-wide TVL fell from prior day. Current TVL: $${(proto.tvl / 1e6).toFixed(1)}M. ${exposureLine} Possible exploit, depeg, or coordinated exit — verify before adding funds.`,
         );
-      } else if (change7d <= -PROTOCOL_TVL_CRASH_7D_PCT) {
+      } else {
         tryInsert(
           sId,
           "protocol_tvl_crash",
           "warning",
-          alloc.poolId,
-          alloc.protocol,
-          alloc.symbol,
-          alloc.chain,
+          null,
+          sample.protocol,
+          sample.symbol,
+          sample.chain,
           `${proto.name} TVL down ${Math.abs(change7d).toFixed(0)}% over 7d`,
-          `Sustained protocol-wide outflow. Current TVL: $${(proto.tvl / 1e6).toFixed(1)}M. Investigate cause before deploying capital.`,
+          `Sustained protocol-wide outflow. Current TVL: $${(proto.tvl / 1e6).toFixed(1)}M. ${exposureLine} Investigate cause before deploying capital.`,
         );
       }
     }

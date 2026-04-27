@@ -1,5 +1,6 @@
 import type { PortfolioPosition, AlertConfig, AlertEvent } from "@/types/portfolio";
 import type { DefiLlamaPool } from "@/types/pool";
+import type { PoolStability } from "@/lib/pool-stability";
 
 // Pools that started below this entry TVL produce too much noise — small
 // LPs naturally swing 30–50% on routine flow. We still alert on their APY
@@ -9,11 +10,15 @@ const MIN_ENTRY_TVL_FOR_DRAIN_ALERT = 1_000_000;
 // chain reorg, schema change). For freshly opened positions the lookup race
 // is the most likely cause of a "missing" result, not a real depreciation.
 const MIN_POSITION_AGE_DAYS_FOR_MISSING_ALERT = 7;
+// A pool whose APY has zero variance still shouldn't fire on sub-percentage-
+// point dips — those are rounding, not signal.
+const MIN_ABSOLUTE_DROP_PP = 1.0;
 
 export function runMonitorScan(
   positions: PortfolioPosition[],
   currentPools: DefiLlamaPool[],
-  config: AlertConfig
+  config: AlertConfig,
+  stabilityByPool?: Map<string, PoolStability | null>,
 ): AlertEvent[] {
   const alerts: AlertEvent[] = [];
   const poolMap = new Map<string, DefiLlamaPool>();
@@ -26,9 +31,22 @@ export function runMonitorScan(
 
     if (currentPool && pos.entryApy > 0) {
       const currentApy = currentPool.apy || 0;
-      const dropPercent = ((pos.entryApy - currentApy) / pos.entryApy) * 100;
+      const dropPp = pos.entryApy - currentApy;
+      const dropPercent = (dropPp / pos.entryApy) * 100;
 
-      if (dropPercent >= config.apyDropCritical) {
+      // Volatility floor: require the absolute drop to clear ~k σ of the
+      // pool's historical daily APY noise. Pools without enough history fall
+      // back to the bare MIN_ABSOLUTE_DROP_PP so a single utilization dip on
+      // a stable pool can't fire a critical alert.
+      const stability = stabilityByPool?.get(pos.poolId);
+      const stdDev = stability?.apyStdDev6m ?? 0;
+      const volatilityFloor = Math.max(
+        MIN_ABSOLUTE_DROP_PP,
+        config.apyVolatilityFloorMultiplier * stdDev,
+      );
+      const passesFloor = dropPp >= volatilityFloor;
+
+      if (passesFloor && dropPercent >= config.apyDropCritical) {
         alerts.push({
           id: `apy-crit-${pos.id}`,
           type: "apy_drop",
@@ -44,7 +62,7 @@ export function runMonitorScan(
           entryValue: pos.entryApy,
           changePercent: -dropPercent,
         });
-      } else if (dropPercent >= config.apyDropWarning) {
+      } else if (passesFloor && dropPercent >= config.apyDropWarning) {
         alerts.push({
           id: `apy-warn-${pos.id}`,
           type: "apy_drop",

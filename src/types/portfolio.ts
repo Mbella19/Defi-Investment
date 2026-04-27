@@ -16,6 +16,13 @@ export interface AlertConfig {
   apyDropCritical: number;
   tvlDrainWarning: number;
   tvlDrainCritical: number;
+  /**
+   * Volatility-aware noise floor for APY drops. The relative drop must clear
+   * `apyDropWarning|Critical` AND the absolute drop (in percentage points)
+   * must exceed `apyVolatilityFloorMultiplier × stdDev6m` for the pool. Pools
+   * without history are gated only by the relative threshold.
+   */
+  apyVolatilityFloorMultiplier: number;
 }
 
 export type AlertSeverity = "info" | "warning" | "critical";
@@ -48,4 +55,5 @@ export const DEFAULT_ALERT_CONFIG: AlertConfig = {
   apyDropCritical: 60,
   tvlDrainWarning: 40,
   tvlDrainCritical: 65,
+  apyVolatilityFloorMultiplier: 2.5,
 };

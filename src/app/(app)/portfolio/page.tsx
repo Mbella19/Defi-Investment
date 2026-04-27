@@ -1,6 +1,5 @@
 "use client";
 
-import { useMemo } from "react";
 import { ConnectButton as RainbowConnectButton } from "@rainbow-me/rainbowkit";
 import {
   Icons,
@@ -50,7 +49,7 @@ export default function PortfolioPage() {
   const { isConnected, address, portfolio, isLoading, error, refetch } =
     usePortfolio();
 
-  const totalDelta24h = useMemo(() => {
+  const totalDelta24h = (() => {
     if (!portfolio) return null;
     let weighted = 0;
     let total = 0;
@@ -61,7 +60,7 @@ export default function PortfolioPage() {
     }
     if (total === 0) return null;
     return { abs: weighted, pct: (weighted / total) * 100 };
-  }, [portfolio]);
+  })();
 
   // ------- DISCONNECTED STATE -------
   if (!isConnected) {

@@ -3,8 +3,6 @@ import { invokeCodex } from "./codex-client";
 import { invokeGemini } from "./gemini-client";
 
 export type AiSource = "claude" | "codex" | "gemini";
-/** @deprecated use AiSource */
-export type DualSource = "claude" | "codex";
 
 type OkOrErr = { ok: true; text: string } | { ok: false; error: string };
 
@@ -13,17 +11,10 @@ export interface TripleRawResult {
   codex: OkOrErr;
   gemini: OkOrErr;
 }
-/** @deprecated use TripleRawResult */
-export interface DualRawResult {
-  claude: OkOrErr;
-  codex: OkOrErr;
-}
 
 export interface InvokeOptions {
   timeoutMs?: number;
 }
-/** @deprecated use InvokeOptions */
-export type DualOptions = InvokeOptions;
 
 function settleToOkErr(res: PromiseSettledResult<string>): OkOrErr {
   if (res.status === "fulfilled") return { ok: true, text: res.value };
@@ -50,11 +41,6 @@ export async function tripleInvoke(prompt: string, opts: InvokeOptions = {}): Pr
     codex: settleToOkErr(codexRes),
     gemini: settleToOkErr(geminiRes),
   };
-}
-
-/** @deprecated use tripleInvoke — now returns a TripleRawResult for compatibility. */
-export async function dualInvoke(prompt: string, opts: InvokeOptions = {}): Promise<TripleRawResult> {
-  return tripleInvoke(prompt, opts);
 }
 
 /**
@@ -87,11 +73,6 @@ export function tripleExtractJson<T = unknown>(raw: TripleRawResult): {
     gemini: extract("gemini", raw.gemini),
     errors,
   };
-}
-
-/** @deprecated use tripleExtractJson — returns the claude/codex/gemini shape. */
-export function dualExtractJson<T = unknown>(raw: TripleRawResult) {
-  return tripleExtractJson<T>(raw);
 }
 
 const SEVERITY_RANK: Record<string, number> = {

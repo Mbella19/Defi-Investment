@@ -13,9 +13,11 @@ import {
   getNormalTxs,
 } from "./etherscan";
 import { tripleInvoke, tripleExtractJson, dedupeStrings } from "./dual-llm";
+import { boundCache } from "@/lib/cache-utils";
 
 const cache = new Map<string, { report: DeployerForensicsReport; expiresAt: number }>();
 const CACHE_TTL = 24 * 60 * 60 * 1000;
+const CACHE_MAX = 500;
 
 function cacheKey(chainId: number, address: string): string {
   return `${chainId}:${address.toLowerCase()}`;
@@ -349,6 +351,7 @@ export async function analyzeDeployer(
     dualAi,
   };
 
+  boundCache(cache, CACHE_MAX);
   cache.set(key, { report, expiresAt: Date.now() + CACHE_TTL });
   return report;
 }

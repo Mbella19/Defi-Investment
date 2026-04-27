@@ -1,4 +1,5 @@
 import type { GoPlusTokenSecurity } from "@/types/goplus";
+import { fetchWithTimeout, warnUpstream } from "./fetch-utils";
 
 const BASE = "https://api.gopluslabs.io/api/v1";
 
@@ -124,8 +125,8 @@ export async function fetchTokenSecurity(
 ): Promise<GoPlusTokenSecurity | null> {
   try {
     const addr = contractAddress.toLowerCase();
-    const res = await fetch(
-      `${BASE}/token_security/${chainId}?contract_addresses=${addr}`,
+    const res = await fetchWithTimeout(
+      `${BASE}/token_security/${encodeURIComponent(chainId)}?contract_addresses=${encodeURIComponent(addr)}`,
       { next: { revalidate: 3600 } }
     );
     if (!res.ok) return null;
@@ -160,7 +161,8 @@ export async function fetchTokenSecurity(
       riskLevel,
       flags,
     };
-  } catch {
+  } catch (err) {
+    warnUpstream("goplus/token-security", err);
     return null;
   }
 }
@@ -176,9 +178,9 @@ export async function fetchTokenSecurityBatch(
   if (addresses.length === 0) return map;
 
   try {
-    const addrs = addresses.map((a) => a.toLowerCase()).join(",");
-    const res = await fetch(
-      `${BASE}/token_security/${chainId}?contract_addresses=${addrs}`,
+    const addrs = addresses.map((a) => encodeURIComponent(a.toLowerCase())).join(",");
+    const res = await fetchWithTimeout(
+      `${BASE}/token_security/${encodeURIComponent(chainId)}?contract_addresses=${addrs}`,
       { next: { revalidate: 3600 } }
     );
     if (!res.ok) return map;
@@ -214,8 +216,8 @@ export async function fetchTokenSecurityBatch(
         flags,
       });
     }
-  } catch {
-    // Graceful degradation
+  } catch (err) {
+    warnUpstream("goplus/token-security-batch", err);
   }
   return map;
 }
