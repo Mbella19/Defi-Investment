@@ -19,7 +19,7 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Sovereign Investment Group",
   description:
-    "On-chain yield, priced honestly. SIG scores every DeFi pool on live TVL, audit posture, oracle health, and capital stickiness.",
+    "A private DeFi income workspace for market review, allocation planning, contract risk review, and read-only portfolio oversight.",
 };
 
 const themeBootstrap = `(function(){try{var s=localStorage.getItem('sig-theme');var t=s==='dark'||s==='light'?s:(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','light');}})();`;

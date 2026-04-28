@@ -45,3 +45,8 @@ next-env.d.ts
 sovereign.db
 sovereign.db-wal
 sovereign.db-shm
+
+# Claude Code local runtime artifacts (project state, lock files, worktrees).
+# Never commit these — they're per-machine.
+.claude/scheduled_tasks.lock
+.claude/worktrees/

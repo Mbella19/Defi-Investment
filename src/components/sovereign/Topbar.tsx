@@ -28,12 +28,13 @@ const AlertBell = dynamic(() => import("@/components/notifications/AlertBell"), 
 
 const CRUMBS: Record<string, string[]> = {
   "/": ["Home"],
-  "/discover": ["Home", "Discover"],
+  "/discover": ["Home", "Markets"],
+  "/strategies": ["Home", "Allocations"],
   "/portfolio": ["Home", "Portfolio"],
-  "/security/audit": ["Home", "Security", "Audit"],
-  "/tools": ["Home", "Tools"],
-  "/tools/simulator": ["Home", "Tools", "Yield Simulator"],
-  "/tools/correlation": ["Home", "Tools", "Correlation"],
+  "/security/audit": ["Home", "Security", "Review"],
+  "/tools": ["Home", "Models"],
+  "/tools/simulator": ["Home", "Models", "Scenario Analysis"],
+  "/tools/correlation": ["Home", "Models", "Correlation"],
 };
 
 function crumbsFor(pathname: string): string[] {
@@ -105,7 +106,7 @@ export function Topbar({ extra }: { extra?: ReactNode }) {
           }}
         >
           <Icons.search size={14} />
-          <span>Search pools, tokens, chains…</span>
+          <span>Search markets, tokens, chains…</span>
           <span style={{ marginLeft: "auto", display: "flex", gap: 3 }}>
             <kbd
               className="mono"

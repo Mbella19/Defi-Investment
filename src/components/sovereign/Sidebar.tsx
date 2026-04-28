@@ -14,11 +14,11 @@ type NavItem = {
 
 const nav: NavItem[] = [
   { href: "/", label: "Home", icon: Icons.home, match: (p) => p === "/" },
-  { href: "/discover", label: "Discover", icon: Icons.compass },
-  { href: "/strategies", label: "Strategies", icon: Icons.activity },
+  { href: "/discover", label: "Markets", icon: Icons.compass },
+  { href: "/strategies", label: "Allocations", icon: Icons.activity },
   { href: "/portfolio", label: "Portfolio", icon: Icons.wallet },
   { href: "/security/audit", label: "Security", icon: Icons.shield },
-  { href: "/tools", label: "Tools", icon: Icons.tools },
+  { href: "/tools", label: "Models", icon: Icons.tools },
 ];
 
 function isActive(item: NavItem, pathname: string): boolean {
@@ -50,7 +50,7 @@ export function Sidebar() {
 
       <nav className="sidebar-nav">
         <div className="eyebrow" style={{ fontSize: 9.5, padding: "4px 10px 10px" }}>
-          NAVIGATE
+          WORKSPACE
         </div>
         {nav.map((it) => {
           const Icon = it.icon;
@@ -72,7 +72,7 @@ export function Sidebar() {
       <div
         style={{
           padding: 14,
-          borderRadius: 14,
+          borderRadius: 8,
           background: "var(--surface-2)",
           border: "1px solid var(--line)",
         }}
@@ -83,13 +83,13 @@ export function Sidebar() {
             className="mono"
             style={{ fontSize: 10, color: "var(--text-2)", letterSpacing: "0.12em" }}
           >
-            LIVE FEED
+            MARKET STATUS
           </span>
         </div>
         <div style={{ fontSize: 11.5, color: "var(--text-dim)", lineHeight: 1.45 }}>
-          Data refreshed every block.
+          Live market data.
           <br />
-          Scoring is open-source.
+          Read-only access.
         </div>
       </div>
     </aside>

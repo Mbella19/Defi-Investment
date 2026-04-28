@@ -59,7 +59,7 @@ export function YieldTape({ rows, count = 14 }: Props) {
           color: "var(--text-dim)",
         }}
       >
-        {error ? "Live tape unavailable — retrying" : "Loading live tape…"}
+        {error ? "Market tape unavailable — retrying" : "Loading market tape..."}
       </div>
     );
   }

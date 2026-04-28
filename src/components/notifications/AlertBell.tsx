@@ -227,7 +227,7 @@ export default function AlertBell() {
                             textDecoration: "none",
                           }}
                         >
-                          Manage funds →
+                          View market →
                         </a>
                       ) : null}
                     </div>
@@ -252,7 +252,7 @@ export default function AlertBell() {
                 textTransform: "uppercase",
               }}
             >
-              VIEW ALL STRATEGIES →
+              VIEW ALL ALLOCATIONS →
             </Link>
           ) : null}
         </div>

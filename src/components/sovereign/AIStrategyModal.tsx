@@ -17,11 +17,12 @@ import {
 
 const DRAFT_STORAGE_KEY = "sovereign:ai-strategy-draft:v2";
 
-type RiskBand = "Safe" | "Balanced" | "Degen" | "Custom";
+type RiskBand = "Safe" | "Balanced" | "Opportunistic" | "Custom";
+type LegacyRiskBand = RiskBand | "Degen";
 
 interface PersistedDraft {
   budget: number;
-  risk: RiskBand;
+  risk: LegacyRiskBand;
   stablesOnly: boolean;
   customApyMin: number;
   customApyMax: number;
@@ -60,6 +61,14 @@ function clearDraft(): void {
   }
 }
 
+function normalizeRiskBand(raw: LegacyRiskBand | undefined): RiskBand {
+  if (raw === "Degen") return "Opportunistic";
+  if (raw === "Safe" || raw === "Balanced" || raw === "Opportunistic" || raw === "Custom") {
+    return raw;
+  }
+  return "Balanced";
+}
+
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -86,7 +95,7 @@ type ProgressState = {
 const INITIAL_PROGRESS: ProgressState = {
   percent: 0,
   stage: "starting",
-  message: "Initializing strategy pipeline…",
+  message: "Preparing allocation workflow...",
   elapsedMs: 0,
   events: [],
 };
@@ -100,7 +109,7 @@ function riskToApi(
   customMax?: number,
 ): StrategyCriteria["riskAppetite"] {
   if (r === "Safe") return "low";
-  if (r === "Degen") return "high";
+  if (r === "Opportunistic") return "high";
   if (r === "Custom") {
     const mid = ((customMin ?? CUSTOM_DEFAULT_MIN) + (customMax ?? CUSTOM_DEFAULT_MAX)) / 2;
     if (mid <= 8) return "low";
@@ -116,7 +125,7 @@ function apyRange(
   customMax?: number,
 ): { min: number; max: number } {
   if (r === "Safe") return { min: 3, max: 8 };
-  if (r === "Degen") return { min: 12, max: 60 };
+  if (r === "Opportunistic") return { min: 12, max: 60 };
   if (r === "Custom") {
     const minRaw = Number.isFinite(customMin) ? (customMin as number) : CUSTOM_DEFAULT_MIN;
     const maxRaw = Number.isFinite(customMax) ? (customMax as number) : CUSTOM_DEFAULT_MAX;
@@ -125,6 +134,44 @@ function apyRange(
     return { min, max };
   }
   return { min: 6, max: 18 };
+}
+
+function riskBandLabel(r: RiskBand): string {
+  return r;
+}
+
+const STAGE_LABELS: Record<string, string> = {
+  starting: "Preparing",
+  preparing: "Preparing",
+  loading_pools: "Reading markets",
+  reading_markets: "Reading markets",
+  scoring: "Reviewing markets",
+  selecting_markets: "Selecting markets",
+  reviewing_markets: "Reviewing markets",
+  generating: "Creating proposal",
+  creating_proposal: "Creating proposal",
+  reviewing: "Checking proposal",
+  checking_proposal: "Checking proposal",
+  revising: "Finalizing proposal",
+  finalizing_proposal: "Finalizing proposal",
+  finalizing: "Finalizing",
+  done: "Complete",
+  complete: "Complete",
+};
+
+function stageLabel(stage: string): string {
+  return STAGE_LABELS[stage] ?? stage.replace(/_/g, " ");
+}
+
+function progressCopy(message: string): string {
+  return message
+    .replace(/strategy pipeline/gi, "allocation workflow")
+    .replace(/strategy generation/gi, "allocation proposal")
+    .replace(/strategy/gi, "allocation")
+    .replace(/AI|Claude|Codex|Gemini/gi, "review")
+    .replace(/pipeline/gi, "workflow")
+    .replace(/backend/gi, "system")
+    .replace(/audit/gi, "review");
 }
 
 export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialRisk = "Balanced" }: Props) {
@@ -146,7 +193,7 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
     const draft = loadDraft();
     if (draft) {
       setBudget(draft.budget);
-      setRisk(draft.risk);
+      setRisk(normalizeRiskBand(draft.risk));
       setStablesOnly(draft.stablesOnly);
       setCustomApyMin(
         Number.isFinite(draft.customApyMin) ? draft.customApyMin : CUSTOM_DEFAULT_MIN,
@@ -226,19 +273,18 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
       });
       const start = await res.json();
       if (!res.ok || !start?.jobId) {
-        throw new Error(start?.error ?? "Failed to start strategy job");
+        throw new Error(progressCopy(start?.error ?? "Failed to start allocation workflow"));
       }
       const jobId: string = start.jobId;
 
-      // Poll backend job until it resolves. Backend keeps the job in-memory
-      // and we just mirror its current stage/message into the UI state.
+      // Poll the background job until it resolves and mirror its public status.
       while (!cancelRef.current) {
         await new Promise((r) => setTimeout(r, 1500));
         if (cancelRef.current) return;
         const pollRes = await fetch(`/api/strategy?id=${encodeURIComponent(jobId)}`);
         const job = await pollRes.json();
         if (!pollRes.ok) {
-          throw new Error(job?.error || "Lost track of strategy job");
+          throw new Error(progressCopy(job?.error || "Lost track of allocation workflow"));
         }
 
         setProgress({
@@ -256,11 +302,11 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
           return;
         }
         if (job.status === "error") {
-          throw new Error(job.error || "Strategy generation failed");
+          throw new Error(progressCopy(job.error || "Allocation workflow failed"));
         }
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Strategy request failed");
+      setError(e instanceof Error ? progressCopy(e.message) : "Allocation request failed");
     } finally {
       setLoading(false);
     }
@@ -294,14 +340,14 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="AI Strategy"
+        aria-label="Allocation desk"
         style={{
           width: "min(720px, 100%)",
           maxHeight: "88vh",
           overflow: "auto",
           background: "var(--surface)",
           border: "1px solid var(--line)",
-          borderRadius: 20,
+          borderRadius: 10,
           boxShadow: "var(--shadow-lg)",
           padding: 24,
           display: "flex",
@@ -326,10 +372,10 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.01em" }}>
-              The Strategist
+              Allocation Desk
             </div>
             <div style={{ fontSize: 12, color: "var(--text-dim)" }}>
-              A portfolio, written for you — proposed, defended, and revised before it reaches you.
+              Build a proposed allocation from your budget, risk range, and market constraints.
             </div>
           </div>
           <button
@@ -386,7 +432,7 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
                   padding: 2,
                 }}
               >
-                {(["Safe", "Balanced", "Degen", "Custom"] as const).map((r) => (
+                {(["Safe", "Balanced", "Opportunistic", "Custom"] as const).map((r) => (
                   <button
                     key={r}
                     type="button"
@@ -405,7 +451,7 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
                       fontFamily: "inherit",
                     }}
                   >
-                    {r}
+                    {riskBandLabel(r)}
                   </button>
                 ))}
               </div>
@@ -498,8 +544,8 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
                 lineHeight: 1.5,
               }}
             >
-              Uses live yield telemetry, contract security checks, and a protocol
-              risk scorer. No fabricated pools, no placeholder APYs.
+              Uses current market data and risk context to prepare a proposal for review.
+              No custody, no approvals, no execution.
             </div>
           </div>
         ) : result ? (
@@ -565,7 +611,7 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
                   color: "var(--text-dim)",
                 }}
               >
-                {progress.stage.replace(/_/g, " ")} · {formatElapsed(progress.elapsedMs)}
+                {stageLabel(progress.stage)} · {formatElapsed(progress.elapsedMs)}
               </div>
               <div
                 className="mono tabular"
@@ -594,7 +640,7 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
               />
             </div>
             <div style={{ fontSize: 12.5, color: "var(--text-1)", lineHeight: 1.5 }}>
-              {progress.message}
+              {progressCopy(progress.message)}
               {progress.sub && progress.sub.total > 0
                 ? ` (${progress.sub.done}/${progress.sub.total})`
                 : ""}
@@ -614,7 +660,7 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
             >
               {progress.events.length === 0 ? (
                 <div style={{ opacity: 0.6 }}>
-                  <span style={{ color: "var(--accent)" }}>▸</span> Waiting for first backend event…
+                  <span style={{ color: "var(--accent)" }}>▸</span> Preparing first status update...
                 </div>
               ) : (
                 progress.events
@@ -631,8 +677,8 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
                         }}
                       >
                         <span style={{ color: "var(--accent)" }}>▸</span>{" "}
-                        <span style={{ color: "var(--text-2)" }}>[{e.stage}]</span>{" "}
-                        {e.message}
+                        <span style={{ color: "var(--text-2)" }}>[{stageLabel(e.stage)}]</span>{" "}
+                        {progressCopy(e.message)}
                         {sub}
                       </div>
                     );
@@ -668,7 +714,7 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
           }}
         >
           <div style={{ fontSize: 11.5, color: "var(--text-dim)" }}>
-            {result ? `Generated ${new Date(result.generatedAt).toLocaleTimeString()}` : "Ready when you are."}
+            {result ? `Prepared ${new Date(result.generatedAt).toLocaleTimeString()}` : "Ready when you are."}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             {result ? (
@@ -681,7 +727,7 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
                     setError(null);
                   }}
                 >
-                  New scan
+                  New allocation
                 </button>
                 <button type="button" className="btn btn-primary btn-sm" onClick={onClose}>
                   Done
@@ -703,8 +749,8 @@ export function AIStrategyModal({ open, onClose, initialBudget = 50000, initialR
                   onClick={runStrategy}
                 >
                   {loading
-                    ? `${Math.floor(progress.percent)}% · ${progress.stage.replace(/_/g, " ")}`
-                    : "Generate strategy"}{" "}
+                    ? `${Math.floor(progress.percent)}% · ${stageLabel(progress.stage)}`
+                    : "Create allocation"}{" "}
                   {!loading ? <Icons.arrow size={13} /> : null}
                 </button>
               </>
@@ -769,8 +815,6 @@ function StrategyResultView({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <CollaborationBadge result={result} />
-
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <div className="card" style={{ padding: 14 }}>
           <div className="eyebrow" style={{ fontSize: 10 }}>
@@ -813,9 +857,6 @@ function StrategyResultView({
         {result.summary}
       </div>
 
-      <CollaborationDetails result={result} />
-
-
       <div>
         <div
           style={{
@@ -827,7 +868,7 @@ function StrategyResultView({
             flexWrap: "wrap",
           }}
         >
-          <div style={{ fontSize: 13, fontWeight: 600 }}>Allocations · pick & weight</div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Allocation mix</div>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <label
               style={{
@@ -907,7 +948,7 @@ function StrategyResultView({
                 cursor: "pointer",
                 borderRadius: 6,
               }}
-              title="Restore the AI's original allocation"
+              title="Restore the original allocation"
             >
               Reset
             </button>
@@ -1043,7 +1084,7 @@ function StrategyResultView({
                   <Link
                     href={`/security/audit?address=${a.contractAddress}&chain=${encodeURIComponent(a.auditChain ?? a.chain)}&autostart=1`}
                     className="m-icon-btn"
-                    title="Run multi-engine smart-contract audit (static, AST, symbolic, and on-chain interrogation reconciled by a triple-AI panel)"
+                    title="Open a contract risk review for this market"
                     style={{
                       fontSize: 11,
                       fontWeight: 500,
@@ -1059,7 +1100,7 @@ function StrategyResultView({
                       height: "auto",
                     }}
                   >
-                    Deep audit
+                    Security review
                     <Icons.arrow />
                   </Link>
                 ) : null}
@@ -1082,7 +1123,7 @@ function StrategyResultView({
           }}
         >
           <div className="eyebrow" style={{ marginBottom: 4 }}>
-            HEADS UP
+            NOTICE
           </div>
           {result.warnings.map((w, i) => (
             <div key={i}>· {w}</div>
@@ -1103,10 +1144,10 @@ function StrategyResultView({
       >
         <div>
           <div className="eyebrow" style={{ marginBottom: 4 }}>
-            CONTINUOUS MONITORING
+            MONITORING
           </div>
           <div style={{ fontSize: 12.5, color: "var(--text-1)", lineHeight: 1.55 }}>
-            Activate to have us watch every protocol in this strategy 24/7 — APY drops, TVL drains, on-chain pauses, and known exploit alerts. We notify you the moment something changes. <strong>This does not record a deposit.</strong>
+            Activate read-only monitoring for the selected allocation. Sovereign tracks material changes to the listed markets and records alerts for review. <strong>This does not record a deposit or move funds.</strong>
           </div>
         </div>
         {activateError ? (
@@ -1164,8 +1205,8 @@ function StrategyResultView({
               : activating
                 ? "ACTIVATING…"
                 : isCustomized
-                  ? "USE MY PICKS · MONITOR"
-                  : "USE STRATEGY · MONITOR"}{" "}
+                  ? "MONITOR MY ALLOCATION"
+                  : "MONITOR ALLOCATION"}{" "}
             {!activated && !activating ? <Icons.arrow size={13} /> : null}
           </button>
           <button
@@ -1184,7 +1225,7 @@ function StrategyResultView({
               cursor: activating ? "not-allowed" : "pointer",
               borderRadius: 8,
             }}
-            title="Discard this strategy and start a new one"
+            title="Discard this allocation and start a new one"
           >
             Start over
           </button>
@@ -1202,317 +1243,11 @@ function StrategyResultView({
               alignSelf: "flex-start",
             }}
           >
-            View active strategies →
+            View active allocations →
           </Link>
         ) : null}
       </div>
     </div>
-  );
-}
-
-function CollaborationBadge({ result }: { result: InvestmentStrategy }) {
-  const c = result.collaboration;
-  if (!c) return null;
-  const total = c.critiquePoints.length;
-  // Older cached strategies may not have `verifiable` set — fall back to the
-  // legacy "everything is verifiable" assumption so they still render.
-  const hasVerifiableField = c.critiquePoints.some((p) => p.verifiable !== undefined);
-  const verifiable = hasVerifiableField
-    ? c.critiquePoints.filter((p) => p.verifiable)
-    : c.critiquePoints;
-  const advisory = hasVerifiableField
-    ? c.critiquePoints.filter((p) => !p.verifiable)
-    : [];
-  const verifiableTotal = verifiable.length;
-  const verifiableAddressed = verifiable.filter((p) => p.addressed).length;
-  const advisoryRejected = advisory.filter((p) => p.claudeRejection).length;
-  const verdicts = c.reviewerVerdicts ?? { codex: c.codexVerdict, gemini: "unavailable" as const };
-  const codexAvailable = verdicts.codex !== "unavailable";
-  const geminiAvailable = verdicts.gemini !== "unavailable";
-  const availableCount = (codexAvailable ? 1 : 0) + (geminiAvailable ? 1 : 0);
-  const allApproved =
-    codexAvailable && geminiAvailable &&
-    verdicts.codex === "approve" &&
-    verdicts.gemini === "approve" &&
-    total === 0;
-
-  const buildHeadline = () => {
-    if (verifiableTotal === 0 && advisory.length === 0) return "no concerns raised";
-    const parts: string[] = [];
-    if (verifiableTotal > 0) parts.push(`${verifiableAddressed}/${verifiableTotal} verifiable concerns addressed`);
-    if (advisory.length > 0) {
-      const advisoryNote =
-        advisoryRejected > 0
-          ? `${advisory.length} advisory note${advisory.length === 1 ? "" : "s"} (${advisoryRejected} explicitly rejected)`
-          : `${advisory.length} advisory note${advisory.length === 1 ? "" : "s"}`;
-      parts.push(advisoryNote);
-    }
-    return parts.join(" · ");
-  };
-
-  let label: string;
-  let tone: "good" | "warn" | "info";
-  if (availableCount === 0) {
-    label = "Single-AI fallback (both reviewers unavailable)";
-    tone = "warn";
-  } else if (availableCount === 1) {
-    const who = codexAvailable ? "Reviewer A" : "Reviewer B";
-    label = `Partial review — only ${who} was available · ${buildHeadline()}`;
-    tone = "warn";
-  } else if (allApproved) {
-    label = "Approved by both reviewers (no concerns)";
-    tone = "good";
-  } else {
-    label = buildHeadline();
-    tone = verifiableTotal > 0 && verifiableAddressed === verifiableTotal ? "good" : "info";
-  }
-
-  const toneColor =
-    tone === "good"
-      ? "var(--good)"
-      : tone === "warn"
-        ? "var(--warn)"
-        : "var(--accent)";
-
-  const verdictChip = (name: string, verdict: string) => {
-    const color =
-      verdict === "approve"
-        ? "var(--good)"
-        : verdict === "revise"
-          ? "var(--warn)"
-          : verdict === "reject"
-            ? "var(--danger)"
-            : "var(--text-dim)";
-    return (
-      <span
-        key={name}
-        className="mono"
-        style={{
-          fontSize: 10,
-          padding: "2px 6px",
-          borderRadius: 999,
-          border: `1px solid color-mix(in oklch, ${color} 45%, var(--line))`,
-          background: `color-mix(in oklch, ${color} 10%, transparent)`,
-          color,
-          letterSpacing: "0.05em",
-          textTransform: "uppercase",
-        }}
-      >
-        {name}: {verdict}
-      </span>
-    );
-  };
-
-  return (
-    <div
-      className="card"
-      style={{
-        padding: 12,
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        borderColor: `color-mix(in oklch, ${toneColor} 35%, var(--line))`,
-        background: `color-mix(in oklch, ${toneColor} 6%, var(--surface))`,
-        flexWrap: "wrap",
-      }}
-    >
-      <div
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: 8,
-          background: `color-mix(in oklch, ${toneColor} 18%, transparent)`,
-          color: toneColor,
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          flexShrink: 0,
-        }}
-      >
-        <Icons.shield size={14} />
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div className="eyebrow" style={{ fontSize: 10, color: toneColor, marginBottom: 2 }}>
-          TRIPLE-AI COLLABORATION
-        </div>
-        <div
-          style={{ fontSize: 12.5, color: "var(--text-1)", cursor: "help" }}
-          title="Verifiable concerns cite a specific poolId or relate to budget summing — the resolver checks whether the lead architect dropped the pool, cut its allocation by ≥20%, or rewrote the reasoning. Advisory notes are abstract or stylistic and can't be deterministically verified; for high-severity ones the architect must provide a rejection rationale. Expand 'Reviewer concerns' below to see each one's outcome."
-        >
-          {label}
-        </div>
-        <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
-          {verdictChip("Reviewer A", verdicts.codex)}
-          {verdictChip("Reviewer B", verdicts.gemini)}
-        </div>
-      </div>
-      {availableCount > 0 && c.initialProjectedApy !== c.finalProjectedApy ? (
-        <div className="mono" style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right" }}>
-          APY {c.initialProjectedApy.toFixed(2)}% → {c.finalProjectedApy.toFixed(2)}%
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function CollaborationDetails({ result }: { result: InvestmentStrategy }) {
-  const c = result.collaboration;
-  if (!c || c.critiquePoints.length === 0) return null;
-
-  return (
-    <details
-      style={{
-        border: "1px solid var(--line)",
-        borderRadius: 10,
-        padding: "10px 12px",
-        background: "var(--surface-2)",
-      }}
-    >
-      <summary
-        style={{
-          fontSize: 12.5,
-          fontWeight: 500,
-          cursor: "pointer",
-          color: "var(--text-1)",
-          listStyle: "none",
-        }}
-      >
-        Reviewer concerns &amp; how they were resolved ({c.critiquePoints.length})
-      </summary>
-      <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-        {c.revisionNotes ? (
-          <div
-            style={{
-              fontSize: 12,
-              color: "var(--text-2)",
-              lineHeight: 1.5,
-              fontStyle: "italic",
-            }}
-          >
-            {c.revisionNotes}
-          </div>
-        ) : null}
-        {c.critiquePoints.map((p, i) => {
-          const sevColor =
-            p.severity === "high"
-              ? "var(--danger)"
-              : p.severity === "medium"
-                ? "var(--warn)"
-                : "var(--text-dim)";
-          return (
-            <div
-              key={i}
-              style={{
-                display: "flex",
-                gap: 8,
-                fontSize: 12,
-                lineHeight: 1.5,
-                paddingTop: 8,
-                borderTop: i === 0 ? "none" : "1px dashed var(--line)",
-              }}
-            >
-              <div
-                aria-hidden
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 999,
-                  background: p.addressed
-                    ? "var(--good)"
-                    : p.claudeRejection
-                      ? "var(--warn)"
-                      : sevColor,
-                  marginTop: 5,
-                  flexShrink: 0,
-                }}
-              />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ color: "var(--text-1)" }}>
-                  <span
-                    className="mono"
-                    style={{
-                      fontSize: 10,
-                      color: sevColor,
-                      letterSpacing: "0.08em",
-                      textTransform: "uppercase",
-                      marginRight: 6,
-                    }}
-                  >
-                    {p.severity} · {p.category.replace("_", " ")}
-                  </span>
-                  {p.sources && p.sources.length > 0 ? (
-                    <span
-                      className="mono"
-                      style={{
-                        fontSize: 10,
-                        color: p.sources.length > 1 ? "var(--accent)" : "var(--text-dim)",
-                        letterSpacing: "0.06em",
-                        textTransform: "uppercase",
-                        marginRight: 6,
-                      }}
-                    >
-                      · {p.sources.length > 1 ? "both reviewers" : p.sources[0] === "codex" ? "reviewer A" : "reviewer B"}
-                    </span>
-                  ) : null}
-                  {p.issue}
-                </div>
-                {p.suggestion ? (
-                  <div style={{ color: "var(--text-dim)", marginTop: 2 }}>
-                    Fix suggested: {p.suggestion}
-                  </div>
-                ) : null}
-                {(() => {
-                  const isVerifiable = p.verifiable !== false; // legacy strategies: assume verifiable
-                  let outcomeLabel: string;
-                  let outcomeColor: string;
-                  if (p.addressed) {
-                    outcomeLabel = "✓ ADDRESSED IN REVISION";
-                    outcomeColor = "var(--good)";
-                  } else if (p.claudeRejection) {
-                    outcomeLabel = "● EXPLICITLY REJECTED BY ARCHITECT";
-                    outcomeColor = "var(--warn)";
-                  } else if (!isVerifiable) {
-                    outcomeLabel = "◌ ADVISORY — NOT DETERMINISTICALLY VERIFIABLE";
-                    outcomeColor = "var(--text-dim)";
-                  } else {
-                    outcomeLabel = "○ NOT ADDRESSED — NO RATIONALE GIVEN";
-                    outcomeColor = "var(--danger)";
-                  }
-                  return (
-                    <>
-                      <div
-                        className="mono"
-                        style={{
-                          fontSize: 10,
-                          color: outcomeColor,
-                          marginTop: 3,
-                          letterSpacing: "0.06em",
-                        }}
-                      >
-                        {outcomeLabel}
-                      </div>
-                      {p.claudeRejection ? (
-                        <div
-                          style={{
-                            fontSize: 11.5,
-                            color: "var(--text-2)",
-                            marginTop: 3,
-                            paddingLeft: 8,
-                            borderLeft: "2px solid var(--warn)",
-                          }}
-                        >
-                          Architect rationale: {p.claudeRejection}
-                        </div>
-                      ) : null}
-                    </>
-                  );
-                })()}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </details>
   );
 }
 

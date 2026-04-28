@@ -1,34 +1,46 @@
 import { monitorActiveStrategies } from "@/lib/strategy-monitor";
 import { ensureSchedulerStarted, getSchedulerStatus } from "@/lib/monitor-scheduler";
+import { requireWallet } from "@/lib/auth/guard";
+import { enforceRateLimit } from "@/lib/rate-limit";
+import { getDb } from "@/lib/db";
 
 /**
- * Authorize cron-driven calls. CRON_SECRET should be set in production and
- * passed as `Authorization: Bearer <secret>` by Vercel Cron / external cron.
- * If unset (local dev), all callers are allowed — that's the same posture
- * the in-process scheduler had before externalization.
+ * Manual scan trigger from the UI ("Run scan now" button). Authenticated by
+ * SIWE session — Vercel Cron uses /api/cron/monitor instead, so this route
+ * no longer needs CRON_SECRET handling. We scope the scan to active
+ * strategies owned by the calling wallet so a user can never run a scan
+ * across someone else's portfolio.
  */
-function isAuthorized(request: Request): boolean {
-  const expected = process.env.CRON_SECRET;
-  if (!expected) return true;
-  const auth = request.headers.get("authorization") ?? "";
-  return auth === `Bearer ${expected}`;
-}
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 180;
 
 export async function POST(request: Request) {
-  if (!isAuthorized(request)) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = requireWallet(request);
+  if ("response" in auth) return auth.response;
+  const limited = enforceRateLimit(request, "monitor.manual", { max: 10, windowMs: 60 * 60 * 1000 });
+  if (limited) return limited;
+
   try {
-    // Local-dev fallback: keep the in-process scheduler running so dev
-    // boxes still get periodic scans without an external cron. In a
-    // serverless deploy this is a no-op (the timer never fires across
-    // request boundaries) and Vercel Cron / external cron drives the work.
+    // Local-dev courtesy: kick the in-process scheduler so dev boxes still
+    // get periodic scans without an external cron. No-op on serverless.
     ensureSchedulerStarted();
 
     const body = await request.json().catch(() => ({}));
     const { strategyId } = body as { strategyId?: string };
 
-    const result = await monitorActiveStrategies(strategyId);
+    // If a strategyId is given, verify it belongs to this wallet first.
+    if (strategyId) {
+      const db = getDb();
+      const owner = db
+        .prepare("SELECT wallet_address FROM active_strategies WHERE id = ?")
+        .get(strategyId) as { wallet_address: string | null } | undefined;
+      if (!owner || owner.wallet_address?.toLowerCase() !== auth.wallet) {
+        return Response.json({ error: "Strategy not found" }, { status: 404 });
+      }
+    }
+
+    const result = await monitorActiveStrategies(strategyId, auth.wallet);
     return Response.json(result);
   } catch (error) {
     console.error("Strategy monitor scan failed:", error);

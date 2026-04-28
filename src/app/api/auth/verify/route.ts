@@ -15,9 +15,18 @@ export async function POST(request: Request) {
     return Response.json({ error: "message and signature required" }, { status: 400 });
   }
 
+  // Bind the signature to this exact origin so a stolen message can't be
+  // replayed against a different deployment that shares the same wallet+nonce
+  // window. The Host header is what the browser actually used to reach us.
+  const expectedOrigin =
+    process.env.NEXT_PUBLIC_APP_HOST ||
+    request.headers.get("host") ||
+    undefined;
+
   const result = await verifySiweMessage({
     message: body.message,
     signature: body.signature,
+    expectedOrigin,
   });
   if (!result.ok || !result.address) {
     return Response.json({ error: result.error ?? "verification failed" }, { status: 401 });

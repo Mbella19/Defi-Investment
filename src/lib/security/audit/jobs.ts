@@ -48,7 +48,7 @@ export function createAuditJob(contractAddress: string, chainId: number): AuditJ
     status: "running",
     startedAt: Date.now(),
     events: [
-      { ts: Date.now(), stage: "starting", message: "Starting multi-engine audit pipeline…" },
+      { ts: Date.now(), stage: "starting", message: "Starting contract review..." },
     ],
   };
   jobs.set(job.id, job);
@@ -73,7 +73,7 @@ export function completeAuditJob(id: string, result: AuditReport): void {
   job.status = "done";
   job.finishedAt = Date.now();
   job.result = result;
-  job.events.push({ ts: Date.now(), stage: "done", message: "Audit complete" });
+  job.events.push({ ts: Date.now(), stage: "done", message: "Review complete" });
 }
 
 export function failAuditJob(id: string, error: string): void {
@@ -85,14 +85,19 @@ export function failAuditJob(id: string, error: string): void {
   job.events.push({ ts: Date.now(), stage: "error", message: error });
 }
 
+// Ranges must reflect the actual emit order in audit/orchestrator.ts:
+//   starting → fetching_source → fetching_onchain → running_tools
+//   → consensus → ai_explanation → scsvs_mapping → assembling_report → done
+// Previous ordering put consensus at 92–96 but the orchestrator emits it
+// before ai_explanation, so the bar jumped 92% then dropped to 60%. Fixed.
 const STAGE_RANGE: Record<AuditStage, [number, number]> = {
   starting: [0, 2],
   fetching_source: [2, 10],
   fetching_onchain: [10, 18],
-  running_tools: [18, 60],
-  ai_explanation: [60, 88],
-  scsvs_mapping: [88, 92],
-  consensus: [92, 96],
+  running_tools: [18, 56],
+  consensus: [56, 60],
+  ai_explanation: [60, 92],
+  scsvs_mapping: [92, 96],
   assembling_report: [96, 99],
   done: [100, 100],
   error: [100, 100],
@@ -115,13 +120,44 @@ export interface PublicAuditView {
   chainId: number;
   status: AuditJob["status"];
   progress: number;
-  stage: AuditStage;
+  stage: string;
   message: string;
   sub?: { done: number; total: number };
   elapsedMs: number;
-  events: AuditJobEvent[];
+  events: Array<{ ts: number; stage: string; message: string; sub?: { done: number; total: number } }>;
   result?: AuditReport;
   error?: string;
+}
+
+const PUBLIC_AUDIT_STAGE: Record<AuditStage, string> = {
+  starting: "starting_review",
+  fetching_source: "collecting_context",
+  fetching_onchain: "reading_live_state",
+  running_tools: "reviewing_coverage",
+  consensus: "prioritizing_findings",
+  ai_explanation: "preparing_summary",
+  scsvs_mapping: "mapping_standards",
+  assembling_report: "preparing_report",
+  done: "complete",
+  error: "error",
+};
+
+function publicAuditStage(stage: AuditStage): string {
+  return PUBLIC_AUDIT_STAGE[stage] ?? "working";
+}
+
+function publicAuditMessage(message: string): string {
+  return message
+    .replace(/multi-engine audit pipeline/gi, "contract review")
+    .replace(/audit pipeline/gi, "contract review")
+    .replace(/audit/gi, "review")
+    .replace(/Slither|Aderyn|Mythril/gi, "coverage")
+    .replace(/static & symbolic analyzers/gi, "risk checks")
+    .replace(/Triple-AI explainer/gi, "report review")
+    .replace(/AI explainer/gi, "report review")
+    .replace(/AI|Claude|Codex|Gemini/gi, "review")
+    .replace(/tools?/gi, "checks")
+    .replace(/pipeline/gi, "workflow");
 }
 
 export function publicAuditView(job: AuditJob): PublicAuditView {
@@ -132,12 +168,17 @@ export function publicAuditView(job: AuditJob): PublicAuditView {
     chainId: job.chainId,
     status: job.status,
     progress: computeProgress(job),
-    stage: last?.stage ?? "starting",
-    message: last?.message ?? "Working…",
+    stage: publicAuditStage(last?.stage ?? "starting"),
+    message: publicAuditMessage(last?.message ?? "Working..."),
     sub: last?.sub,
     elapsedMs: (job.finishedAt ?? Date.now()) - job.startedAt,
-    events: job.events.slice(-20),
+    events: job.events.slice(-20).map((e) => ({
+      ts: e.ts,
+      stage: publicAuditStage(e.stage),
+      message: publicAuditMessage(e.message),
+      sub: e.sub,
+    })),
     result: job.result,
-    error: job.error,
+    error: job.error ? publicAuditMessage(job.error) : undefined,
   };
 }

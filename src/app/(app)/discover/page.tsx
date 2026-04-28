@@ -25,15 +25,27 @@ const CHAIN_FILTERS = [
 ] as const;
 
 const TYPE_FILTERS = ["All", "Lending", "LST", "LP", "Yield", "Synth"] as const;
-const RISK_BANDS = ["Safe", "Balanced", "Degen"] as const;
-const MOBILE_CHIPS = ["Safe", "Balanced", "Degen", "Lending", "LST", "LP"] as const;
+const RISK_BANDS = ["Safe", "Balanced", "Opportunistic"] as const;
+const MOBILE_CHIPS = ["Safe", "Balanced", "Opportunistic", "Lending", "LST", "LP"] as const;
 
 type ChainFilterId = (typeof CHAIN_FILTERS)[number]["id"];
 
 function riskMatches(p: LivePool, band: (typeof RISK_BANDS)[number]): boolean {
   if (band === "Safe") return (p.stablecoin || p.category === "LST") && p.apy <= 10;
-  if (band === "Degen") return p.apy >= 12;
+  if (band === "Opportunistic") return p.apy >= 12;
   return p.apy >= 4 && p.apy <= 20;
+}
+
+function riskLabel(r: (typeof RISK_BANDS)[number] | (typeof MOBILE_CHIPS)[number]): string {
+  return r;
+}
+
+function typeLabel(t: (typeof TYPE_FILTERS)[number]): string {
+  return t === "Yield" ? "Income" : t;
+}
+
+function categoryLabel(category: string): string {
+  return category === "Yield" ? "Income" : category;
 }
 
 function safetyScore(p: LivePool): number {
@@ -92,7 +104,7 @@ export default function DiscoverPage() {
     <span style={{ color: "var(--danger)" }}>Live feed offline — showing cached</span>
   ) : (
     <>
-      {headerCount} pools, defended · updated {headerAge}
+      {headerCount} markets tracked · updated {headerAge}
     </>
   );
 
@@ -110,23 +122,23 @@ export default function DiscoverPage() {
           }}
         >
           <div>
-            <div className="eyebrow">DISCOVER</div>
+            <div className="eyebrow">MARKETS</div>
             <h1
               className="display"
               style={{ fontSize: 28, margin: "6px 0 2px", letterSpacing: "-0.02em" }}
             >
-              The yield, on its merits.
+              Income markets, organized for allocation.
             </h1>
             <div style={{ fontSize: 13, color: "var(--text-dim)" }}>{liveBadge}</div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn btn-sm" type="button">
-              <Icons.filter size={13} /> Saved filters
+              <Icons.filter size={13} /> Saved views
             </button>
           </div>
         </div>
 
-        {/* AI Strategy hero — the main attraction */}
+        {/* Allocation proposal hero */}
         <div
           style={{
             position: "relative",
@@ -134,7 +146,7 @@ export default function DiscoverPage() {
             background:
               "linear-gradient(135deg, color-mix(in oklch, var(--accent) 14%, var(--surface)) 0%, var(--surface) 65%)",
             border: "1px solid color-mix(in oklch, var(--accent) 32%, var(--line))",
-            borderRadius: 22,
+            borderRadius: 10,
             boxShadow: "var(--shadow-md)",
             display: "flex",
             gap: 32,
@@ -185,7 +197,7 @@ export default function DiscoverPage() {
                   boxShadow: "0 0 8px var(--accent)",
                 }}
               />
-              The Strategist
+              Allocation Desk
             </div>
             <h2
               className="display"
@@ -198,7 +210,7 @@ export default function DiscoverPage() {
                 color: "var(--text)",
               }}
             >
-              A portfolio, written for you. In a minute.
+              Convert the shortlist into a mandate.
             </h2>
             <p
               style={{
@@ -209,15 +221,15 @@ export default function DiscoverPage() {
                 lineHeight: 1.55,
               }}
             >
-              You set the budget and the risk you can live with. We compose the
-              allocation, defend it against {headerCount} live pools, and hand you back
-              something stress-tested — never something pitched.
+              Set a budget and risk range, then generate a proposed allocation you can
+              inspect, edit, and place under monitoring. Built for review before
+              execution.
             </p>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {[
-                "Defended before you see it",
-                "Safety floor enforced",
-                "Across every chain that matters",
+                "Position sizing included",
+                "Read-only monitoring available",
+                "Source context close at hand",
               ].map((label) => (
                 <span
                   key={label}
@@ -256,7 +268,7 @@ export default function DiscoverPage() {
               padding: "18px 30px",
               fontSize: 15,
               fontWeight: 500,
-              borderRadius: 14,
+              borderRadius: 8,
               border: 0,
               cursor: "pointer",
               fontFamily: "inherit",
@@ -280,7 +292,7 @@ export default function DiscoverPage() {
             }}
           >
             <Icons.zap size={15} />
-            Compose a portfolio
+            Create allocation
             <Icons.arrow size={14} />
           </button>
         </div>
@@ -326,7 +338,7 @@ export default function DiscoverPage() {
           </div>
           <div>
             <div className="eyebrow" style={{ fontSize: 9.5, marginBottom: 6 }}>
-              RISK BAND
+              MANDATE
             </div>
             <div
               style={{
@@ -357,7 +369,7 @@ export default function DiscoverPage() {
                     fontFamily: "inherit",
                   }}
                 >
-                  {r}
+                  {riskLabel(r)}
                 </button>
               ))}
             </div>
@@ -391,7 +403,7 @@ export default function DiscoverPage() {
           </div>
           <div>
             <div className="eyebrow" style={{ fontSize: 9.5, marginBottom: 6 }}>
-              TYPE
+              MARKET TYPE
             </div>
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
               {TYPE_FILTERS.map((t) => (
@@ -411,7 +423,7 @@ export default function DiscoverPage() {
                         : "var(--line)",
                   }}
                 >
-                  {t}
+                  {typeLabel(t)}
                 </button>
               ))}
             </div>
@@ -433,12 +445,12 @@ export default function DiscoverPage() {
               textTransform: "uppercase",
             }}
           >
-            <span>Pool</span>
+            <span>Market</span>
             <span>Chain</span>
             <span>TVL</span>
             <span>APY</span>
-            <span>30d trend</span>
-            <span>Safety</span>
+            <span>30d view</span>
+            <span>Quality</span>
             <span />
           </div>
           {loading && filtered.length === 0 ? (
@@ -447,7 +459,7 @@ export default function DiscoverPage() {
             </div>
           ) : filtered.length === 0 ? (
             <div style={{ padding: 32, textAlign: "center", color: "var(--text-dim)", fontSize: 13 }}>
-              No pools match these filters. Try broadening risk band or chain.
+              No markets match these filters. Broaden the mandate or chain selection.
             </div>
           ) : (
             filtered.map((p, i) => {
@@ -488,7 +500,7 @@ export default function DiscoverPage() {
                         {p.symbol}
                       </span>
                       <span style={{ fontSize: 11.5, color: "var(--text-dim)" }}>
-                        {p.protocol} · {p.category}
+                        {p.protocol} · {categoryLabel(p.category)}
                       </span>
                     </div>
                   </div>
@@ -522,7 +534,7 @@ export default function DiscoverPage() {
       <div className="mobile-only">
         <div className="m-header">
           <div>
-            <div className="m-title">Discover</div>
+            <div className="m-title">Markets</div>
             <div className="m-sub">{headerCount} POOLS · LIVE</div>
           </div>
           <div style={{ display: "flex", gap: 4 }}>
@@ -530,7 +542,7 @@ export default function DiscoverPage() {
             <button
               type="button"
               className="m-icon-btn"
-              aria-label="AI Strategy"
+              aria-label="Create allocation"
               onClick={() => setAiOpen(true)}
             >
               <Icons.zap size={18} />
@@ -544,7 +556,7 @@ export default function DiscoverPage() {
             style={{
               width: "100%",
               padding: "14px 16px",
-              borderRadius: 16,
+              borderRadius: 10,
               border: "1px solid color-mix(in oklch, var(--accent) 32%, var(--line))",
               background:
                 "linear-gradient(135deg, color-mix(in oklch, var(--accent) 16%, var(--surface)) 0%, var(--surface) 70%)",
@@ -575,7 +587,7 @@ export default function DiscoverPage() {
               </span>
               <div style={{ textAlign: "left", minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>
-                  The Strategist
+                  Allocation Desk
                 </div>
                 <div
                   style={{
@@ -586,7 +598,7 @@ export default function DiscoverPage() {
                     whiteSpace: "nowrap",
                   }}
                 >
-                  A defended portfolio, in a minute.
+                  Build a proposal from the live market view.
                 </div>
               </div>
             </div>
@@ -615,7 +627,7 @@ export default function DiscoverPage() {
                       : "var(--line)",
                   }}
                 >
-                  {c}
+                  {riskLabel(c)}
                 </button>
               );
             })}
@@ -668,7 +680,7 @@ export default function DiscoverPage() {
                         {p.symbol}
                       </div>
                       <div style={{ fontSize: 11.5, color: "var(--text-dim)" }}>
-                        {p.protocol} · {p.category}
+                        {p.protocol} · {categoryLabel(p.category)}
                       </div>
                     </div>
                     <span
@@ -722,7 +734,7 @@ export default function DiscoverPage() {
                     </div>
                     <div>
                       <div className="eyebrow" style={{ fontSize: 9 }}>
-                        SAFETY
+                        QUALITY
                       </div>
                       <div style={{ marginTop: 6 }}>
                         <RiskBar value={safety} />

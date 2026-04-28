@@ -188,12 +188,24 @@ export interface MonitorScanResult {
 
 export async function monitorActiveStrategies(
   strategyId?: string,
+  walletAddress?: string,
 ): Promise<MonitorScanResult> {
   const db = getDb();
+  const wallet = walletAddress?.toLowerCase();
 
   const rows = strategyId
-    ? db.prepare("SELECT * FROM active_strategies WHERE id = ? AND status = 'active'").all(strategyId)
-    : db.prepare("SELECT * FROM active_strategies WHERE status = 'active'").all();
+    ? wallet
+      ? db
+          .prepare(
+            "SELECT * FROM active_strategies WHERE id = ? AND lower(wallet_address) = ? AND status = 'active'",
+          )
+          .all(strategyId, wallet)
+      : db.prepare("SELECT * FROM active_strategies WHERE id = ? AND status = 'active'").all(strategyId)
+    : wallet
+      ? db
+          .prepare("SELECT * FROM active_strategies WHERE lower(wallet_address) = ? AND status = 'active'")
+          .all(wallet)
+      : db.prepare("SELECT * FROM active_strategies WHERE status = 'active'").all();
 
   if ((rows as unknown[]).length === 0) {
     return { scanned: 0, newAlerts: [] };

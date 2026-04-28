@@ -58,7 +58,15 @@ function parseCookies(header: string | null): Map<string, string> {
     if (eq === -1) continue;
     const k = part.slice(0, eq).trim();
     const v = part.slice(eq + 1).trim();
-    if (k) map.set(k, decodeURIComponent(v));
+    if (!k) continue;
+    // A malformed percent-encoded value would throw URIError and bubble up
+    // through getSessionWallet → 500 on every protected route. Treat it as
+    // an unparseable cookie (skip) rather than a server error.
+    try {
+      map.set(k, decodeURIComponent(v));
+    } catch {
+      /* skip malformed cookie value */
+    }
   }
   return map;
 }

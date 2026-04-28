@@ -13,14 +13,14 @@ type Tool = {
 
 const TOOLS: Tool[] = [
   {
-    n: "Simulator",
-    d: "Replay any allocation through depegs, drains, and drawdowns. The bad day, on demand — before it actually arrives.",
+    n: "Scenario Analysis",
+    d: "Estimate how an allocation behaves under changing income rates, liquidity, and market conditions before committing capital.",
     href: "/tools/simulator",
     ic: Icons.activity,
   },
   {
-    n: "Correlation",
-    d: "How diversified you really are — not how diversified you feel. Up to twelve pools, side by side.",
+    n: "Correlation Review",
+    d: "Compare up to twelve markets to see whether an allocation is genuinely diversified or simply repeating the same exposure.",
     href: "/tools/correlation",
     ic: Icons.pie,
   },
@@ -41,15 +41,15 @@ export default function ToolsPage() {
           }}
         >
           <div>
-            <div className="eyebrow">MODEL</div>
+            <div className="eyebrow">MODELS</div>
             <h1
               className="display"
               style={{ fontSize: 28, margin: "6px 0 2px", letterSpacing: "-0.02em" }}
             >
-              Run the numbers.
+              Model before you allocate.
             </h1>
             <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
-              See it on paper before you put it on the chain.
+              Compare downside, concentration, and return assumptions in a read-only workspace.
             </div>
           </div>
           <ThemeToggle />
@@ -119,7 +119,7 @@ export default function ToolsPage() {
                       fontWeight: 500,
                     }}
                   >
-                    Open <Icons.arrow size={12} />
+                    Open model <Icons.arrow size={12} />
                   </div>
                 </div>
               </Link>
@@ -132,8 +132,8 @@ export default function ToolsPage() {
       <div className="mobile-only">
         <div className="m-header">
           <div>
-            <div className="m-title">Tools</div>
-            <div className="m-sub">READ-ONLY MODELING</div>
+            <div className="m-title">Models</div>
+            <div className="m-sub">READ-ONLY ANALYSIS</div>
           </div>
           <ThemeToggle variant="mobile" />
         </div>

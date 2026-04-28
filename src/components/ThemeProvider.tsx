@@ -4,7 +4,6 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useState,
 } from "react";
 
@@ -39,10 +38,11 @@ export default function ThemeProvider({
 }) {
   const [theme, setThemeState] = useState<Theme>(() => readInitialTheme());
 
-  useEffect(() => {
-    const current = document.documentElement.getAttribute("data-theme");
-    if (current !== theme) setThemeState(current === "dark" ? "dark" : "light");
-  }, [theme]);
+  // Note: the previous useEffect re-read document.documentElement on every
+  // theme change to defend against external DOM mutation. The React Compiler
+  // (correctly) flagged the resulting setState-in-effect as a cascading
+  // render trigger, and since `setTheme` below is the only writer to the
+  // DOM attribute, the resync was a no-op in practice. Removed.
 
   const setTheme = useCallback((t: Theme) => {
     document.documentElement.setAttribute("data-theme", t);

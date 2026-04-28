@@ -44,7 +44,7 @@ export function HeroChart() {
         padding: 24,
         background: "var(--surface)",
         border: "1px solid var(--line)",
-        borderRadius: 22,
+        borderRadius: 10,
         boxShadow: "var(--shadow-md)",
       }}
     >
@@ -96,7 +96,7 @@ export function HeroChart() {
         }}
       >
         <div style={{ minWidth: 0 }}>
-          <div className="eyebrow">{tf} AVG · TOP 50 POOLS</div>
+          <div className="eyebrow">{tf} AVG · TOP 50 MARKETS</div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
             <span
               className="num display"
@@ -211,7 +211,7 @@ export function HeroChart() {
           size="sm"
         />
         <Stat
-          label="POOLS INDEXED"
+          label="MARKETS INDEXED"
           value={data ? data.poolCount.toLocaleString() : "—"}
           sub={data ? `across ${data.chainCount} chains` : "—"}
           size="sm"

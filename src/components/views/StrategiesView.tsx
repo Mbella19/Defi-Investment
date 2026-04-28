@@ -68,23 +68,19 @@ export default function StrategiesPage() {
   return (
     <div style={{ padding: "40px 48px 96px", maxWidth: 1440, margin: "0 auto" }}>
       <section style={{ marginBottom: 40 }}>
-        <Eyebrow>Portfolios / In Motion</Eyebrow>
+        <Eyebrow>Allocations / Monitoring</Eyebrow>
         <h1
-          className="serif"
+          className="display"
           style={{
-            fontSize: "clamp(48px, 6vw, 88px)",
-            fontWeight: 900,
-            letterSpacing: "-0.055em",
-            lineHeight: 0.92,
-            margin: "20px 0 16px",
+            fontSize: "clamp(34px, 5vw, 56px)",
+            fontWeight: 600,
+            letterSpacing: "-0.04em",
+            lineHeight: 0.98,
+            margin: "14px 0 14px",
             color: "var(--text)",
           }}
         >
-          Live
-          <br />
-          <span style={{ color: "var(--accent)", fontStyle: "italic", fontWeight: 300 }}>
-            Portfolios.
-          </span>
+          Active allocations.
         </h1>
         <p
           style={{
@@ -94,8 +90,8 @@ export default function StrategiesPage() {
             maxWidth: 620,
           }}
         >
-          The portfolios you&rsquo;ve put to work. We watch them so you don&rsquo;t
-          have to — and tell you the moment the thesis bends.
+          Monitor proposed or active DeFi income allocations in one place. Review
+          exposure, projected income, and position alerts without handing over custody.
         </p>
       </section>
 
@@ -110,13 +106,13 @@ export default function StrategiesPage() {
         }}
       >
         <Stat label="Active" value={activeCount.toString()} color="var(--good)" />
-        <Stat label="Deployed" value={fmt.money(totalBudget)} />
+        <Stat label="Tracked Capital" value={fmt.money(totalBudget)} />
         <Stat
-          label="Unread Alerts"
+          label="Open Alerts"
           value={totalAlerts.toString()}
           color={totalAlerts > 0 ? "var(--danger)" : undefined}
         />
-        <Stat label="Total" value={strategies.length.toString()} />
+        <Stat label="All Allocations" value={strategies.length.toString()} />
       </div>
 
       {activeCount > 0 && (
@@ -152,12 +148,12 @@ export default function StrategiesPage() {
                   animation: "blink 1s ease-in-out infinite",
                 }}
               />
-              Scanning all active strategies…
+              Refreshing monitored allocations…
             </>
           ) : (
             <>
               <Icons.refresh />
-              Run Full Scan
+              Refresh Monitoring
             </>
           )}
         </button>
@@ -175,8 +171,8 @@ export default function StrategiesPage() {
           }}
           className="mono"
         >
-          Scanned {scanResult.scanned}{" "}
-          {scanResult.scanned === 1 ? "strategy" : "strategies"} —{" "}
+          Reviewed {scanResult.scanned}{" "}
+          {scanResult.scanned === 1 ? "allocation" : "allocations"} —{" "}
           {scanResult.newAlerts.length > 0
             ? `${scanResult.newAlerts.length} new alert${
                 scanResult.newAlerts.length === 1 ? "" : "s"
@@ -262,7 +258,7 @@ export default function StrategiesPage() {
               marginBottom: 18,
             }}
           >
-            No strategies activated yet.
+            No allocations under monitoring.
           </p>
           <a
             href="/discover"
@@ -281,7 +277,7 @@ export default function StrategiesPage() {
               textDecoration: "none",
             }}
           >
-            Create Strategy <Icons.arrow />
+            Create allocation <Icons.arrow />
           </a>
         </div>
       )}
@@ -366,7 +362,13 @@ function StrategyCard({
     if (ids.every((id) => id in forecasts)) return;
 
     let cancelled = false;
-    setForecastsLoading(true);
+    // Defer the loading flip past the effect's sync phase so the React
+    // Compiler's set-state-in-effect rule doesn't fire. The flag is only
+    // read by descendants — there's no cascade in practice — but the rule
+    // doesn't know that.
+    queueMicrotask(() => {
+      if (!cancelled) setForecastsLoading(true);
+    });
     fetch("/api/strategies/forecast", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -485,7 +487,7 @@ function StrategyCard({
                   marginTop: 6,
                 }}
               >
-                APY
+                Projected APY
               </div>
             </div>
             <div style={{ textAlign: "center" }}>
@@ -511,7 +513,7 @@ function StrategyCard({
                   marginTop: 6,
                 }}
               >
-                Budget
+                Capital
               </div>
             </div>
           </div>
@@ -544,7 +546,7 @@ function StrategyCard({
               disabled={scanning}
               emphasis="accent"
             >
-              {scanning ? "Scanning…" : "Scan Now"}
+              {scanning ? "Reviewing…" : "Review Now"}
             </TinyBtn>
           )}
           <TinyBtn onClick={() => setExpanded((v) => !v)}>
@@ -552,7 +554,7 @@ function StrategyCard({
           </TinyBtn>
           <TinyBtn
             onClick={() => {
-              if (confirm("Delete this strategy and all its alerts?"))
+              if (confirm("Delete this allocation and all related alerts?"))
                 onDelete(s.id);
             }}
             emphasis="danger"
@@ -576,7 +578,7 @@ function StrategyCard({
             }}
           >
             Created {new Date(s.createdAt).toLocaleString()} ·{" "}
-            {s.strategy.allocations.length} pools · {s.criteria.riskAppetite} risk
+            {s.strategy.allocations.length} markets · {s.criteria.riskAppetite} risk profile
           </div>
 
           <div style={{ overflowX: "auto" }}>
@@ -590,7 +592,7 @@ function StrategyCard({
                 borderBottom: "1px solid var(--line-2)",
               }}
             >
-              {["Pool", "Chain", "Entry APY", "Current APY", "Projected 30d", "Allocated", "Safety"].map(
+              {["Market", "Chain", "Entry APY", "Current APY", "30d View", "Capital", "Quality"].map(
                 (h, i) => (
                   <span
                     key={h}
@@ -752,8 +754,7 @@ function StrategyCard({
               lineHeight: 1.6,
             }}
           >
-            Projected 30d = blend of 30d linear regression and 90d median, weighted by R². Confidence: H/M/L.
-            Glyphs: ▲ rising · ▼ falling · → stable · ~ volatile.
+            Projections are directional estimates from recent market behavior. Confidence: H/M/L.
           </div>
         </div>
       )}

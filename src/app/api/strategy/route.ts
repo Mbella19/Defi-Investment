@@ -63,7 +63,7 @@ export async function POST(request: Request) {
     jobId: job.id,
     status: job.status,
     progress: 0,
-    message: job.events[0]?.message ?? "Initializing strategy pipeline…",
+    message: job.events[0]?.message ?? "Preparing allocation workflow...",
   });
 }
 

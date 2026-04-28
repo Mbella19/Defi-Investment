@@ -73,10 +73,10 @@ export default function PortfolioPage() {
               className="display"
               style={{ fontSize: 28, margin: "6px 0 2px", letterSpacing: "-0.02em" }}
             >
-              Your wallet, in full sight.
+              Read-only portfolio oversight.
             </h1>
             <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
-              Connect to see what&rsquo;s actually yours, across every chain that matters.
+              Connect to review balances, concentration, and chain exposure in one place.
             </div>
           </div>
 
@@ -95,7 +95,7 @@ export default function PortfolioPage() {
               style={{
                 width: 56,
                 height: 56,
-                borderRadius: 16,
+                borderRadius: 10,
                 background: "var(--accent-soft)",
                 color: "var(--accent)",
                 display: "inline-flex",
@@ -107,11 +107,11 @@ export default function PortfolioPage() {
             </div>
             <div style={{ maxWidth: 460 }}>
               <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
-                Connect to begin.
+                Connect for a private portfolio view.
               </div>
               <div style={{ fontSize: 13, color: "var(--text-dim)", lineHeight: 1.5 }}>
-                We never custody. We never approve. We never sign. Connect, and we
-                read your balances directly from the chain — nothing more, nothing less.
+                Sovereign reads balances directly from supported chains. It does not
+                custody funds, request token approvals, or sign transactions.
               </div>
             </div>
             <RainbowConnectButton />
@@ -145,7 +145,7 @@ export default function PortfolioPage() {
                 style={{
                   width: 48,
                   height: 48,
-                  borderRadius: 14,
+                  borderRadius: 10,
                   background: "var(--accent-soft)",
                   color: "var(--accent)",
                   display: "inline-flex",
@@ -155,9 +155,9 @@ export default function PortfolioPage() {
               >
                 <Icons.wallet size={22} />
               </div>
-              <div style={{ fontSize: 15, fontWeight: 600 }}>Connect to begin.</div>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>Connect for oversight.</div>
               <div style={{ fontSize: 12.5, color: "var(--text-dim)", lineHeight: 1.5 }}>
-                See what&rsquo;s yours, across every chain that matters.
+                Review balances and exposure across supported chains.
               </div>
               <RainbowConnectButton />
             </div>
@@ -263,16 +263,16 @@ export default function PortfolioPage() {
           </div>
           <div className="card" style={{ padding: 18 }}>
             <Stat
-              label="TOKENS"
+              label="ASSETS"
               value={String(portfolio?.tokenCount ?? 0)}
-              sub="non-zero balances"
+              sub="non-zero positions"
             />
           </div>
           <div className="card" style={{ padding: 18 }}>
             <Stat
-              label="CHAINS"
+              label="NETWORKS"
               value={String(portfolio?.chainCount ?? 0)}
-              sub="with positions"
+              sub="with exposure"
             />
           </div>
           <div className="card" style={{ padding: 18 }}>
@@ -300,9 +300,9 @@ export default function PortfolioPage() {
               }}
             >
               <div>
-                <div style={{ fontSize: 14, fontWeight: 600 }}>Holdings</div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Positions</div>
                 <div style={{ fontSize: 11.5, color: "var(--text-dim)" }}>
-                  {tokens.length} non-zero · sorted by value
+                  {tokens.length} non-zero positions · sorted by value
                 </div>
               </div>
             </div>
@@ -340,14 +340,14 @@ export default function PortfolioPage() {
 
           <div className="card" style={{ padding: 18 }}>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
-              Allocation
+              Exposure
             </div>
             <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginBottom: 16 }}>
-              By chain
+              By network
             </div>
             {chains.length === 0 ? (
               <div style={{ fontSize: 12.5, color: "var(--text-dim)" }}>
-                No balances yet.
+                No balances detected.
               </div>
             ) : (
               <>
@@ -408,7 +408,7 @@ export default function PortfolioPage() {
             }}
           >
             <div className="eyebrow" style={{ marginBottom: 8 }}>
-              PARTIAL DATA
+              DATA NOTICE
             </div>
             {portfolio.errors.map((e, i) => (
               <div key={i}>· {e}</div>
@@ -478,14 +478,14 @@ export default function PortfolioPage() {
             <div className="card" style={{ padding: 12 }}>
               <Stat
                 size="sm"
-                label="TOKENS"
+                label="ASSETS"
                 value={String(portfolio?.tokenCount ?? 0)}
               />
             </div>
             <div className="card" style={{ padding: 12 }}>
               <Stat
                 size="sm"
-                label="CHAINS"
+                label="NETWORKS"
                 value={String(portfolio?.chainCount ?? 0)}
               />
             </div>
@@ -493,7 +493,7 @@ export default function PortfolioPage() {
 
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, padding: "4px 2px 10px" }}>
-              Holdings
+              Positions
             </div>
             {tokens.length === 0 ? (
               <div
@@ -635,7 +635,17 @@ function ChainDonut({
 }: {
   chains: { chainId: number; percentage: number }[];
 }) {
-  let offset = 0;
+  // Pre-walk the chains to attach cumulative dashoffsets. The previous
+  // pattern mutated a captured `let offset` from inside JSX `.map()`, which
+  // the React Compiler rejects because it can't memoize an array map whose
+  // callback closes over a mutating outer variable. A plain for-loop with
+  // local accumulation produces an immutable result the compiler is happy with.
+  const computed: Array<{ chainId: number; dash: number; dashoffset: number }> = [];
+  let cumulative = 0;
+  for (const c of chains) {
+    computed.push({ chainId: c.chainId, dash: c.percentage, dashoffset: -cumulative });
+    cumulative += c.percentage;
+  }
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
       <svg viewBox="0 0 42 42" width={140} height={140}>
@@ -647,25 +657,20 @@ function ChainDonut({
           stroke="var(--surface-3)"
           strokeWidth="5"
         />
-        {chains.map((c) => {
-          const dash = c.percentage;
-          const dashoffset = -offset;
-          offset += dash;
-          return (
-            <circle
-              key={c.chainId}
-              cx="21"
-              cy="21"
-              r="15.9"
-              fill="none"
-              stroke={CHAIN_COLOR[c.chainId] ?? "var(--text-2)"}
-              strokeWidth="5"
-              strokeDasharray={`${dash} ${100 - dash}`}
-              strokeDashoffset={dashoffset}
-              transform="rotate(-90 21 21)"
-            />
-          );
-        })}
+        {computed.map((c) => (
+          <circle
+            key={c.chainId}
+            cx="21"
+            cy="21"
+            r="15.9"
+            fill="none"
+            stroke={CHAIN_COLOR[c.chainId] ?? "var(--text-2)"}
+            strokeWidth="5"
+            strokeDasharray={`${c.dash} ${100 - c.dash}`}
+            strokeDashoffset={c.dashoffset}
+            transform="rotate(-90 21 21)"
+          />
+        ))}
         <text
           x="21"
           y="22"

@@ -65,7 +65,7 @@ export default function CorrelationPage() {
       .then((d) => {
         if (abort) return;
         if (Array.isArray(d.pools)) setPools(d.pools);
-        else setPoolsErr(d.error ?? "Failed to load pool list");
+        else setPoolsErr(d.error ?? "Failed to load market list");
       })
       .catch((e) => !abort && setPoolsErr(String(e)));
     return () => {
@@ -143,15 +143,15 @@ export default function CorrelationPage() {
         }}
       >
         <div>
-          <div className="eyebrow">MODEL · CORRELATION</div>
+          <div className="eyebrow">MODELS · CORRELATION</div>
           <h1
             className="display"
             style={{ fontSize: 28, margin: "6px 0 2px", letterSpacing: "-0.02em" }}
           >
-            Diversified, in fact.
+            Confirm diversification.
           </h1>
           <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
-            Pools that move together aren&rsquo;t diversification — they&rsquo;re the same bet, twice.
+            Compare market relationships before increasing concentration across similar exposures.
           </div>
         </div>
         <ThemeToggle />
@@ -167,7 +167,7 @@ export default function CorrelationPage() {
             marginBottom: 12,
           }}
         >
-          <div style={{ fontSize: 14, fontWeight: 600 }}>Selected pools</div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Selected markets</div>
           <div className="mono" style={{ fontSize: 11, color: "var(--text-dim)" }}>
             {selected.length}/{MAX_POOLS}
           </div>
@@ -183,7 +183,7 @@ export default function CorrelationPage() {
               color: "var(--text-dim)",
             }}
           >
-            Pick 2–{MAX_POOLS} pools from the list below.
+            Select 2–{MAX_POOLS} markets from the list below.
           </div>
         ) : (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -214,7 +214,7 @@ export default function CorrelationPage() {
         <div style={{ marginTop: 16 }}>
           <input
             type="text"
-            placeholder="Search by symbol, protocol, or chain (USDC, Aave, Arbitrum…)"
+            placeholder="Search by symbol, protocol, or chain (USDC, Aave, Arbitrum...)"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{
@@ -230,11 +230,11 @@ export default function CorrelationPage() {
 
           {poolsErr ? (
             <div style={{ marginTop: 10, fontSize: 12, color: "#ef4444" }}>
-              Couldn&rsquo;t load pool list: {poolsErr}
+              Couldn&rsquo;t load market list: {poolsErr}
             </div>
           ) : pools.length === 0 ? (
             <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-dim)" }}>
-              Loading pool catalog…
+              Loading market catalog…
             </div>
           ) : (
             <div
@@ -354,7 +354,7 @@ export default function CorrelationPage() {
           onClick={compute}
           disabled={running || selected.length < 2}
         >
-          {running ? "Computing…" : "Compute matrix"}
+          {running ? "Computing…" : "Run correlation"}
         </button>
       </div>
 
@@ -404,7 +404,7 @@ export default function CorrelationPage() {
             <LegendCell label="0" color={correlationColor(0)} />
             <LegendCell label="+1.00" color={correlationColor(1)} />
             <span style={{ marginLeft: "auto" }}>
-              Lower abs(corr) = better diversification.
+              Lower absolute correlation indicates stronger diversification.
             </span>
           </div>
 
@@ -416,7 +416,7 @@ export default function CorrelationPage() {
                 color: "var(--text-dim)",
               }}
             >
-              Skipped (no usable history): {result.missing.length} pool(s).
+              Skipped due to limited history: {result.missing.length} market(s).
             </div>
           )}
         </div>

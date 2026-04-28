@@ -3,13 +3,13 @@
 import { useState, useRef, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Icons, ThemeToggle } from "@/components/sovereign";
-import type { AuditReport, AuditStage } from "@/types/audit";
+import type { AuditReport } from "@/types/audit";
 
 interface JobStatus {
   jobId?: string;
   status: "idle" | "running" | "done" | "error";
   progress: number;
-  stage?: AuditStage;
+  stage?: string;
   message: string;
   result?: AuditReport;
   error?: string;
@@ -35,21 +35,63 @@ const SEVERITY_COLORS: Record<string, string> = {
 };
 
 const ENGINE_LABEL: Record<string, string> = {
-  slither: "Static",
-  aderyn: "AST",
-  mythril: "Symbolic",
-  regex_pattern: "Pattern",
-  ai_explainer: "AI Panel",
-  onchain_interrogator: "On-chain",
+  slither: "Source Coverage",
+  aderyn: "Structure Coverage",
+  mythril: "Execution Coverage",
+  regex_pattern: "Pattern Coverage",
+  ai_explainer: "Report Coverage",
+  onchain_interrogator: "Control Coverage",
 };
 
 function prettyEngine(t: string): string {
   return ENGINE_LABEL[t] ?? t;
 }
 
+const STAGE_LABEL: Record<string, string> = {
+  idle: "Ready",
+  starting: "Starting review",
+  starting_review: "Starting review",
+  fetching_source: "Collecting contract context",
+  collecting_context: "Collecting contract context",
+  fetching_onchain: "Reading live contract state",
+  reading_live_state: "Reading live contract state",
+  running_tools: "Reviewing risk coverage",
+  reviewing_coverage: "Reviewing risk coverage",
+  consensus: "Prioritizing findings",
+  prioritizing_findings: "Prioritizing findings",
+  ai_explanation: "Preparing summary",
+  preparing_summary: "Preparing summary",
+  scsvs_mapping: "Mapping standards",
+  mapping_standards: "Mapping standards",
+  assembling_report: "Preparing report",
+  preparing_report: "Preparing report",
+  done: "Complete",
+  complete: "Complete",
+  error: "Error",
+};
+
+function stageLabel(stage?: string): string {
+  if (!stage) return "Review";
+  return STAGE_LABEL[stage] ?? stage.replace(/_/g, " ");
+}
+
+function reviewCopy(message?: string): string {
+  if (!message) return "";
+  return message
+    .replace(/multi-engine audit pipeline/gi, "contract review")
+    .replace(/audit pipeline/gi, "contract review")
+    .replace(/audit/gi, "review")
+    .replace(/Triple-AI explainer/gi, "Report review")
+    .replace(/AI explainer/gi, "Report review")
+    .replace(/AI panel/gi, "Review panel")
+    .replace(/Slither|Aderyn|Mythril/gi, "review coverage")
+    .replace(/static & symbolic analyzers/gi, "risk checks")
+    .replace(/tools?/gi, "checks");
+}
+
 export default function MultiEngineAuditPage() {
   return (
-    <Suspense fallback={<div className="page-wrap" style={{ fontSize: 13, color: "var(--text-dim)" }}>Loading audit console…</div>}>
+    <Suspense fallback={<div className="page-wrap" style={{ fontSize: 13, color: "var(--text-dim)" }}>Loading security console…</div>}>
       <AuditConsole />
     </Suspense>
   );
@@ -69,9 +111,8 @@ function AuditConsole() {
     };
   }, []);
 
-  // Prefill from query string and (optionally) auto-fire the audit. Used by
-  // the strategy view's "Deep audit" button so the user lands here with the
-  // pipeline already running against their chosen allocation.
+  // Prefill from query string and optionally auto-start the contract review
+  // from an allocation row.
   useEffect(() => {
     if (autostartedRef.current) return;
     const urlAddr = (searchParams.get("address") ?? "").trim();
@@ -107,7 +148,7 @@ function AuditConsole() {
       setJob({ status: "error", progress: 0, message: "", error: "Invalid Ethereum address" });
       return;
     }
-    setJob({ status: "running", progress: 0, message: "Starting…" });
+    setJob({ status: "running", progress: 0, message: "Starting review…" });
 
     try {
       const res = await fetch("/api/security/audit/start", {
@@ -116,23 +157,23 @@ function AuditConsole() {
         body: JSON.stringify({ address: targetAddress, chain: targetChain }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to start audit");
+      if (!res.ok) throw new Error(reviewCopy(data.error ?? "Failed to start review"));
 
       const jobId = data.jobId;
-      setJob({ jobId, status: "running", progress: 0, message: data.message });
+      setJob({ jobId, status: "running", progress: 0, message: reviewCopy(data.message) });
 
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(async () => {
         try {
           const s = await fetch(`/api/security/audit/status?id=${jobId}`);
           const sd = await s.json();
-          if (!s.ok) throw new Error(sd.error ?? "Status fetch failed");
+          if (!s.ok) throw new Error(reviewCopy(sd.error ?? "Status fetch failed"));
           setJob({
             jobId,
             status: sd.status,
             progress: sd.progress,
             stage: sd.stage,
-            message: sd.message,
+            message: reviewCopy(sd.message),
             result: sd.result,
             error: sd.error,
             elapsedMs: sd.elapsedMs,
@@ -166,12 +207,12 @@ function AuditConsole() {
     <div className="page-wrap">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
         <div>
-          <div className="eyebrow">AUDIT</div>
+          <div className="eyebrow">SECURITY</div>
           <h1 className="display" style={{ fontSize: 28, margin: "6px 0 2px", letterSpacing: "-0.02em" }}>
-            Read any contract.
+            Contract risk review.
           </h1>
           <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
-            Source, state, and every path the code can be pushed down — translated into a verdict you can read.
+            Review ownership, upgradeability, verification status, and material findings before relying on a contract.
           </div>
         </div>
         <ThemeToggle />
@@ -233,14 +274,14 @@ function AuditConsole() {
             disabled={job.status === "running" || !address}
             style={{ height: 40 }}
           >
-            {job.status === "running" ? "Auditing…" : "Run audit"}
+            {job.status === "running" ? "Reviewing…" : "Run review"}
           </button>
         </div>
 
         {(job.status === "running" || job.status === "error" || job.status === "done") && (
           <div style={{ marginTop: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 6 }}>
-              <span style={{ color: "var(--text-dim)" }}>{job.stage ?? job.status}</span>
+              <span style={{ color: "var(--text-dim)" }}>{stageLabel(job.stage ?? job.status)}</span>
               <span className="mono" style={{ color: "var(--text-1)" }}>{job.progress}%</span>
             </div>
             <div style={{ height: 4, background: "var(--surface-3)", borderRadius: 2, overflow: "hidden" }}>
@@ -253,7 +294,7 @@ function AuditConsole() {
                 }}
               />
             </div>
-            <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 6 }}>{job.message}</div>
+            <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 6 }}>{reviewCopy(job.message)}</div>
             {job.error && (
               <div style={{ fontSize: 12, color: "#ef4444", marginTop: 8 }}>Error: {job.error}</div>
             )}
@@ -268,7 +309,7 @@ function AuditConsole() {
           <div className="card" style={{ padding: 20 }}>
             <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
               <div style={{ flex: "1 1 240px", minWidth: 0 }}>
-                <div className="eyebrow">VERDICT</div>
+                <div className="eyebrow">RISK VIEW</div>
                 <div
                   style={{
                     fontSize: 32,
@@ -279,10 +320,10 @@ function AuditConsole() {
                     marginTop: 4,
                   }}
                 >
-                  {r.verdict}
+                  {riskClassLabel(r.verdict)}
                 </div>
                 <div style={{ fontSize: 13, color: "var(--text-dim)", marginTop: 4 }}>
-                  Risk score {r.riskScore}/100 · {r.findings.length} findings
+                  Risk score {r.riskScore}/100 · {r.findings.length} material findings
                 </div>
               </div>
               <div style={{ flex: "2 1 360px", minWidth: 0, fontSize: 13, lineHeight: 1.55 }}>
@@ -337,9 +378,9 @@ function AuditConsole() {
             </div>
           )}
 
-          {/* Tools that ran */}
+          {/* Review coverage */}
           <div className="card" style={{ padding: 18 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Engines</div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Review coverage</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, fontSize: 12.5 }}>
               {r.toolResults.map((t) => (
                 <div key={t.tool} style={{ padding: "10px 12px", background: "var(--surface-2)", borderRadius: 6, border: "1px solid var(--line)" }}>
@@ -347,10 +388,10 @@ function AuditConsole() {
                     {prettyEngine(t.tool)}
                   </div>
                   <div style={{ color: t.available ? (t.rawError ? "#f97316" : "var(--text-1)") : "var(--text-dim)", marginTop: 2 }}>
-                    {t.available ? `${t.findings.length} finding${t.findings.length === 1 ? "" : "s"} · ${(t.durationMs / 1000).toFixed(1)}s` : "unavailable"}
+                    {t.available ? `${t.findings.length} finding${t.findings.length === 1 ? "" : "s"} · complete` : "coverage unavailable"}
                   </div>
                   {!t.available && t.unavailableReason && (
-                    <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>{t.unavailableReason.slice(0, 80)}…</div>
+                    <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>This coverage area could not be completed.</div>
                   )}
                 </div>
               ))}
@@ -361,7 +402,7 @@ function AuditConsole() {
           <div className="card" style={{ padding: 18 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
               <Icons.activity size={15} style={{ color: "var(--accent)" }} />
-              <div style={{ fontSize: 14, fontWeight: 600 }}>Consensus findings</div>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>Material findings</div>
               <span className="chip mono" style={{ marginLeft: "auto" }}>{r.findings.length} total</span>
             </div>
             {r.findings.length === 0 ? (
@@ -390,7 +431,7 @@ function AuditConsole() {
                       </span>
                       <span style={{ fontSize: 13, fontWeight: 600 }}>{f.title}</span>
                       <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim)" }}>
-                        {f.toolsAgreed.map(prettyEngine).join(" + ")}
+                        {f.toolsAgreed.length} coverage area{f.toolsAgreed.length === 1 ? "" : "s"}
                       </span>
                     </div>
                     {f.filePath && (
@@ -413,7 +454,7 @@ function AuditConsole() {
                     )}
                     {f.aiExplanation && (
                       <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 8 }}>
-                        AI panel · {f.aiExplanation.reviewedBy.length} model{f.aiExplanation.reviewedBy.length === 1 ? "" : "s"} · consensus: {f.aiExplanation.aiConsensus}
+                        Review status: {f.aiExplanation.aiConsensus}
                       </div>
                     )}
                     {f.codeSnippet && (
@@ -430,7 +471,7 @@ function AuditConsole() {
           {/* SCSVS */}
           <div className="card" style={{ padding: 18 }}>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>
-              OWASP SCSVS · {r.scsvs.summary.passed}/{r.scsvs.summary.total} pass
+              Security standard coverage · {r.scsvs.summary.passed}/{r.scsvs.summary.total} pass
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 8, fontSize: 12 }}>
               {r.scsvs.checks.map((c) => (
@@ -462,10 +503,10 @@ function AuditConsole() {
           {/* Warnings */}
           {r.warnings.length > 0 && (
             <div className="card" style={{ padding: 18 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "#f97316" }}>Pipeline warnings</div>
-              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, lineHeight: 1.55, color: "var(--text-dim)" }}>
-                {r.warnings.map((w, i) => (<li key={i} style={{ marginBottom: 4 }}>{w}</li>))}
-              </ul>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "#f97316" }}>Review notices</div>
+              <div style={{ fontSize: 12, lineHeight: 1.55, color: "var(--text-dim)" }}>
+                Some coverage was limited during this review. Treat the result as decision support, not a substitute for legal, financial, or manual security diligence.
+              </div>
             </div>
           )}
         </>
@@ -479,6 +520,13 @@ function verdictColor(v: string): string {
   if (v === "dangerous") return "#f97316";
   if (v === "review") return "#eab308";
   return "#22c55e";
+}
+
+function riskClassLabel(v: string): string {
+  if (v === "critical") return "critical";
+  if (v === "dangerous") return "high risk";
+  if (v === "review") return "review required";
+  return "clear";
 }
 
 function scsvsColor(status: string): string {

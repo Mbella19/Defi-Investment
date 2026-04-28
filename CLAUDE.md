@@ -67,13 +67,19 @@ Alongside them, `monitor-scheduler.ts`'s `ensureSchedulerStarted()` is idempoten
 SIWE (EIP-4361) is the only auth path. The flow:
 
 1. `GET /api/auth/nonce` → `src/lib/auth/nonce-store.ts` issues a single-use 10-min nonce.
-2. Client signs the EIP-4361 message with the connected wallet.
-3. `POST /api/auth/verify` → `src/lib/auth/siwe.ts` regex-parses the message, calls viem's `verifyMessage`, consumes the nonce, then `src/lib/auth/session.ts` mints an HMAC-signed `sov_session` cookie (24h TTL, `HttpOnly`, `SameSite=Lax`, `Secure` in prod). No JWT lib — just Node `crypto`.
+2. Client (`src/hooks/useSiweAuth.ts` → `SiweAuthProvider`) signs the EIP-4361 message with the connected wallet.
+3. `POST /api/auth/verify` → `src/lib/auth/siwe.ts` regex-parses the message, validates Domain/URI/Version/Chain ID/Issued At against the request Host (`expectedOrigin`), calls viem's `verifyMessage`, consumes the nonce, then `src/lib/auth/session.ts` mints an HMAC-signed `sov_session` cookie (24h TTL, `HttpOnly`, `SameSite=Lax`, `Secure` in prod). No JWT lib — just Node `crypto`.
 4. `POST /api/auth/logout` clears the cookie. `GET /api/auth/me` returns `{ wallet }` or null.
+
+The client wiring lives in `SiweAuthProvider` (mounted inside `Web3Provider` so it sits inside `WagmiProvider`). It auto-prompts the SIWE message when a wallet first connects — `useActiveStrategies` and `useStrategyAlerts` consume `useSiweAuth()` and gate their fetches on `status === "authed"` so unauthenticated calls don't fire 401s.
 
 `SESSION_SECRET` (≥32 chars) is required — auth-protected routes return 503 if it's unset.
 
 Wallet-scoped routes use `requireWallet(request)` from `src/lib/auth/guard.ts`, which returns either `{ wallet }` or `{ response }` (a 401/503). All `/api/strategies*` routes scope queries by `wallet_address = ?` from the session and **ignore any client-supplied wallet/walletAddress params** — that's the auth boundary, not just a convenience.
+
+### Cron / monitor scheduler
+
+`/api/cron/monitor` (GET, `CRON_SECRET` Bearer-gated) is the production scan entry point — Vercel Cron sends GETs, so the cron lives on its own path rather than sharing `/api/strategies/monitor` (whose GET is a status check). `/api/strategies/monitor` POST is the manual UI trigger and uses `requireWallet` instead of `CRON_SECRET`. Both paths call into `monitorActiveStrategies(strategyId?, wallet?)` in `src/lib/strategy-monitor.ts` — passing `wallet` scopes the scan to that user, the cron path passes neither and scans every active strategy.
 
 ### Rate limiting
 

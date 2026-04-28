@@ -77,6 +77,6 @@ export async function POST(request: Request) {
     contractAddress: address,
     chainId,
     progress: 0,
-    message: job.events[0]?.message ?? "Initializing audit pipeline…",
+    message: job.events[0]?.message ?? "Starting contract review...",
   });
 }

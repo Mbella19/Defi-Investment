@@ -1,7 +1,7 @@
 {
   "crons": [
     {
-      "path": "/api/strategies/monitor",
+      "path": "/api/cron/monitor",
       "schedule": "*/15 * * * *"
     }
   ]

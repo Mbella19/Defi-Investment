@@ -1,9 +1,19 @@
 import { monitorExploits, type MonitoredStrategy } from "@/lib/security/exploit-monitor";
+import { requireWallet } from "@/lib/auth/guard";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
 
 export async function POST(request: Request) {
+  // Auth + rate-limit. Each call fans out to multiple Etherscan token-tx
+  // queries plus triple-AI interpretation, so unmetered access was a real
+  // quota burn vector. 20/h matches /api/analyze and /api/security/forensics.
+  const auth = requireWallet(request);
+  if ("response" in auth) return auth.response;
+  const limited = enforceRateLimit(request, "security.alerts", { max: 20, windowMs: 60 * 60 * 1000 });
+  if (limited) return limited;
+
   try {
     const body = await request.json().catch(() => ({}));
     const rawStrategies = Array.isArray(body?.strategies) ? body.strategies : [];

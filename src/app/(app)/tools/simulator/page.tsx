@@ -70,22 +70,22 @@ const SCENARIOS: Array<{
   {
     key: "baseline",
     label: "Baseline",
-    blurb: "Replay each pool's actual APY history forward.",
+    blurb: "Use recent market behavior as the reference case.",
   },
   {
     key: "depeg",
     label: "Stable depeg",
-    blurb: "Day 0: stablecoin pools take a one-time 5% principal hit.",
+    blurb: "Apply a one-time stablecoin principal shock.",
   },
   {
     key: "tvl_crash",
-    label: "TVL exodus",
-    blurb: "Day 30: yields collapse to 20% of historical for the rest of the run.",
+    label: "Liquidity contraction",
+    blurb: "Reduce market income after a sharp liquidity withdrawal.",
   },
   {
     key: "market_drawdown",
     label: "Market drawdown",
-    blurb: "Day 30: non-stable principal -25% + 60 days of half-yield.",
+    blurb: "Apply a broad principal drawdown and lower income period.",
   },
 ];
 
@@ -125,7 +125,7 @@ export default function SimulatorPage() {
       .then((d) => {
         if (abort) return;
         if (Array.isArray(d.pools)) setPools(d.pools);
-        else setPoolsErr(d.error ?? "Failed to load pool list");
+        else setPoolsErr(d.error ?? "Failed to load market list");
       })
       .catch((e) => !abort && setPoolsErr(String(e)));
     return () => {
@@ -233,15 +233,15 @@ export default function SimulatorPage() {
         }}
       >
         <div>
-          <div className="eyebrow">MODEL · SIMULATOR</div>
+          <div className="eyebrow">MODELS · SCENARIO ANALYSIS</div>
           <h1
             className="display"
             style={{ fontSize: 28, margin: "6px 0 2px", letterSpacing: "-0.02em" }}
           >
-            The bad day, on demand.
+            Test the allocation before capital moves.
           </h1>
           <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
-            Replay any allocation through the failures that have already happened — and the ones that haven&rsquo;t.
+            Estimate how selected markets behave under baseline, liquidity, and drawdown assumptions.
           </div>
         </div>
         <ThemeToggle />
@@ -259,7 +259,7 @@ export default function SimulatorPage() {
             gap: 8,
           }}
         >
-          <div style={{ fontSize: 14, fontWeight: 600 }}>Allocations</div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Allocation set</div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span
               className="mono"
@@ -300,7 +300,7 @@ export default function SimulatorPage() {
               color: "var(--text-dim)",
             }}
           >
-            Pick 1–{MAX_ALLOCS} pools below, then assign weights that sum to 100%.
+            Select 1–{MAX_ALLOCS} markets below, then assign weights that sum to 100%.
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -398,7 +398,7 @@ export default function SimulatorPage() {
         <div style={{ marginTop: 16 }}>
           <input
             type="text"
-            placeholder="Search by symbol, protocol, or chain (USDC, Aave, Arbitrum…)"
+            placeholder="Search by symbol, protocol, or chain (USDC, Aave, Arbitrum...)"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{
@@ -414,11 +414,11 @@ export default function SimulatorPage() {
 
           {poolsErr ? (
             <div style={{ marginTop: 10, fontSize: 12, color: "#ef4444" }}>
-              Couldn&rsquo;t load pool list: {poolsErr}
+              Couldn&rsquo;t load market list: {poolsErr}
             </div>
           ) : pools.length === 0 ? (
             <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-dim)" }}>
-              Loading pool catalog…
+              Loading market catalog…
             </div>
           ) : (
             <div
@@ -522,7 +522,7 @@ export default function SimulatorPage() {
               letterSpacing: "0.06em",
             }}
           >
-            Principal
+            Capital
           </span>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 14, color: "var(--text-dim)" }}>$</span>
@@ -697,7 +697,7 @@ export default function SimulatorPage() {
           {weightOk
             ? "Ready to simulate."
             : selected.length === 0
-              ? "Pick at least one pool to begin."
+              ? "Pick at least one market to begin."
               : `Weights must sum to 100% (currently ${totalWeight.toFixed(1)}%).`}
         </div>
         <button
@@ -706,7 +706,7 @@ export default function SimulatorPage() {
           onClick={run}
           disabled={running || !weightOk}
         >
-          {running ? "Simulating…" : "Run simulation"}
+          {running ? "Analyzing…" : "Run analysis"}
         </button>
       </div>
 
@@ -738,7 +738,7 @@ function ResultsPanel({ result }: { result: SimulationResult }) {
           gap: 12,
         }}
       >
-        <Stat label="Final value" value={fmtUsd(result.endUsd)} hint={`from ${fmtUsd(result.startUsd)}`} />
+        <Stat label="Modeled value" value={fmtUsd(result.endUsd)} hint={`from ${fmtUsd(result.startUsd)}`} />
         <Stat
           label="Total return"
           value={fmtPct(result.returnPct)}
@@ -753,7 +753,7 @@ function ResultsPanel({ result }: { result: SimulationResult }) {
         />
         {isStress && (
           <Stat
-            label="Scenario impact"
+            label="Scenario effect"
             value={fmtUsd(result.scenarioImpactUsd)}
             tone={result.scenarioImpactUsd < 0 ? "bad" : "good"}
             hint={`vs baseline ${fmtUsd(result.baselineEndUsd)}`}
@@ -764,7 +764,7 @@ function ResultsPanel({ result }: { result: SimulationResult }) {
       {/* Chart */}
       <div className="card" style={{ padding: 18 }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>
-          Portfolio value
+          Modeled portfolio value
         </div>
         <ResponsiveContainer width="100%" height={300}>
           <AreaChart data={result.series} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
@@ -832,16 +832,16 @@ function ResultsPanel({ result }: { result: SimulationResult }) {
         </ResponsiveContainer>
       </div>
 
-      {/* Per-pool breakdown */}
+      {/* Market breakdown */}
       <div className="card" style={{ padding: 18 }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>
-          Per-pool breakdown
+          Market breakdown
         </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
             <thead>
               <tr style={{ color: "var(--text-dim)", textAlign: "left" }}>
-                <th style={{ padding: "8px 4px", fontWeight: 500 }}>Pool</th>
+                <th style={{ padding: "8px 4px", fontWeight: 500 }}>Market</th>
                 <th style={{ padding: "8px 4px", fontWeight: 500, textAlign: "right" }}>Weight</th>
                 <th style={{ padding: "8px 4px", fontWeight: 500, textAlign: "right" }}>Mean APY</th>
                 <th style={{ padding: "8px 4px", fontWeight: 500, textAlign: "right" }}>Start</th>
@@ -887,7 +887,7 @@ function ResultsPanel({ result }: { result: SimulationResult }) {
         </div>
         {result.skipped.length > 0 && (
           <div style={{ marginTop: 10, fontSize: 11.5, color: "var(--text-dim)" }}>
-            Skipped (insufficient history): {result.skipped.length} pool(s).
+            Skipped due to insufficient history: {result.skipped.length} market(s).
           </div>
         )}
       </div>
@@ -900,8 +900,8 @@ function ResultsPanel({ result }: { result: SimulationResult }) {
           lineHeight: 1.5,
         }}
       >
-        Replay-based estimate. Past APY does not guarantee future returns. Stress
-        scenarios are heuristic shocks, not predictions.
+        Model output is an estimate. Past APY does not guarantee future returns.
+        Scenario assumptions are planning inputs, not predictions.
       </div>
     </>
   );

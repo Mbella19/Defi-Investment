@@ -12,7 +12,7 @@ export async function GET(request: Request) {
   }
   const job = getAuditJob(id);
   if (!job) {
-    return Response.json({ error: "Audit job not found or expired" }, { status: 404 });
+    return Response.json({ error: "Review job not found or expired" }, { status: 404 });
   }
   return Response.json(publicAuditView(job));
 }

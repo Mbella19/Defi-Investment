@@ -13,51 +13,51 @@ import {
 import { walk } from "@/lib/demo-data";
 
 /* ------------------------------------------------------------------ */
-/*  Real product surface — every card maps to a working route        */
+/*  Public product surface — every card maps to a working route       */
 /* ------------------------------------------------------------------ */
 
 const PRODUCT = [
   {
     k: "01",
-    n: "Discover",
-    d: "Thousands of pools. One view of the ones worth your time. Sorted by what actually survives — not by whoever paid for the listing.",
-    cta: "Open Discover",
+    n: "Market Intelligence",
+    d: "A ranked view of on-chain income opportunities, with liquidity, stability, and protocol context presented for fast allocation review.",
+    cta: "Review markets",
     href: "/discover",
     icon: Icons.search,
     accent: false,
   },
   {
     k: "02",
-    n: "Strategist",
-    d: "A full portfolio, written to your budget and your risk. Stress-tested, defended, and revised before it reaches you. Not one opinion. A verdict.",
-    cta: "Build a portfolio",
+    n: "Allocation Desk",
+    d: "Turn a mandate, budget, and risk range into a structured portfolio proposal you can inspect, adjust, and place under monitoring.",
+    cta: "Create allocation",
     href: "/strategies",
     icon: Icons.brain,
     accent: true,
   },
   {
     k: "03",
-    n: "Audit",
-    d: "Paste any contract. Get back a plain-English verdict mapped to the open security standard. The kind of report you'd hand to a CFO.",
-    cta: "Run an audit",
+    n: "Security Review",
+    d: "Review a contract address for ownership, upgradeability, control risk, and material findings in language suitable for investment review.",
+    cta: "Review contract",
     href: "/security/audit",
     icon: Icons.shield,
     accent: false,
   },
   {
     k: "04",
-    n: "Model",
-    d: "Replay any allocation through depegs, drains, and drawdowns before you commit a dollar. See how diversified you really are — not how diversified you feel.",
-    cta: "Open Model",
+    n: "Risk Models",
+    d: "Pressure-test allocations against changing income rates, liquidity, and market conditions before capital is committed.",
+    cta: "Run models",
     href: "/tools",
     icon: Icons.activity,
     accent: false,
   },
   {
     k: "05",
-    n: "Watch",
-    d: "Drains. Depegs. Quiet governance moves. Flagged the moment they happen — not after they trend on Twitter.",
-    cta: "Open Watch",
+    n: "Portfolio Oversight",
+    d: "Connect a wallet to see holdings, exposures, and active mandate alerts across supported chains without giving up custody.",
+    cta: "View portfolio",
     href: "/portfolio",
     icon: Icons.bell,
     accent: false,
@@ -66,70 +66,70 @@ const PRODUCT = [
 
 const ARCH_LAYERS = [
   {
-    k: "L1",
-    n: "The facts",
-    s: "Verifiable. Never opinions.",
+    k: "01",
+    n: "Institutional Context",
+    s: "Capital decisions need more than headline APY.",
     items: [
-      "Live pool depth and pricing",
-      "Verified deployer history",
-      "Oracle feed integrity",
-      "Active bounty coverage",
-      "On-chain incident record",
+      "Liquidity and depth in one view",
+      "Protocol and chain exposure clearly labeled",
+      "Historical movement visible before action",
+      "Position sizing tied back to the mandate",
+      "External links kept available for diligence",
     ],
-    note: "Every number traces to a primary source. Click through and verify the work.",
+    note: "The product is built for allocators who need to move from market noise to an investable shortlist.",
     icon: Icons.globe,
   },
   {
-    k: "L2",
-    n: "The verdict",
-    s: "Reasoned. Reconciled. Defended.",
+    k: "02",
+    n: "Decision-Ready Outputs",
+    s: "Every screen is designed to support a next action.",
     items: [
-      "Independent reasoning, in parallel",
-      "Each conclusion is challenged",
-      "The most conservative read wins",
-      "Disagreements surfaced — never hidden",
-      "Resilient to a single point of failure",
+      "Proposal, risk, and monitoring in one workflow",
+      "Clear allocation amounts and percentages",
+      "Portfolio impact shown before activation",
+      "Alerts tied to the exact position affected",
+      "Reports written for stakeholders, not engineers",
     ],
-    note: "When the analysis disagrees with itself, you see the disagreement.",
+    note: "Sovereign reduces decision drag without asking investors to accept an opaque recommendation.",
     icon: Icons.brain,
   },
   {
-    k: "L3",
-    n: "The floor",
-    s: "Rules that overrule everyone.",
+    k: "03",
+    n: "Ongoing Control",
+    s: "A position is not finished when it is entered.",
     items: [
-      "Recent exploit — score capped",
-      "TVL collapse — score capped",
-      "Untrusted deployer — score capped",
-      "Failed audit posture — score capped",
-      "Broken audit trail — score capped",
+      "Read-only wallet visibility",
+      "Continuous position monitoring",
+      "Chain and token concentration surfaced",
+      "Contract review available from allocation rows",
+      "No custody, approvals, or transaction signing",
     ],
-    note: "Deterministic. Auditable. Nothing talks the floor down.",
+    note: "The platform keeps oversight separate from custody, so the investor remains in control.",
     icon: Icons.lock,
   },
 ] as const;
 
 const AUDIT_ENGINES = [
-  { n: "Static review", d: "What the code says it does." },
-  { n: "Pattern review", d: "What the code looks like, line for line." },
-  { n: "Path review", d: "What the code can be made to do." },
-  { n: "Live state", d: "Who actually controls it, right now." },
+  { n: "Control Map", d: "Ownership, upgrade paths, and privileged roles presented clearly." },
+  { n: "Risk Priority", d: "Findings grouped by materiality so attention goes to what matters first." },
+  { n: "Source Status", d: "Verification, compiler, proxy, and deployment context in one place." },
+  { n: "Executive Summary", d: "A concise readout for committees, operators, and investors." },
 ] as const;
 
 const TRUST = [
   {
-    n: "You hold the keys.",
-    d: "We never custody. We never approve. We never sign. Your wallet stays yours — and that's not policy, it's the architecture.",
+    n: "Non-custodial access.",
+    d: "Sovereign reads portfolio state. It does not take custody, request approvals, or sign transactions.",
     icon: Icons.lock,
   },
   {
-    n: "Show your work.",
-    d: "Every number you see traces to a public source. No proprietary indexes. No opinion sold as data. Click through and check anything.",
+    n: "Evidence over persuasion.",
+    d: "The interface keeps source context close, separates signal from marketing, and avoids unverifiable claims.",
     icon: Icons.eye,
   },
   {
-    n: "Always current.",
-    d: "Pools re-priced every minute. History reseeded continuously. Your positions watched without pause. Stale data is treated as a failure.",
+    n: "Built for review cycles.",
+    d: "Markets, models, security reviews, and monitored portfolios are organized around repeatable investment oversight.",
     icon: Icons.refresh,
   },
 ] as const;
@@ -161,29 +161,6 @@ export default function LandingPage() {
           overflowX: "hidden",
         }}
       >
-        {/* Ambient orbs */}
-        <div
-          className="orb"
-          style={{
-            top: -120,
-            left: -140,
-            width: 460,
-            height: 460,
-            background: "color-mix(in oklch, var(--accent) 30%, transparent)",
-          }}
-        />
-        <div
-          className="orb"
-          style={{
-            top: 60,
-            right: -140,
-            width: 380,
-            height: 380,
-            background: "color-mix(in oklch, var(--text) 8%, transparent)",
-            opacity: 0.5,
-          }}
-        />
-
         {/* ---------------- NAV ---------------- */}
         <nav
           style={{
@@ -237,11 +214,11 @@ export default function LandingPage() {
             }}
           >
             {[
-              { l: "Discover", h: "/discover" },
-              { l: "Strategist", h: "/strategies" },
-              { l: "Audit", h: "/security/audit" },
-              { l: "Tools", h: "/tools" },
-              { l: "Method", h: "#method" },
+              { l: "Markets", h: "/discover" },
+              { l: "Allocations", h: "/strategies" },
+              { l: "Security", h: "/security/audit" },
+              { l: "Models", h: "/tools" },
+              { l: "Standards", h: "#standards" },
             ].map((n) => (
               <Link
                 key={n.l}
@@ -262,11 +239,11 @@ export default function LandingPage() {
 
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <ThemeToggle />
-            <Link className="btn btn-sm btn-ghost" href="#method">
-              How it works
+            <Link className="btn btn-sm btn-ghost" href="#standards">
+              Standards
             </Link>
             <Link className="btn btn-primary btn-sm" href="/discover">
-              Open app <Icons.arrow size={13} />
+              Enter platform <Icons.arrow size={13} />
             </Link>
           </div>
         </nav>
@@ -294,7 +271,7 @@ export default function LandingPage() {
                 className="chip accent mono"
                 style={{ marginBottom: 28, display: "inline-flex" }}
               >
-                <span className="dot accent pulse-dot" /> OPEN · LIVE · WATCHING
+                <span className="dot accent pulse-dot" /> LIVE MARKET INTELLIGENCE
               </span>
               <h1
                 className="display"
@@ -307,20 +284,16 @@ export default function LandingPage() {
                   textWrap: "balance",
                 }}
               >
-                Yield,
+                On-chain income,
                 <br />
                 <span
                   style={{
-                    fontStyle: "italic",
                     fontWeight: 500,
                     color: "var(--text)",
-                    background:
-                      "linear-gradient(180deg, var(--text) 60%, var(--accent) 60%)",
-                    WebkitBackgroundClip: "text",
-                    backgroundClip: "text",
+                    letterSpacing: "-0.035em",
                   }}
                 >
-                  with conviction.
+                  governed with discipline.
                 </span>
               </h1>
               <p
@@ -332,16 +305,17 @@ export default function LandingPage() {
                   margin: "0 0 32px",
                 }}
               >
-                The DeFi yield surface is loud, fast, and unforgiving. We make it quiet.
-                You see only what survives the stress test — and never deposit a dollar
-                that hasn&rsquo;t already been defended.
+                Sovereign gives DeFi investors a professional operating layer for
+                market selection, allocation planning, contract review, and ongoing
+                portfolio oversight. See the opportunity, the risk, and the next action
+                without giving up custody.
               </p>
               <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
                 <Link className="btn btn-primary btn-lg" href="/discover">
-                  Open the terminal <Icons.arrow size={14} />
+                  Review markets <Icons.arrow size={14} />
                 </Link>
-                <Link className="btn btn-lg" href="#method">
-                  How it works
+                <Link className="btn btn-lg" href="#standards">
+                  View standards
                 </Link>
                 <span style={{ fontSize: 12.5, color: "var(--text-dim)", marginLeft: 4 }}>
                   No wallet needed to look around.
@@ -357,7 +331,7 @@ export default function LandingPage() {
                   flexWrap: "wrap",
                 }}
               >
-                <span className="eyebrow">QUIETLY, IN THE BACKGROUND</span>
+                <span className="eyebrow">DESIGNED FOR CAPITAL REVIEW</span>
                 <div style={{ height: 1, flex: "0 0 20px", background: "var(--line)" }} />
                 <span
                   style={{
@@ -368,11 +342,11 @@ export default function LandingPage() {
                     flexWrap: "wrap",
                   }}
                 >
-                  <span>Continuously re-priced</span>
+                  <span>Market shortlist</span>
                   <span style={{ color: "var(--line-2)" }}>/</span>
-                  <span>Continuously re-checked</span>
+                  <span>Allocation proposal</span>
                   <span style={{ color: "var(--line-2)" }}>/</span>
-                  <span>Continuously watching</span>
+                  <span>Portfolio oversight</span>
                 </span>
               </div>
             </div>
@@ -389,7 +363,7 @@ export default function LandingPage() {
                   padding: "10px 14px",
                   background: "var(--surface)",
                   border: "1px solid var(--line)",
-                  borderRadius: 14,
+                  borderRadius: 8,
                   boxShadow: "var(--shadow-sm)",
                   display: "inline-flex",
                   alignItems: "center",
@@ -417,10 +391,10 @@ export default function LandingPage() {
                 </span>
                 <div style={{ fontSize: 11.5, color: "var(--text-2)", lineHeight: 1.35 }}>
                   <span style={{ color: "var(--text)", fontWeight: 500 }}>
-                    The receipts
+                    Security context
                   </span>
                   <br />
-                  Every exploit. Every bounty. On the record.
+                  Contract controls, findings, and ownership surfaced clearly.
                 </div>
               </Link>
             </div>
@@ -430,7 +404,7 @@ export default function LandingPage() {
         {/* ---------------- LIVE TAPE ---------------- */}
         <YieldTape />
 
-        {/* ---------------- THE PROBLEM ---------------- */}
+        {/* ---------------- THE NEED ---------------- */}
         <section
           style={{
             padding: "96px 48px 0",
@@ -448,8 +422,8 @@ export default function LandingPage() {
               flexWrap: "wrap",
             }}
           >
-            <div>
-              <div className="eyebrow">WHY WE BUILT THIS</div>
+              <div>
+              <div className="eyebrow">WHY SOVEREIGN EXISTS</div>
               <h2
                 className="display"
                 style={{
@@ -460,16 +434,16 @@ export default function LandingPage() {
                   textWrap: "balance",
                 }}
               >
-                Every dashboard shows you a number.{" "}
+                DeFi income is investable only when the risk is legible.{" "}
                 <span style={{ color: "var(--text-dim)" }}>
-                  None of them tell you whether it survives the night.
+                  Sovereign makes the decision surface fit for serious capital.
                 </span>
               </h2>
             </div>
             <p style={{ fontSize: 14.5, color: "var(--text-2)", lineHeight: 1.6, margin: 0 }}>
-              We treat every pool as guilty until proven safe. The contracts, the
-              custody, the oracles, the capital — all defended on your behalf, before
-              you size the trade and long after.
+              The platform brings markets, proposed allocations, contract posture, and
+              ongoing exposure into one controlled workspace. It is built to help
+              investors explain why a position belongs in the book before capital moves.
             </p>
           </div>
         </section>
@@ -502,7 +476,7 @@ export default function LandingPage() {
                     background: c.accent ? "var(--text)" : "var(--surface)",
                     color: c.accent ? "var(--bg)" : "var(--text)",
                     border: "1px solid " + (c.accent ? "var(--text)" : "var(--line)"),
-                    borderRadius: 18,
+                    borderRadius: 8,
                     boxShadow: c.accent ? "var(--shadow-md)" : "var(--shadow-xs)",
                     display: "flex",
                     flexDirection: "column",
@@ -611,9 +585,9 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* ---------------- THE MOAT (METHOD) ---------------- */}
+        {/* ---------------- STANDARDS ---------------- */}
         <section
-          id="method"
+          id="standards"
           style={{
             padding: "32px 48px 96px",
             maxWidth: 1340,
@@ -631,8 +605,8 @@ export default function LandingPage() {
               flexWrap: "wrap",
             }}
           >
-            <div style={{ maxWidth: 720 }}>
-              <div className="eyebrow">HOW IT WORKS</div>
+              <div style={{ maxWidth: 720 }}>
+              <div className="eyebrow">OPERATING STANDARDS</div>
               <h2
                 className="display"
                 style={{
@@ -643,15 +617,15 @@ export default function LandingPage() {
                   textWrap: "balance",
                 }}
               >
-                Three layers.{" "}
+                A private investment workspace for on-chain income.{" "}
                 <span style={{ color: "var(--text-dim)" }}>
-                  Nothing hidden behind any of them.
+                  Clear enough for review, controlled enough for daily use.
                 </span>
               </h2>
             </div>
             <p style={{ fontSize: 14, color: "var(--text-2)", maxWidth: 360, lineHeight: 1.55, margin: 0 }}>
-              The facts arrive verifiable. The reasoning arrives reconciled. And a
-              safety floor, written in rules, overrules anything that drifts.
+              Sovereign keeps the product focused on the outputs an allocator needs:
+              market context, proposal quality, contract posture, and monitored exposure.
             </p>
           </div>
 
@@ -674,7 +648,7 @@ export default function LandingPage() {
                     padding: 28,
                     background: "var(--surface)",
                     border: "1px solid var(--line)",
-                    borderRadius: 18,
+                    borderRadius: 8,
                     boxShadow: "var(--shadow-xs)",
                     position: "relative",
                     overflow: "hidden",
@@ -729,7 +703,7 @@ export default function LandingPage() {
                         letterSpacing: "0.08em",
                       }}
                     >
-                      LAYER · {layer.k}
+                      STANDARD · {layer.k}
                     </span>
                   </div>
                   <div
@@ -805,7 +779,7 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* ---------------- AUDIT SPOTLIGHT ---------------- */}
+        {/* ---------------- SECURITY SPOTLIGHT ---------------- */}
         <section style={{ padding: "0 48px 96px", maxWidth: 1340, margin: "0 auto" }}>
           <div
             className="fadeUp"
@@ -813,7 +787,7 @@ export default function LandingPage() {
               padding: 48,
               background: "var(--surface)",
               border: "1px solid var(--line)",
-              borderRadius: 22,
+              borderRadius: 10,
               boxShadow: "var(--shadow-sm)",
               position: "relative",
               overflow: "hidden",
@@ -845,7 +819,7 @@ export default function LandingPage() {
             >
               <div>
                 <span className="chip accent mono" style={{ marginBottom: 16 }}>
-                  <Icons.shield size={11} /> CONTRACT AUDIT
+                  <Icons.shield size={11} /> SECURITY REVIEW
                 </span>
                 <h3
                   className="display"
@@ -856,9 +830,9 @@ export default function LandingPage() {
                     lineHeight: 1.05,
                   }}
                 >
-                  Paste an address.
+                  Review a contract.
                   <br />
-                  Get an answer.
+                  Understand the exposure.
                 </h3>
                 <p
                   style={{
@@ -868,19 +842,19 @@ export default function LandingPage() {
                     margin: "0 0 22px",
                   }}
                 >
-                  We read the source. We probe the live state. We exhaust every path the
-                  code can be pushed down. The verdict comes back in plain English —
-                  mapped to the open security standard, written for the human reading it.
+                  Sovereign turns a contract address into an investment-grade risk brief:
+                  ownership, upgradeability, verification status, material findings, and
+                  the practical questions a reviewer should ask before relying on it.
                 </p>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <Link className="btn btn-primary" href="/security/audit">
-                    Run an audit <Icons.arrow size={13} />
+                    Review contract <Icons.arrow size={13} />
                   </Link>
                   <span
                     className="chip mono"
                     style={{ fontSize: 10.5 }}
                   >
-                    OPEN SECURITY STANDARD
+                    INVESTMENT RISK BRIEF
                   </span>
                 </div>
               </div>
@@ -893,7 +867,7 @@ export default function LandingPage() {
                   gap: 1,
                   background: "var(--line)",
                   border: "1px solid var(--line)",
-                  borderRadius: 14,
+                  borderRadius: 8,
                   overflow: "hidden",
                 }}
               >
@@ -946,11 +920,11 @@ export default function LandingPage() {
                   <Icons.brain size={18} style={{ color: "var(--accent)", flexShrink: 0 }} />
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>
-                      The verdict, in plain English.
+                      A concise brief for investment review.
                     </div>
                     <div style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>
-                      Every finding is grounded in real evidence. Nothing is invented.
-                      Nothing is editorialised. You read what the code actually does.
+                      The report emphasizes material controls, exposed privileges, and
+                      the issues that should change sizing or require escalation.
                     </div>
                   </div>
                 </div>
@@ -975,7 +949,7 @@ export default function LandingPage() {
                     padding: 24,
                     background: "var(--surface)",
                     border: "1px solid var(--line)",
-                    borderRadius: 16,
+                    borderRadius: 8,
                     boxShadow: "var(--shadow-xs)",
                     display: "flex",
                     gap: 14,
@@ -1023,7 +997,7 @@ export default function LandingPage() {
               background:
                 "linear-gradient(135deg, var(--surface) 0%, color-mix(in oklch, var(--accent) 8%, var(--surface)) 100%)",
               border: "1px solid var(--line)",
-              borderRadius: 24,
+              borderRadius: 10,
               overflow: "hidden",
               boxShadow: "var(--shadow-md)",
               display: "flex",
@@ -1048,7 +1022,7 @@ export default function LandingPage() {
             />
             <div style={{ position: "relative", maxWidth: 620 }}>
               <span className="chip mono" style={{ marginBottom: 14 }}>
-                <span className="dot accent pulse-dot" /> READY WHEN YOU ARE
+                <span className="dot accent pulse-dot" /> PRIVATE BETA WORKSPACE
               </span>
               <h2
                 className="display"
@@ -1060,13 +1034,13 @@ export default function LandingPage() {
                   textWrap: "balance",
                 }}
               >
-                The terminal is open.{" "}
-                <span style={{ color: "var(--text-dim)" }}>The yield is ready.</span>
+                Build the income book with better controls.{" "}
+                <span style={{ color: "var(--text-dim)" }}>Start with the market view.</span>
               </h2>
               <p style={{ fontSize: 14.5, color: "var(--text-2)", lineHeight: 1.6, margin: 0 }}>
-                Look around the survivors. Audit a contract. Compose a portfolio. We only
-                ask for your wallet when you&rsquo;re ready to track what&rsquo;s already
-                yours.
+                Review opportunities, shape an allocation, inspect contract posture, and
+                monitor exposure from one read-only workspace. Wallet connection is only
+                needed when you want portfolio oversight.
               </p>
             </div>
             <div
@@ -1078,10 +1052,10 @@ export default function LandingPage() {
               }}
             >
               <Link className="btn btn-primary btn-lg" href="/discover">
-                Open the terminal <Icons.arrow size={14} />
+                Review markets <Icons.arrow size={14} />
               </Link>
               <Link className="btn btn-lg" href="/strategies">
-                Compose a portfolio
+                View allocations
               </Link>
             </div>
           </div>
@@ -1120,21 +1094,21 @@ export default function LandingPage() {
                 <span style={{ fontSize: 12.5, color: "var(--text-1)", fontWeight: 500 }}>
                   Sovereign Investment Group · 2026
                 </span>
-                <span>Read-only. Not financial advice. Move with care.</span>
+                <span>Read-only portfolio access. Not financial advice.</span>
               </div>
             </div>
             <div style={{ display: "flex", gap: 24, fontSize: 13, color: "var(--text-2)" }}>
-              <Link href="#method" style={{ color: "inherit", textDecoration: "none" }}>
-                Method
+              <Link href="#standards" style={{ color: "inherit", textDecoration: "none" }}>
+                Standards
               </Link>
               <Link href="/discover" style={{ color: "inherit", textDecoration: "none" }}>
-                Discover
+                Markets
               </Link>
               <Link href="/security/audit" style={{ color: "inherit", textDecoration: "none" }}>
-                Audit
+                Security
               </Link>
               <Link href="/strategies" style={{ color: "inherit", textDecoration: "none" }}>
-                Strategist
+                Allocations
               </Link>
             </div>
           </div>
@@ -1165,7 +1139,7 @@ export default function LandingPage() {
             style={{ padding: 18, position: "relative", overflow: "hidden" }}
           >
             <span className="chip accent mono" style={{ marginBottom: 14 }}>
-              <span className="dot accent pulse-dot" /> OPEN · LIVE · WATCHING
+              <span className="dot accent pulse-dot" /> LIVE MARKET INTELLIGENCE
             </span>
             <h1
               className="display"
@@ -1177,10 +1151,10 @@ export default function LandingPage() {
                 margin: "0 0 10px",
               }}
             >
-              Yield,
+              On-chain income,
               <br />
-              <span style={{ fontStyle: "italic", fontWeight: 500, color: "var(--accent)" }}>
-                with conviction.
+              <span style={{ fontWeight: 500, color: "var(--accent)" }}>
+                governed with discipline.
               </span>
             </h1>
             <p
@@ -1191,18 +1165,18 @@ export default function LandingPage() {
                 margin: "0 0 16px",
               }}
             >
-              The DeFi yield surface is loud, fast, and unforgiving. We make it quiet —
-              so you only ever see what survives.
+              Market selection, allocation planning, contract review, and portfolio
+              oversight in a private, read-only workspace.
             </p>
             <div style={{ height: 48, margin: "4px 0 14px", opacity: 0.75 }}>
               <Spark data={mobileChart} stroke="var(--accent)" height={48} fill />
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               <Link href="/discover" className="btn btn-primary btn-sm">
-                Open the terminal
+                Review markets
               </Link>
-              <Link href="#method" className="btn btn-sm">
-                How it works
+              <Link href="#standards" className="btn btn-sm">
+                Standards
               </Link>
             </div>
           </div>
@@ -1220,7 +1194,7 @@ export default function LandingPage() {
             >
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span className="dot good pulse-dot" />
-                <span style={{ fontSize: 13, fontWeight: 600 }}>The survivors, today</span>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>Market shortlist</span>
               </div>
               <span className="mono" style={{ fontSize: 10, color: "var(--text-dim)" }}>
                 TOP 5
@@ -1266,7 +1240,7 @@ export default function LandingPage() {
           {/* PRODUCT */}
           <div className="card" style={{ padding: 14 }}>
             <div className="eyebrow" style={{ fontSize: 10, marginBottom: 10 }}>
-              THE TERMINAL
+              THE WORKSPACE
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {PRODUCT.map((t) => {
@@ -1322,10 +1296,10 @@ export default function LandingPage() {
             </div>
           </div>
 
-          {/* MOAT (mobile compact) */}
-          <div id="method" className="card" style={{ padding: 14 }}>
+          {/* STANDARDS (mobile compact) */}
+          <div id="standards" className="card" style={{ padding: 14 }}>
             <div className="eyebrow" style={{ fontSize: 10, marginBottom: 10 }}>
-              HOW IT WORKS
+              OPERATING STANDARDS
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               {ARCH_LAYERS.map((layer) => {
@@ -1372,7 +1346,7 @@ export default function LandingPage() {
           {/* TRUST */}
           <div className="card" style={{ padding: 14 }}>
             <div className="eyebrow" style={{ fontSize: 10, marginBottom: 10 }}>
-              THE PROMISES
+              CLIENT CONTROLS
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {TRUST.map((t) => {
@@ -1426,7 +1400,7 @@ export default function LandingPage() {
               alignItems: "center",
             }}
           >
-            <div style={{ fontSize: 14, fontWeight: 600 }}>The terminal is open.</div>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>Start with the market view.</div>
             <div
               style={{
                 fontSize: 12,
@@ -1435,11 +1409,11 @@ export default function LandingPage() {
                 maxWidth: 320,
               }}
             >
-              Read-only. We never touch your funds. Connect a wallet only when you want
-              to watch what&rsquo;s already yours.
+              Read-only by default. Connect a wallet only when you want portfolio
+              oversight.
             </div>
             <Link href="/discover" className="btn btn-primary btn-sm">
-              Step inside
+              Review markets
             </Link>
           </div>
         </div>

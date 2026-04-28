@@ -63,7 +63,7 @@ export function createJob(): StrategyJob {
     status: "running",
     startedAt: Date.now(),
     events: [
-      { ts: Date.now(), stage: "starting", message: "Initializing strategy pipeline…" },
+      { ts: Date.now(), stage: "starting", message: "Preparing allocation workflow..." },
     ],
   };
   jobs.set(job.id, job);
@@ -88,7 +88,7 @@ export function completeJob(id: string, result: JobResult): void {
   job.status = "done";
   job.finishedAt = Date.now();
   job.result = result;
-  job.events.push({ ts: Date.now(), stage: "done", message: "Strategy ready" });
+  job.events.push({ ts: Date.now(), stage: "done", message: "Allocation ready" });
 }
 
 export function failJob(id: string, error: string): void {
@@ -130,13 +130,46 @@ export interface PublicJobView {
   id: string;
   status: StrategyJob["status"];
   progress: number;
-  stage: JobStage;
+  stage: string;
   message: string;
   sub?: { done: number; total: number };
   elapsedMs: number;
-  events: Array<{ ts: number; stage: JobStage; message: string; sub?: { done: number; total: number } }>;
+  events: Array<{ ts: number; stage: string; message: string; sub?: { done: number; total: number } }>;
   result?: JobResult;
   error?: string;
+}
+
+const PUBLIC_STAGE: Record<JobStage, string> = {
+  starting: "preparing",
+  fetching_data: "reading_markets",
+  filtering_pools: "selecting_markets",
+  deep_analysis: "reviewing_markets",
+  claude_proposer: "creating_proposal",
+  reviewers: "checking_proposal",
+  claude_revision: "finalizing_proposal",
+  finalizing: "finalizing",
+  done: "complete",
+  error: "error",
+};
+
+function publicStage(stage: JobStage): string {
+  return PUBLIC_STAGE[stage] ?? "working";
+}
+
+function publicMessage(message: string): string {
+  return message
+    .replace(/yield feed/gi, "market feed")
+    .replace(/yield pools?/gi, "markets")
+    .replace(/pools?/gi, "markets")
+    .replace(/protocols?/gi, "markets")
+    .replace(/ground-truth checks, AI scoring, synthesis, and heuristic vetoes/gi, "risk context")
+    .replace(/AI|Claude|Codex|Gemini/gi, "review")
+    .replace(/strategy pipeline/gi, "allocation workflow")
+    .replace(/strategy/gi, "allocation")
+    .replace(/architect/gi, "proposal")
+    .replace(/reviewers?/gi, "review")
+    .replace(/collaboration trail/gi, "proposal details")
+    .replace(/pipeline/gi, "workflow");
 }
 
 export function publicView(job: StrategyJob): PublicJobView {
@@ -145,17 +178,17 @@ export function publicView(job: StrategyJob): PublicJobView {
     id: job.id,
     status: job.status,
     progress: computeProgress(job),
-    stage: last?.stage ?? "starting",
-    message: last?.message ?? "Working…",
+    stage: publicStage(last?.stage ?? "starting"),
+    message: publicMessage(last?.message ?? "Working..."),
     sub: last?.sub,
     elapsedMs: (job.finishedAt ?? Date.now()) - job.startedAt,
     events: job.events.slice(-12).map((e) => ({
       ts: e.ts,
-      stage: e.stage,
-      message: e.message,
+      stage: publicStage(e.stage),
+      message: publicMessage(e.message),
       sub: e.sub,
     })),
     result: job.result,
-    error: job.error,
+    error: job.error ? publicMessage(job.error) : undefined,
   };
 }
