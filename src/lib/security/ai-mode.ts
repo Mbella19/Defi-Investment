@@ -22,19 +22,30 @@ function normalize(value: string | undefined): AiMode | undefined {
  *   2. Global AI_MODE
  *   3. Default to "cli" (local dev parity)
  *
- * In production, "cli" is rejected because hosted runtimes (Vercel etc.)
- * don't have local `claude` / `codex` / `gemini` binaries — calling AI
- * routes would fail with cryptic spawn ENOENT after the first request.
- * Surfacing it at first invocation prevents the silent partial outage.
+ * On hosted deploys, "cli" is rejected because serverless runtimes don't
+ * have local `claude` / `codex` / `gemini` binaries — calling AI routes
+ * would fail with cryptic spawn ENOENT after the first request. We detect
+ * "hosted" via VERCEL=1 (Vercel sets it) rather than NODE_ENV=production,
+ * because `next start` locally also sets NODE_ENV=production but the local
+ * CLI binaries are still available there. Set FORCE_AI_API_MODE=1 to
+ * trigger the same check on other hosting platforms.
  */
+function isHostedRuntime(): boolean {
+  return (
+    process.env.VERCEL === "1" ||
+    process.env.FORCE_AI_API_MODE === "1" ||
+    !!process.env.AWS_LAMBDA_FUNCTION_NAME
+  );
+}
+
 export function getAiMode(provider: AiProvider): AiMode {
   const mode =
     normalize(process.env[PER_PROVIDER_ENV[provider]]) ??
     normalize(process.env.AI_MODE) ??
     "cli";
-  if (mode === "cli" && process.env.NODE_ENV === "production") {
+  if (mode === "cli" && isHostedRuntime()) {
     throw new Error(
-      `${provider} is in CLI mode in production — set AI_MODE=api (or ${PER_PROVIDER_ENV[provider]}=api) and provide the matching API key. ` +
+      `${provider} is in CLI mode on a hosted runtime — set AI_MODE=api (or ${PER_PROVIDER_ENV[provider]}=api) and provide the matching API key. ` +
         "Local CLI binaries aren't available on serverless runtimes.",
     );
   }
