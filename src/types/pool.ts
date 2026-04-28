@@ -20,6 +20,9 @@ export interface DefiLlamaPool {
   apyPct1D: number | null;
   apyPct7D: number | null;
   apyPct30D: number | null;
+  // DeFiLlama only — Beefy/aggregated sources may omit. Used for mean-reversion
+  // suppression in the alert pipeline; absence = no suppression, just alert.
+  apyMean30d?: number | null;
   volumeUsd1d: number | null;
   volumeUsd7d: number | null;
   // Enrichment fields (optional — filled by pool-aggregator)

@@ -46,7 +46,22 @@ export function runMonitorScan(
       );
       const passesFloor = dropPp >= volatilityFloor;
 
-      if (passesFloor && dropPercent >= config.apyDropCritical) {
+      // Mean-reversion suppression: when entry locked in a transient yield
+      // spike (entryApy >50% above the pool's 30-day mean) AND current APY
+      // has returned to within 10% of that mean, this isn't a degraded
+      // position — it's the spike unwinding to the long-run rate the
+      // strategy was sized against. The Morpho FEUSDT0 / Hyperliquid case
+      // is the canonical example: AI flagged "rate unlikely to persist" at
+      // creation, sized 5% accordingly, then mean-reverted as predicted.
+      // Alerting on that is noise.
+      const apyMean30d = currentPool.apyMean30d ?? null;
+      const isMeanReversion =
+        apyMean30d !== null &&
+        apyMean30d > 0 &&
+        pos.entryApy > apyMean30d * 1.5 &&
+        currentApy >= apyMean30d * 0.9;
+
+      if (!isMeanReversion && passesFloor && dropPercent >= config.apyDropCritical) {
         alerts.push({
           id: `apy-crit-${pos.id}`,
           type: "apy_drop",
@@ -62,7 +77,7 @@ export function runMonitorScan(
           entryValue: pos.entryApy,
           changePercent: -dropPercent,
         });
-      } else if (passesFloor && dropPercent >= config.apyDropWarning) {
+      } else if (!isMeanReversion && passesFloor && dropPercent >= config.apyDropWarning) {
         alerts.push({
           id: `apy-warn-${pos.id}`,
           type: "apy_drop",
