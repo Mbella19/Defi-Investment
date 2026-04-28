@@ -1,7 +1,6 @@
 import { fetchAllBalances } from "@/lib/wallet/balance-fetcher";
 import { fetchTokenPrices } from "@/lib/coingecko";
 import { calculatePortfolio } from "@/lib/wallet/portfolio-calculator";
-import { getAllGeckoIds } from "@/lib/wallet/token-lists";
 
 export async function POST(request: Request) {
   try {
@@ -13,10 +12,19 @@ export async function POST(request: Request) {
 
     const normalizedAddress = address as `0x${string}`;
 
-    const [{ balances, errors }, prices] = await Promise.all([
-      fetchAllBalances(normalizedAddress),
-      fetchTokenPrices(getAllGeckoIds()),
-    ]);
+    // Fetch balances first, then look up prices for ONLY the tokens this
+    // wallet actually holds. Previously we paid for every supported token's
+    // price upfront via getAllGeckoIds(), which burned CoinGecko quota and
+    // padded latency for every wallet — usually <10 tokens deep.
+    const { balances, errors } = await fetchAllBalances(normalizedAddress);
+    const neededIds = Array.from(
+      new Set(
+        balances
+          .map((b) => b.geckoId)
+          .filter((id): id is string => typeof id === "string" && id.length > 0),
+      ),
+    );
+    const prices = neededIds.length > 0 ? await fetchTokenPrices(neededIds) : new Map();
 
     const portfolio = calculatePortfolio(normalizedAddress, balances, prices, errors);
 

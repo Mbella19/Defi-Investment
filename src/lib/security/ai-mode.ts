@@ -21,13 +21,24 @@ function normalize(value: string | undefined): AiMode | undefined {
  *   1. Per-provider env var (CLAUDE_MODE / OPENAI_MODE / GEMINI_MODE)
  *   2. Global AI_MODE
  *   3. Default to "cli" (local dev parity)
+ *
+ * In production, "cli" is rejected because hosted runtimes (Vercel etc.)
+ * don't have local `claude` / `codex` / `gemini` binaries — calling AI
+ * routes would fail with cryptic spawn ENOENT after the first request.
+ * Surfacing it at first invocation prevents the silent partial outage.
  */
 export function getAiMode(provider: AiProvider): AiMode {
-  return (
+  const mode =
     normalize(process.env[PER_PROVIDER_ENV[provider]]) ??
     normalize(process.env.AI_MODE) ??
-    "cli"
-  );
+    "cli";
+  if (mode === "cli" && process.env.NODE_ENV === "production") {
+    throw new Error(
+      `${provider} is in CLI mode in production — set AI_MODE=api (or ${PER_PROVIDER_ENV[provider]}=api) and provide the matching API key. ` +
+        "Local CLI binaries aren't available on serverless runtimes.",
+    );
+  }
+  return mode;
 }
 
 export function requireEnv(name: string): string {

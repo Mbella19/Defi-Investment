@@ -1,5 +1,6 @@
 import { fetchPoolSeriesMany, alignSeries } from "@/lib/tools/pool-history";
 import { correlationMatrix } from "@/lib/tools/correlation";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -10,6 +11,11 @@ interface Body {
 }
 
 export async function POST(request: Request) {
+  // Each call fans out to up to 12 DeFiLlama history endpoints — bursting is
+  // the dominant cost. 30/h per wallet/IP is comfortable for normal use.
+  const limited = enforceRateLimit(request, "tools.correlation", { max: 30, windowMs: 60 * 60 * 1000 });
+  if (limited) return limited;
+
   try {
     const body = (await request.json().catch(() => ({}))) as Body;
     const rawIds = Array.isArray(body.poolIds) ? body.poolIds : [];

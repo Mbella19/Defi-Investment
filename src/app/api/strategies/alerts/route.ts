@@ -8,7 +8,10 @@ export async function GET(request: Request) {
     if ("response" in auth) return auth.response;
     const { searchParams } = new URL(request.url);
     const unreadOnly = searchParams.get("unread") === "true";
-    const limit = parseInt(searchParams.get("limit") || "50", 10);
+    // Clamp 1–100. Without a max, an unbounded `limit` lets a caller pull
+    // their entire alert history and inflate response size.
+    const rawLimit = Number.parseInt(searchParams.get("limit") || "50", 10);
+    const limit = Number.isFinite(rawLimit) ? Math.min(100, Math.max(1, rawLimit)) : 50;
 
     const db = getDb();
 
