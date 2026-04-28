@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Geist_Mono, Inter } from "next/font/google";
-import Script from "next/script";
 import ThemeProvider from "@/components/ThemeProvider";
 import "./globals.css";
 
@@ -22,8 +21,6 @@ export const metadata: Metadata = {
     "A private DeFi income workspace for market review, allocation planning, contract risk review, and read-only portfolio oversight.",
 };
 
-const themeBootstrap = `(function(){try{var s=localStorage.getItem('sig-theme');var t=s==='dark'||s==='light'?s:(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','light');}})();`;
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -32,9 +29,6 @@ export default function RootLayout({
   return (
     <html lang="en" data-theme="light" suppressHydrationWarning>
       <body className={`${geistMono.variable} ${inter.variable}`}>
-        <Script id="theme-bootstrap" strategy="beforeInteractive">
-          {themeBootstrap}
-        </Script>
         <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>

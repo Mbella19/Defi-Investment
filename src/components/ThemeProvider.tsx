@@ -4,10 +4,13 @@ import {
   createContext,
   useCallback,
   useContext,
-  useState,
+  useEffect,
+  useSyncExternalStore,
 } from "react";
 
 type Theme = "light" | "dark";
+const THEME_STORAGE_KEY = "sig-theme";
+const THEME_CHANGE_EVENT = "sig-theme-change";
 
 type Ctx = {
   theme: Theme;
@@ -26,9 +29,31 @@ export function useTheme() {
 }
 
 function readInitialTheme(): Theme {
-  if (typeof document === "undefined") return "light";
-  const attr = document.documentElement.getAttribute("data-theme");
-  return attr === "dark" ? "dark" : "light";
+  if (typeof window === "undefined") return "light";
+  try {
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === "dark" || stored === "light") return stored;
+  } catch {}
+
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function subscribeToTheme(onStoreChange: () => void): () => void {
+  window.addEventListener(THEME_CHANGE_EVENT, onStoreChange);
+  window.addEventListener("storage", onStoreChange);
+
+  const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+  media?.addEventListener("change", onStoreChange);
+
+  return () => {
+    window.removeEventListener(THEME_CHANGE_EVENT, onStoreChange);
+    window.removeEventListener("storage", onStoreChange);
+    media?.removeEventListener("change", onStoreChange);
+  };
+}
+
+function readServerTheme(): Theme {
+  return "light";
 }
 
 export default function ThemeProvider({
@@ -36,20 +61,22 @@ export default function ThemeProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const [theme, setThemeState] = useState<Theme>(() => readInitialTheme());
+  const theme = useSyncExternalStore(
+    subscribeToTheme,
+    readInitialTheme,
+    readServerTheme,
+  );
 
-  // Note: the previous useEffect re-read document.documentElement on every
-  // theme change to defend against external DOM mutation. The React Compiler
-  // (correctly) flagged the resulting setState-in-effect as a cascading
-  // render trigger, and since `setTheme` below is the only writer to the
-  // DOM attribute, the resync was a no-op in practice. Removed.
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
 
   const setTheme = useCallback((t: Theme) => {
     document.documentElement.setAttribute("data-theme", t);
     try {
-      localStorage.setItem("sig-theme", t);
+      localStorage.setItem(THEME_STORAGE_KEY, t);
     } catch {}
-    setThemeState(t);
+    window.dispatchEvent(new Event(THEME_CHANGE_EVENT));
   }, []);
 
   const toggle = useCallback(() => {
