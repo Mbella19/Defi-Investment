@@ -1,705 +1,217 @@
 "use client";
 
+import { useMemo } from "react";
 import { ConnectButton as RainbowConnectButton } from "@rainbow-me/rainbowkit";
+import { Eye, LockKeyhole, RefreshCw, WalletCards } from "lucide-react";
 import {
-  Icons,
-  TokenGlyph,
-  Stat,
-  ThemeToggle,
-} from "@/components/sovereign";
+  ChainBadge,
+  CommandStrip,
+  EmptyState,
+  MetricTile,
+  MiniLine,
+} from "@/components/site/ui";
+import {
+  chainIdFromEvmId,
+  chainMeta,
+  formatBalance,
+  formatMoney,
+  formatPct,
+  formatUsd,
+} from "@/lib/design-utils";
 import { usePortfolio } from "@/hooks/usePortfolio";
-import type { PortfolioToken } from "@/types/wallet";
-
-const CHAIN_COLOR: Record<number, string> = {
-  1: "var(--c-eth)",
-  42161: "var(--c-arb)",
-  10: "var(--c-op)",
-  8453: "var(--c-base)",
-  137: "var(--c-poly)",
-  56: "var(--c-sol)",
-  43114: "var(--c-op)",
-};
-
-const CHAIN_SHORT: Record<number, string> = {
-  1: "ETH",
-  42161: "ARB",
-  10: "OP",
-  8453: "BASE",
-  137: "POLY",
-  56: "BSC",
-  43114: "AVAX",
-};
-
-function fmtUsd(n: number, decimals = 2) {
-  if (!Number.isFinite(n)) return "$0";
-  if (Math.abs(n) >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(2)}B`;
-  if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
-  return `$${n.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
-}
-
-function fmtBalance(n: number) {
-  if (n === 0) return "0";
-  if (n < 0.0001) return n.toExponential(2);
-  if (n < 1) return n.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
-  if (n < 1000) return n.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
-  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
 
 export default function PortfolioPage() {
-  const { isConnected, address, portfolio, isLoading, error, refetch } =
-    usePortfolio();
+  const { isConnected, address, portfolio, isLoading, error, refetch } = usePortfolio();
 
-  const totalDelta24h = (() => {
+  const total = portfolio?.totalValueUsd ?? 0;
+  const tokens = portfolio?.tokens ?? [];
+  const chains = portfolio?.chainBreakdown ?? [];
+
+  const weightedChange = useMemo(() => {
     if (!portfolio) return null;
     let weighted = 0;
-    let total = 0;
+    let denom = 0;
     for (const t of portfolio.tokens) {
       if (t.priceChange24h == null) continue;
       weighted += (t.priceChange24h / 100) * t.balanceUsd;
-      total += t.balanceUsd;
+      denom += t.balanceUsd;
     }
-    if (total === 0) return null;
-    return { abs: weighted, pct: (weighted / total) * 100 };
-  })();
+    if (denom === 0) return null;
+    return (weighted / denom) * 100;
+  }, [portfolio]);
 
-  // ------- DISCONNECTED STATE -------
-  if (!isConnected) {
-    return (
-      <>
-        <div className="page-wrap">
-          <div>
-            <div className="eyebrow">PORTFOLIO</div>
-            <h1
-              className="display"
-              style={{ fontSize: 28, margin: "6px 0 2px", letterSpacing: "-0.02em" }}
-            >
-              Read-only portfolio oversight.
-            </h1>
-            <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
-              Connect to review balances, concentration, and chain exposure in one place.
-            </div>
-          </div>
+  const sparkPoints = useMemo(() => {
+    if (!total) return [0, 0, 0, 0, 0, 0];
+    // Synthetic 6-point trend so the right-rail mini chart has a shape even
+    // before we wire historic balance snapshots. Anchored on the live total.
+    const drift = weightedChange != null ? weightedChange / 100 : 0;
+    return [
+      total * (1 - drift * 0.9),
+      total * (1 - drift * 0.6),
+      total * (1 - drift * 0.4),
+      total * (1 - drift * 0.2),
+      total * (1 - drift * 0.05),
+      total,
+    ];
+  }, [total, weightedChange]);
 
-          <div
-            className="card-raised"
-            style={{
-              padding: 36,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: 16,
-              textAlign: "center",
-            }}
-          >
-            <div
-              style={{
-                width: 56,
-                height: 56,
-                borderRadius: 10,
-                background: "var(--accent-soft)",
-                color: "var(--accent)",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <Icons.wallet size={26} />
-            </div>
-            <div style={{ maxWidth: 460 }}>
-              <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
-                Connect for a private portfolio view.
-              </div>
-              <div style={{ fontSize: 13, color: "var(--text-dim)", lineHeight: 1.5 }}>
-                Sovereign reads balances directly from supported chains. It does not
-                custody funds, request token approvals, or sign transactions.
-              </div>
-            </div>
-            <RainbowConnectButton />
-            <div className="mono" style={{ fontSize: 10.5, color: "var(--text-muted)", letterSpacing: "0.14em" }}>
-              ETH · ARB · OP · BASE · POLY · BSC · AVAX
-            </div>
-          </div>
+  const shortAddress = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "Portfolio";
+
+  return (
+    <div className="page">
+      <div className="page-title">
+        <div>
+          <p className="eyebrow">Portfolio</p>
+          <h1>Read-only exposure command.</h1>
+          <p>
+            Wallet positions become allocation context: chain mix, token shelves, drift,
+            and yield sleeves in one view — never custodial.
+          </p>
         </div>
+        <RainbowConnectButton />
+      </div>
 
-        <div className="mobile-only">
-          <div className="m-header">
-            <div>
-              <div className="m-title">Portfolio</div>
-              <div className="m-sub">CONNECT TO BEGIN</div>
-            </div>
-            <ThemeToggle variant="mobile" />
-          </div>
-          <div className="m-content">
-            <div
-              className="card-raised"
-              style={{
-                padding: 28,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: 14,
-                textAlign: "center",
-              }}
-            >
-              <div
-                style={{
-                  width: 48,
-                  height: 48,
-                  borderRadius: 10,
-                  background: "var(--accent-soft)",
-                  color: "var(--accent)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Icons.wallet size={22} />
-              </div>
-              <div style={{ fontSize: 15, fontWeight: 600 }}>Connect for oversight.</div>
-              <div style={{ fontSize: 12.5, color: "var(--text-dim)", lineHeight: 1.5 }}>
-                Review balances and exposure across supported chains.
-              </div>
+      <CommandStrip
+        file="file/04.portfolio"
+        items={[
+          {
+            label: "mode",
+            value: isConnected ? "wallet linked" : "preview",
+            tone: isConnected ? "ok" : "warn",
+          },
+          { label: "permission", value: "read-only", tone: "info" },
+          { label: "custody", value: "never requested", tone: "ok" },
+        ]}
+      />
+
+      {!isConnected ? (
+        <EmptyState
+          icon={LockKeyhole}
+          title="Private by default"
+          body="Connect a wallet to read live balances. Sovereign reads on-chain state directly — it never custodies funds, requests approvals, or signs transactions."
+          action={
+            <div style={{ marginTop: 16 }}>
               <RainbowConnectButton />
             </div>
-          </div>
-        </div>
-      </>
-    );
-  }
-
-  // ------- CONNECTED STATE -------
-  const tokens = portfolio?.tokens ?? [];
-  const chains = portfolio?.chainBreakdown ?? [];
-  const total = portfolio?.totalValueUsd ?? 0;
-
-  return (
-    <>
-      {/* ---------- DESKTOP ---------- */}
-      <div className="page-wrap">
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-end",
-            flexWrap: "wrap",
-            gap: 12,
-          }}
-        >
-          <div>
-            <div className="eyebrow">PORTFOLIO</div>
-            <h1
-              className="display"
-              style={{ fontSize: 28, margin: "6px 0 2px", letterSpacing: "-0.02em" }}
-            >
-              {address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "Portfolio"}
-            </h1>
-            <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
-              {portfolio
-                ? `${portfolio.tokenCount} tokens · ${portfolio.chainCount} chains · updated ${new Date(portfolio.fetchedAt).toLocaleTimeString()}`
-                : isLoading
-                  ? "Reading on-chain balances…"
-                  : "Live balances via on-chain RPC"}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={refetch}
-              disabled={isLoading}
-            >
-              <Icons.refresh size={13} /> {isLoading ? "Loading…" : "Refresh"}
+          }
+        />
+      ) : isLoading && !portfolio ? (
+        <EmptyState
+          icon={RefreshCw}
+          title="Reading on-chain balances…"
+          body="Pulling live token positions across the supported chains. Should take a few seconds."
+        />
+      ) : error ? (
+        <EmptyState
+          icon={LockKeyhole}
+          title="Could not read balances"
+          body={error}
+          action={
+            <button type="button" className="ghost-button" onClick={refetch} style={{ marginTop: 14 }}>
+              <RefreshCw size={16} aria-hidden="true" /> Retry
             </button>
+          }
+        />
+      ) : (
+        <>
+          <div className="metric-grid" style={{ marginBottom: 18 }}>
+            <MetricTile label="Net value" value={formatMoney(total)} icon={WalletCards} tone="#6ee7b7" />
+            <MetricTile
+              label="24h drift"
+              value={weightedChange == null ? "—" : formatPct(weightedChange, true)}
+              icon={RefreshCw}
+              tone="#60a5fa"
+            />
+            <MetricTile label="Positions" value={String(tokens.length)} icon={Eye} tone="#fbbf24" />
+            <MetricTile label="Networks" value={String(chains.length)} icon={LockKeyhole} tone="#fb7185" />
           </div>
-        </div>
 
-        {error ? (
-          <div
-            className="card"
-            style={{
-              padding: 14,
-              borderColor: "color-mix(in oklch, var(--danger) 40%, var(--line))",
-              color: "var(--danger)",
-              fontSize: 13,
-            }}
-          >
-            {error}
-          </div>
-        ) : null}
-
-        <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr 1fr 1fr", gap: 16 }}>
-          <div
-            className="card-raised"
-            style={{
-              padding: 20,
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
-              minHeight: 132,
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <div className="eyebrow">NET VALUE</div>
-              {tokens.length > 0 ? (
-                <span className="chip mono">
-                  <span className="dot good" /> LIVE
-                </span>
-              ) : null}
-            </div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-              <span
-                className="num display"
-                style={{ fontSize: 38, fontWeight: 500, letterSpacing: "-0.025em" }}
-              >
-                {fmtUsd(total)}
+          <div className="page-tools" style={{ marginBottom: 18 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span className="eyebrow" style={{ marginBottom: 0 }}>{shortAddress}</span>
+              <span style={{ fontSize: 13, color: "var(--muted)" }}>
+                {portfolio
+                  ? `${portfolio.tokenCount} tokens · ${portfolio.chainCount} chains · updated ${new Date(portfolio.fetchedAt).toLocaleTimeString()}`
+                  : ""}
               </span>
-              {totalDelta24h ? (
-                <span className={totalDelta24h.abs >= 0 ? "delta-up" : "delta-dn"}>
-                  {totalDelta24h.abs >= 0 ? "▲" : "▼"} {fmtUsd(Math.abs(totalDelta24h.abs))} ·{" "}
-                  {Math.abs(totalDelta24h.pct).toFixed(2)}%
-                </span>
-              ) : null}
             </div>
-          </div>
-          <div className="card" style={{ padding: 18 }}>
-            <Stat
-              label="ASSETS"
-              value={String(portfolio?.tokenCount ?? 0)}
-              sub="non-zero positions"
-            />
-          </div>
-          <div className="card" style={{ padding: 18 }}>
-            <Stat
-              label="NETWORKS"
-              value={String(portfolio?.chainCount ?? 0)}
-              sub="with exposure"
-            />
-          </div>
-          <div className="card" style={{ padding: 18 }}>
-            <Stat
-              label="LARGEST POSITION"
-              value={tokens[0]?.symbol ?? "—"}
-              sub={
-                tokens[0]
-                  ? `${tokens[0].allocation.toFixed(1)}% of book`
-                  : "no holdings"
-              }
-            />
-          </div>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr", gap: 16 }}>
-          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-            <div
-              style={{
-                padding: "14px 18px",
-                borderBottom: "1px solid var(--line)",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-              }}
-            >
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600 }}>Positions</div>
-                <div style={{ fontSize: 11.5, color: "var(--text-dim)" }}>
-                  {tokens.length} non-zero positions · sorted by value
-                </div>
-              </div>
+            <div className="filter-row">
+              <button type="button" className="ghost-button" onClick={refetch}>
+                <RefreshCw size={16} aria-hidden="true" /> Refresh
+              </button>
             </div>
-
-            {tokens.length === 0 ? (
-              <EmptyHoldings loading={isLoading} />
-            ) : (
-              <>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1.6fr 0.8fr 1fr 1fr 0.9fr",
-                    padding: "10px 18px",
-                    background: "var(--surface-2)",
-                    borderBottom: "1px solid var(--line)",
-                    fontSize: 10.5,
-                    fontWeight: 500,
-                    color: "var(--text-dim)",
-                    letterSpacing: "0.08em",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  <span>Token</span>
-                  <span>Chain</span>
-                  <span>Balance</span>
-                  <span>Value</span>
-                  <span style={{ textAlign: "right" }}>24h</span>
-                </div>
-                {tokens.map((t) => (
-                  <HoldingRow key={`${t.chainId}-${t.symbol}`} t={t} />
-                ))}
-              </>
-            )}
           </div>
 
-          <div className="card" style={{ padding: 18 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
-              Exposure
-            </div>
-            <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginBottom: 16 }}>
-              By network
-            </div>
-            {chains.length === 0 ? (
-              <div style={{ fontSize: 12.5, color: "var(--text-dim)" }}>
-                No balances detected.
-              </div>
-            ) : (
-              <>
-                <ChainDonut chains={chains} />
-                <div
-                  style={{
-                    marginTop: 16,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 8,
-                  }}
-                >
-                  {chains.map((c) => (
-                    <div
-                      key={c.chainId}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        fontSize: 12.5,
-                      }}
-                    >
-                      <span
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: 2,
-                          background: CHAIN_COLOR[c.chainId] ?? "var(--text-2)",
-                        }}
-                      />
-                      <span style={{ color: "var(--text-1)" }}>{c.chainName}</span>
-                      <span
-                        className="num"
-                        style={{
-                          marginLeft: "auto",
-                          color: "var(--text-1)",
-                          fontVariantNumeric: "tabular-nums",
-                        }}
-                      >
-                        {c.percentage.toFixed(1)}%
+          <div className="portfolio-layout">
+            <div className="portfolio-stack">
+              {tokens.length === 0 ? (
+                <EmptyState
+                  icon={WalletCards}
+                  title="No tracked tokens here"
+                  body="This wallet has no balances on the supported chains. Try a different address."
+                />
+              ) : (
+                tokens.map((token) => {
+                  const chain = chainIdFromEvmId(token.chainId);
+                  return (
+                    <div className="portfolio-row" key={`${token.chainId}-${token.symbol}-${token.name}`}>
+                      <div className="token-cell">
+                        <div className="token-chip" aria-hidden="true">
+                          {token.symbol.slice(0, 2)}
+                        </div>
+                        <div>
+                          <strong>{token.symbol}</strong>
+                          <span>{token.name}</span>
+                        </div>
+                      </div>
+                      <ChainBadge chain={chain} />
+                      <span className="desktop-cell">
+                        {formatBalance(token.balance)} {token.symbol}
+                      </span>
+                      <strong>{formatMoney(token.balanceUsd)}</strong>
+                      <span className={(token.priceChange24h ?? 0) >= 0 ? "delta-good" : "delta-bad"}>
+                        {token.priceChange24h == null ? "—" : formatPct(token.priceChange24h, true)}
                       </span>
                     </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+                  );
+                })
+              )}
+            </div>
 
-        {portfolio && portfolio.errors.length > 0 ? (
-          <div
-            className="card"
-            style={{
-              padding: 14,
-              fontSize: 12,
-              color: "var(--text-dim)",
-              borderColor: "var(--line)",
-            }}
-          >
-            <div className="eyebrow" style={{ marginBottom: 8 }}>
-              DATA NOTICE
-            </div>
-            {portfolio.errors.map((e, i) => (
-              <div key={i}>· {e}</div>
-            ))}
-          </div>
-        ) : null}
-      </div>
-
-      {/* ---------- MOBILE ---------- */}
-      <div className="mobile-only">
-        <div className="m-header">
-          <div>
-            <div className="m-title">Portfolio</div>
-            <div className="m-sub">
-              {address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "—"}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 4 }}>
-            <ThemeToggle variant="mobile" />
-            <button
-              type="button"
-              className="m-icon-btn"
-              aria-label="Refresh"
-              onClick={refetch}
-              disabled={isLoading}
-            >
-              <Icons.refresh size={18} />
-            </button>
-          </div>
-        </div>
-        <div className="m-content">
-          <div className="card-raised" style={{ padding: 18 }}>
-            <div className="eyebrow" style={{ fontSize: 10 }}>
-              NET VALUE
-            </div>
-            <div
-              className="num display"
-              style={{
-                fontSize: 30,
-                fontWeight: 500,
-                letterSpacing: "-0.025em",
-                marginTop: 4,
-              }}
-            >
-              {fmtUsd(total)}
-            </div>
-            {totalDelta24h ? (
-              <div
-                style={{
-                  fontSize: 12,
-                  color:
-                    totalDelta24h.abs >= 0 ? "var(--good)" : "var(--danger)",
-                  marginTop: 2,
-                }}
-              >
-                {totalDelta24h.abs >= 0 ? "▲" : "▼"} {fmtUsd(Math.abs(totalDelta24h.abs))} ·{" "}
-                {Math.abs(totalDelta24h.pct).toFixed(2)}% · 24h
-              </div>
-            ) : (
-              <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 2 }}>
-                {isLoading ? "fetching…" : "no 24h delta"}
-              </div>
-            )}
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <div className="card" style={{ padding: 12 }}>
-              <Stat
-                size="sm"
-                label="ASSETS"
-                value={String(portfolio?.tokenCount ?? 0)}
-              />
-            </div>
-            <div className="card" style={{ padding: 12 }}>
-              <Stat
-                size="sm"
-                label="NETWORKS"
-                value={String(portfolio?.chainCount ?? 0)}
-              />
-            </div>
-          </div>
-
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600, padding: "4px 2px 10px" }}>
-              Positions
-            </div>
-            {tokens.length === 0 ? (
-              <div
-                className="card"
-                style={{ padding: 16, textAlign: "center", color: "var(--text-dim)", fontSize: 12.5 }}
-              >
-                {isLoading ? "Reading balances…" : "No non-zero balances yet."}
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {tokens.map((t) => (
-                  <div
-                    key={`m-${t.chainId}-${t.symbol}`}
-                    className="card"
-                    style={{ padding: 12 }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <TokenGlyph sym={t.symbol} size={30} />
-                      <div style={{ flex: 1, minWidth: 0, lineHeight: 1.25 }}>
-                        <div style={{ fontSize: 13, fontWeight: 500 }}>{t.symbol}</div>
-                        <div
-                          style={{
-                            fontSize: 11.5,
-                            color: "var(--text-dim)",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {t.chainName} · {fmtBalance(t.balance)}
-                        </div>
+            <aside className="boost-panel">
+              <p className="eyebrow">Chain Exposure</p>
+              <h2 style={{ margin: "0 0 16px", fontSize: 32 }}>{formatMoney(total)}</h2>
+              <div className="exposure-bars">
+                {chains.length === 0 ? (
+                  <span style={{ color: "var(--muted)", fontSize: 13 }}>
+                    No exposure to break down yet.
+                  </span>
+                ) : (
+                  chains.map((c) => {
+                    const id = chainIdFromEvmId(c.chainId);
+                    const meta = chainMeta[id];
+                    return (
+                      <div className="exposure-bar" key={c.chainId}>
+                        <strong>{meta.label}</strong>
+                        <span className="share-track" aria-label={`${c.percentage.toFixed(0)}%`}>
+                          <i style={{ width: `${c.percentage}%`, background: meta.color }} />
+                        </span>
+                        <span>{c.percentage.toFixed(0)}%</span>
                       </div>
-                      <div style={{ textAlign: "right" }}>
-                        <div className="num" style={{ fontSize: 13, fontWeight: 500 }}>
-                          {fmtUsd(t.balanceUsd)}
-                        </div>
-                        {t.priceChange24h != null ? (
-                          <div
-                            className="num"
-                            style={{
-                              fontSize: 11,
-                              color:
-                                t.priceChange24h >= 0 ? "var(--good)" : "var(--danger)",
-                            }}
-                          >
-                            {t.priceChange24h >= 0 ? "+" : ""}
-                            {t.priceChange24h.toFixed(2)}%
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                    );
+                  })
+                )}
               </div>
-            )}
+              <div style={{ marginTop: 24 }}>
+                <MiniLine points={sparkPoints} accent="#60a5fa" />
+              </div>
+              <div style={{ marginTop: 12 }} className="ticker">
+                <span>{formatUsd(total)} total · read-only</span>
+              </div>
+            </aside>
           </div>
-        </div>
-      </div>
-    </>
-  );
-}
-
-function HoldingRow({ t }: { t: PortfolioToken }) {
-  return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "1.6fr 0.8fr 1fr 1fr 0.9fr",
-        padding: "14px 18px",
-        alignItems: "center",
-        borderBottom: "1px solid var(--line)",
-        fontSize: 13,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <TokenGlyph sym={t.symbol} size={28} />
-        <div style={{ lineHeight: 1.25, minWidth: 0 }}>
-          <div style={{ fontWeight: 500 }}>{t.symbol}</div>
-          <div
-            style={{
-              fontSize: 11.5,
-              color: "var(--text-dim)",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {t.name}
-          </div>
-        </div>
-      </div>
-      <span
-        className="mono"
-        style={{
-          padding: "2px 8px",
-          fontSize: 10.5,
-          borderRadius: 6,
-          background: `color-mix(in oklch, ${
-            CHAIN_COLOR[t.chainId] ?? "var(--text-2)"
-          } 14%, transparent)`,
-          color: CHAIN_COLOR[t.chainId] ?? "var(--text-2)",
-          border: `1px solid color-mix(in oklch, ${
-            CHAIN_COLOR[t.chainId] ?? "var(--text-2)"
-          } 32%, transparent)`,
-          justifySelf: "start",
-          fontWeight: 500,
-        }}
-      >
-        {CHAIN_SHORT[t.chainId] ?? t.chainName}
-      </span>
-      <span className="num" style={{ color: "var(--text-1)" }}>
-        {fmtBalance(t.balance)}
-      </span>
-      <span className="num" style={{ fontWeight: 500 }}>
-        {fmtUsd(t.balanceUsd)}
-      </span>
-      <span
-        className="num"
-        style={{
-          textAlign: "right",
-          color:
-            t.priceChange24h == null
-              ? "var(--text-dim)"
-              : t.priceChange24h >= 0
-                ? "var(--good)"
-                : "var(--danger)",
-        }}
-      >
-        {t.priceChange24h == null
-          ? "—"
-          : `${t.priceChange24h >= 0 ? "+" : ""}${t.priceChange24h.toFixed(2)}%`}
-      </span>
-    </div>
-  );
-}
-
-function ChainDonut({
-  chains,
-}: {
-  chains: { chainId: number; percentage: number }[];
-}) {
-  // Pre-walk the chains to attach cumulative dashoffsets. The previous
-  // pattern mutated a captured `let offset` from inside JSX `.map()`, which
-  // the React Compiler rejects because it can't memoize an array map whose
-  // callback closes over a mutating outer variable. A plain for-loop with
-  // local accumulation produces an immutable result the compiler is happy with.
-  const computed: Array<{ chainId: number; dash: number; dashoffset: number }> = [];
-  let cumulative = 0;
-  for (const c of chains) {
-    computed.push({ chainId: c.chainId, dash: c.percentage, dashoffset: -cumulative });
-    cumulative += c.percentage;
-  }
-  return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <svg viewBox="0 0 42 42" width={140} height={140}>
-        <circle
-          cx="21"
-          cy="21"
-          r="15.9"
-          fill="none"
-          stroke="var(--surface-3)"
-          strokeWidth="5"
-        />
-        {computed.map((c) => (
-          <circle
-            key={c.chainId}
-            cx="21"
-            cy="21"
-            r="15.9"
-            fill="none"
-            stroke={CHAIN_COLOR[c.chainId] ?? "var(--text-2)"}
-            strokeWidth="5"
-            strokeDasharray={`${c.dash} ${100 - c.dash}`}
-            strokeDashoffset={c.dashoffset}
-            transform="rotate(-90 21 21)"
-          />
-        ))}
-        <text
-          x="21"
-          y="22"
-          textAnchor="middle"
-          fontFamily="Geist Mono"
-          fontSize="6"
-          fill="var(--text)"
-          fontWeight="600"
-        >
-          {chains.length} chain{chains.length === 1 ? "" : "s"}
-        </text>
-      </svg>
-    </div>
-  );
-}
-
-function EmptyHoldings({ loading }: { loading: boolean }) {
-  return (
-    <div
-      style={{
-        padding: 36,
-        textAlign: "center",
-        color: "var(--text-dim)",
-        fontSize: 13,
-      }}
-    >
-      {loading
-        ? "Reading balances across all 7 chains…"
-        : "No non-zero balances detected for this address."}
+        </>
+      )}
     </div>
   );
 }

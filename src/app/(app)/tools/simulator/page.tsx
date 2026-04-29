@@ -2,27 +2,32 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  Legend,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import { Icons, ThemeToggle } from "@/components/sovereign";
+  Activity,
+  Banknote,
+  Gauge,
+  Plus,
+  Search,
+  TrendingDown,
+  TrendingUp,
+  X,
+} from "lucide-react";
+import {
+  ChainBadge,
+  CommandStrip,
+  EmptyState,
+  MetricTile,
+} from "@/components/site/ui";
+import {
+  chainIdFromName,
+  formatMoney,
+  formatPct,
+  formatUsd,
+} from "@/lib/design-utils";
+import type { LivePool } from "@/app/api/yields/live/route";
 
-interface LivePool {
-  poolId: string;
-  symbol: string;
-  protocol: string;
-  chain: string;
-  tvlUsd: number;
-  apy: number;
-}
+type Scenario = "baseline" | "depeg" | "tvl_crash" | "market_drawdown";
 
-interface PoolBreakdownRow {
+interface SimulationPoolRow {
   poolId: string;
   symbol: string;
   protocol: string;
@@ -35,7 +40,7 @@ interface PoolBreakdownRow {
 }
 
 interface SimulationResult {
-  scenario: string;
+  scenario: Scenario;
   horizonDays: number;
   startUsd: number;
   endUsd: number;
@@ -46,7 +51,7 @@ interface SimulationResult {
   baselineReturnPct: number;
   scenarioImpactUsd: number;
   series: { day: number; date: string; totalUsd: number; baselineUsd: number }[];
-  poolBreakdown: PoolBreakdownRow[];
+  poolBreakdown: SimulationPoolRow[];
   skipped: string[];
 }
 
@@ -62,70 +67,49 @@ const HORIZONS = [
   { label: "1Y", days: 365 },
 ];
 
-const SCENARIOS: Array<{
-  key: "baseline" | "depeg" | "tvl_crash" | "market_drawdown";
-  label: string;
-  blurb: string;
-}> = [
-  {
-    key: "baseline",
-    label: "Baseline",
-    blurb: "Use recent market behavior as the reference case.",
-  },
-  {
-    key: "depeg",
-    label: "Stable depeg",
-    blurb: "Apply a one-time stablecoin principal shock.",
-  },
-  {
-    key: "tvl_crash",
-    label: "Liquidity contraction",
-    blurb: "Reduce market income after a sharp liquidity withdrawal.",
-  },
-  {
-    key: "market_drawdown",
-    label: "Market drawdown",
-    blurb: "Apply a broad principal drawdown and lower income period.",
-  },
+const SCENARIOS: Array<{ key: Scenario; label: string; blurb: string }> = [
+  { key: "baseline", label: "Baseline", blurb: "Forward-replay recent APY behavior." },
+  { key: "depeg", label: "Stable depeg", blurb: "5% one-time stablecoin haircut." },
+  { key: "tvl_crash", label: "Liquidity drop", blurb: "TVL crash → APY collapses 80%." },
+  { key: "market_drawdown", label: "Market drawdown", blurb: "Non-stable principal -25% at day 30." },
 ];
 
-const MAX_ALLOCS = 8;
-
-function fmtUsd(n: number): string {
-  if (!Number.isFinite(n)) return "—";
-  if (Math.abs(n) >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
-  if (Math.abs(n) >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
-  if (Math.abs(n) >= 1e3) return `$${(n / 1e3).toFixed(1)}k`;
-  return `$${n.toFixed(0)}`;
-}
-
-function fmtPct(n: number, digits = 2): string {
-  if (!Number.isFinite(n)) return "—";
-  const sign = n > 0 ? "+" : "";
-  return `${sign}${n.toFixed(digits)}%`;
-}
+const MAX_ALLOCATIONS = 8;
 
 export default function SimulatorPage() {
   const [pools, setPools] = useState<LivePool[]>([]);
   const [poolsErr, setPoolsErr] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Allocation[]>([]);
+  const [allocations, setAllocations] = useState<Allocation[]>([]);
   const [search, setSearch] = useState("");
-  const [principalUsd, setPrincipalUsd] = useState(10_000);
-  const [horizonDays, setHorizonDays] = useState(90);
-  const [scenario, setScenario] =
-    useState<(typeof SCENARIOS)[number]["key"]>("baseline");
+  const [principal, setPrincipal] = useState(100_000);
+  const [horizon, setHorizon] = useState(90);
+  const [scenario, setScenario] = useState<Scenario>("baseline");
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<SimulationResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     let abort = false;
-    fetch("/api/yields/live")
+    fetch("/api/yields/live", { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
         if (abort) return;
-        if (Array.isArray(d.pools)) setPools(d.pools);
-        else setPoolsErr(d.error ?? "Failed to load market list");
+        if (Array.isArray(d.pools)) {
+          const list = d.pools as LivePool[];
+          setPools(list);
+          setAllocations((current) => {
+            if (current.length > 0) return current;
+            const seed = list.slice(0, 4);
+            const weight = Math.floor(100 / Math.max(1, seed.length));
+            const rounded = seed.map((pool, i) => ({
+              pool,
+              weightPct: i === 0 ? 100 - weight * (seed.length - 1) : weight,
+            }));
+            return rounded;
+          });
+        } else {
+          setPoolsErr(d.error ?? "Failed to load market list");
+        }
       })
       .catch((e) => !abort && setPoolsErr(String(e)));
     return () => {
@@ -133,67 +117,58 @@ export default function SimulatorPage() {
     };
   }, []);
 
-  const totalWeight = useMemo(
-    () => selected.reduce((s, a) => s + a.weightPct, 0),
-    [selected],
-  );
-
-  const weightOk = Math.abs(totalWeight - 100) <= 1 && selected.length > 0;
+  const totalWeight = allocations.reduce((s, a) => s + a.weightPct, 0);
 
   const filtered = useMemo(() => {
     if (pools.length === 0) return [];
     const q = search.trim().toLowerCase();
-    const selectedIds = new Set(selected.map((a) => a.pool.poolId));
-    const base = pools.filter((p) => !selectedIds.has(p.poolId));
-    if (!q) return base.slice(0, 50);
-    return base
-      .filter(
-        (p) =>
+    const taken = new Set(allocations.map((a) => a.pool.poolId));
+    return pools
+      .filter((p) => !taken.has(p.poolId))
+      .filter((p) => {
+        if (!q) return true;
+        return (
           p.symbol.toLowerCase().includes(q) ||
           p.protocol.toLowerCase().includes(q) ||
-          p.chain.toLowerCase().includes(q),
-      )
-      .slice(0, 50);
-  }, [pools, search, selected]);
+          p.chain.toLowerCase().includes(q)
+        );
+      })
+      .slice(0, 30);
+  }, [pools, allocations, search]);
+
+  function rebalanceEqually(next: Allocation[]): Allocation[] {
+    if (next.length === 0) return next;
+    const baseWeight = Math.floor(100 / next.length);
+    const drift = 100 - baseWeight * next.length;
+    return next.map((a, i) => ({ ...a, weightPct: i === 0 ? baseWeight + drift : baseWeight }));
+  }
 
   function addPool(pool: LivePool) {
-    if (selected.length >= MAX_ALLOCS) return;
-    if (selected.some((a) => a.pool.poolId === pool.poolId)) return;
-    const remaining = Math.max(0, 100 - totalWeight);
-    const defaultWeight = selected.length === 0 ? 100 : Math.min(remaining, 25);
-    setSelected([...selected, { pool, weightPct: defaultWeight }]);
-    setResult(null);
+    setAllocations((current) => {
+      if (current.length >= MAX_ALLOCATIONS) return current;
+      return rebalanceEqually([...current, { pool, weightPct: 0 }]);
+    });
   }
 
-  function removeAlloc(poolId: string) {
-    setSelected(selected.filter((a) => a.pool.poolId !== poolId));
-    setResult(null);
+  function removePool(poolId: string) {
+    setAllocations((current) => rebalanceEqually(current.filter((a) => a.pool.poolId !== poolId)));
   }
 
-  function setWeight(poolId: string, weight: number) {
-    setSelected(
-      selected.map((a) =>
-        a.pool.poolId === poolId
-          ? { ...a, weightPct: Math.max(0, Math.min(100, weight)) }
-          : a,
-      ),
+  function changeWeight(poolId: string, value: number) {
+    setAllocations((current) =>
+      current.map((a) => (a.pool.poolId === poolId ? { ...a, weightPct: Math.max(0, Math.min(100, value)) } : a)),
     );
-    setResult(null);
   }
 
-  function rebalanceEqual() {
-    if (selected.length === 0) return;
-    const each = +(100 / selected.length).toFixed(2);
-    const updated = selected.map((a, i) => ({
-      ...a,
-      weightPct: i === selected.length - 1 ? +(100 - each * (selected.length - 1)).toFixed(2) : each,
-    }));
-    setSelected(updated);
-    setResult(null);
-  }
-
-  async function run() {
-    if (!weightOk) return;
+  async function simulate() {
+    if (allocations.length === 0) {
+      setErr("Add at least one allocation.");
+      return;
+    }
+    if (Math.abs(totalWeight - 100) > 1) {
+      setErr(`Weights must sum to 100% (currently ${totalWeight.toFixed(1)}%).`);
+      return;
+    }
     setRunning(true);
     setErr(null);
     setResult(null);
@@ -202,743 +177,330 @@ export default function SimulatorPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          allocations: selected.map((a) => ({
-            poolId: a.pool.poolId,
-            weightPct: a.weightPct,
-          })),
-          principalUsd,
-          horizonDays,
+          allocations: allocations.map((a) => ({ poolId: a.pool.poolId, weightPct: a.weightPct })),
+          principalUsd: principal,
+          horizonDays: horizon,
           scenario,
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(data.error ?? `Simulation failed (${res.status})`);
       setResult(data as SimulationResult);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+    } catch (caught) {
+      setErr(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setRunning(false);
     }
   }
 
+  const seriesPath = useMemo(() => {
+    if (!result) return null;
+    const max = Math.max(...result.series.flatMap((p) => [p.totalUsd, p.baselineUsd]));
+    const min = Math.min(...result.series.flatMap((p) => [p.totalUsd, p.baselineUsd]));
+    const w = 760;
+    const h = 280;
+    const pathFor = (key: "totalUsd" | "baselineUsd") =>
+      result.series
+        .map((point, index) => {
+          const x = (index / Math.max(1, result.series.length - 1)) * w;
+          const y = h - ((point[key] - min) / Math.max(max - min, 1)) * (h - 24) - 12;
+          return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+        })
+        .join(" ");
+    return { base: pathFor("baselineUsd"), stress: pathFor("totalUsd"), w, h };
+  }, [result]);
+
+  const headlineApy = result?.weightedApy ?? 0;
+
   return (
-    <div className="page-wrap">
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-end",
-          flexWrap: "wrap",
-          gap: 12,
-        }}
-      >
+    <div className="page">
+      <div className="page-title">
         <div>
-          <div className="eyebrow">MODELS · SCENARIO ANALYSIS</div>
-          <h1
-            className="display"
-            style={{ fontSize: 28, margin: "6px 0 2px", letterSpacing: "-0.02em" }}
-          >
-            Test the allocation before capital moves.
-          </h1>
-          <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
-            Estimate how selected markets behave under baseline, liquidity, and drawdown assumptions.
-          </div>
+          <p className="eyebrow">Tools / Simulator</p>
+          <h1>Stress the mandate before it moves.</h1>
+          <p>
+            Forward-replay a custom allocation against baseline + three shock regimes
+            using real DeFiLlama daily history.
+          </p>
         </div>
-        <ThemeToggle />
       </div>
 
-      {/* ---------- ALLOCATIONS ---------- */}
-      <div className="card" style={{ padding: 18 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 12,
-            flexWrap: "wrap",
-            gap: 8,
-          }}
-        >
-          <div style={{ fontSize: 14, fontWeight: 600 }}>Allocation set</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span
-              className="mono"
-              style={{
-                fontSize: 11,
-                color: weightOk ? "var(--text-dim)" : "#ef4444",
-              }}
-            >
-              {totalWeight.toFixed(1)}% allocated · {selected.length}/{MAX_ALLOCS}
-            </span>
-            {selected.length > 1 && (
-              <button
-                type="button"
-                onClick={rebalanceEqual}
-                style={{
-                  padding: "4px 10px",
-                  fontSize: 11,
-                  background: "var(--surface-2)",
-                  color: "var(--text-1)",
-                  border: "1px solid var(--line)",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                }}
-              >
-                Equal weights
-              </button>
+      <CommandStrip
+        file="file/06a.simulator"
+        items={[
+          { label: "scenario", value: scenario, tone: scenario === "baseline" ? "ok" : "warn" },
+          { label: "horizon", value: `${horizon}d`, tone: "info" },
+          { label: "weights", value: `${totalWeight.toFixed(0)}%`, tone: Math.abs(totalWeight - 100) > 1 ? "danger" : "ok" },
+        ]}
+      />
+
+      <div className="metric-grid" style={{ marginBottom: 18 }}>
+        <MetricTile
+          label="Projected end"
+          value={result ? formatMoney(result.endUsd) : "—"}
+          icon={TrendingUp}
+          tone="#6ee7b7"
+        />
+        <MetricTile
+          label="Return"
+          value={result ? formatPct(result.returnPct, true) : "—"}
+          icon={Activity}
+          tone="#60a5fa"
+        />
+        <MetricTile
+          label="Scenario impact"
+          value={result ? formatMoney(result.scenarioImpactUsd) : "—"}
+          icon={TrendingDown}
+          tone="#fb7185"
+        />
+        <MetricTile
+          label="Weighted APY"
+          value={result ? formatPct(headlineApy) : "—"}
+          icon={Gauge}
+          tone="#fbbf24"
+        />
+      </div>
+
+      {err ? (
+        <div className="ticker" style={{ marginBottom: 16 }}>
+          <span className="severity-high">{err}</span>
+        </div>
+      ) : null}
+
+      <div className="tool-layout">
+        <div className="tool-stack">
+          <div className="projection-chart">
+            {seriesPath ? (
+              <svg viewBox={`0 0 ${seriesPath.w} ${seriesPath.h}`} role="img" aria-label="Simulation projection">
+                <path
+                  d={seriesPath.base}
+                  fill="none"
+                  stroke="#64748b"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeDasharray="8 8"
+                />
+                <path d={seriesPath.stress} fill="none" stroke="#6ee7b7" strokeWidth="4" strokeLinecap="round" />
+                <path
+                  d={`${seriesPath.stress} L ${seriesPath.w} ${seriesPath.h} L 0 ${seriesPath.h} Z`}
+                  fill="#6ee7b7"
+                  opacity="0.12"
+                />
+              </svg>
+            ) : (
+              <span style={{ color: "var(--muted)", fontSize: 13 }}>
+                Run a simulation to render the projected vs. baseline curves.
+              </span>
             )}
           </div>
-        </div>
 
-        {selected.length === 0 ? (
-          <div
-            style={{
-              padding: "12px 14px",
-              border: "1px dashed var(--line)",
-              borderRadius: 8,
-              fontSize: 12.5,
-              color: "var(--text-dim)",
-            }}
-          >
-            Select 1–{MAX_ALLOCS} markets below, then assign weights that sum to 100%.
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {selected.map((a) => (
-              <div
-                key={a.pool.poolId}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 130px 80px 28px",
-                  gap: 10,
-                  alignItems: "center",
-                  padding: "10px 12px",
-                  background: "var(--surface-2)",
-                  border: "1px solid var(--line)",
-                  borderRadius: 8,
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 500,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {a.pool.symbol}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: "var(--text-dim)",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {a.pool.protocol} · {a.pool.chain} · {a.pool.apy.toFixed(2)}% APY
-                  </div>
-                </div>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  step={1}
-                  value={a.weightPct}
-                  onChange={(e) => setWeight(a.pool.poolId, Number(e.target.value))}
-                  style={{ width: "100%" }}
-                />
-                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={a.weightPct}
-                    onChange={(e) => setWeight(a.pool.poolId, Number(e.target.value))}
-                    style={{
-                      width: 60,
-                      padding: "4px 6px",
-                      fontSize: 12,
-                      background: "var(--surface-1, var(--surface-2))",
-                      color: "var(--text-1)",
-                      border: "1px solid var(--line)",
-                      borderRadius: 6,
-                      textAlign: "right",
-                    }}
-                  />
-                  <span style={{ fontSize: 11, color: "var(--text-dim)" }}>%</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeAlloc(a.pool.poolId)}
-                  aria-label="Remove allocation"
-                  style={{
-                    width: 24,
-                    height: 24,
-                    background: "transparent",
-                    color: "var(--text-dim)",
-                    border: "1px solid var(--line)",
-                    borderRadius: 6,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Icons.x size={11} />
-                </button>
+          {result ? (
+            <div className="strategy-card">
+              <h3>Allocation breakdown</h3>
+              <p>
+                Max drawdown <strong>{formatPct(result.maxDrawdownPct * 100)}</strong> · baseline end{" "}
+                <strong>{formatMoney(result.baselineEndUsd)}</strong>.
+              </p>
+              <div className="allocation-list">
+                {result.poolBreakdown.map((row) => {
+                  const chain = chainIdFromName(row.chain);
+                  return (
+                    <div className="allocation-row" key={`row-${row.poolId}`}>
+                      <div className="token-cell">
+                        <div className="token-chip" aria-hidden="true">
+                          {row.symbol.slice(0, 2)}
+                        </div>
+                        <div>
+                          <strong>{row.symbol}</strong>
+                          <span>
+                            {row.protocol} · mean APY {formatPct(row.meanApy)}
+                          </span>
+                        </div>
+                      </div>
+                      <strong>{row.weightPct.toFixed(0)}%</strong>
+                      <ChainBadge chain={chain} />
+                    </div>
+                  );
+                })}
               </div>
-            ))}
-          </div>
-        )}
-
-        <div style={{ marginTop: 16 }}>
-          <input
-            type="text"
-            placeholder="Search by symbol, protocol, or chain (USDC, Aave, Arbitrum...)"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{
-              width: "100%",
-              padding: "10px 12px",
-              fontSize: 13,
-              background: "var(--surface-2)",
-              color: "var(--text-1)",
-              border: "1px solid var(--line)",
-              borderRadius: 8,
-            }}
-          />
-
-          {poolsErr ? (
-            <div style={{ marginTop: 10, fontSize: 12, color: "#ef4444" }}>
-              Couldn&rsquo;t load market list: {poolsErr}
-            </div>
-          ) : pools.length === 0 ? (
-            <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-dim)" }}>
-              Loading market catalog…
+              {result.skipped.length > 0 ? (
+                <p className="severity-medium" style={{ marginTop: 10, fontSize: 12 }}>
+                  Skipped (insufficient history): {result.skipped.join(", ")}
+                </p>
+              ) : null}
             </div>
           ) : (
-            <div
-              style={{
-                marginTop: 10,
-                maxHeight: 240,
-                overflowY: "auto",
-                border: "1px solid var(--line)",
-                borderRadius: 8,
-              }}
-            >
-              {filtered.length === 0 ? (
-                <div
-                  style={{
-                    padding: 16,
-                    fontSize: 12.5,
-                    color: "var(--text-dim)",
-                    textAlign: "center",
-                  }}
+            <EmptyState
+              icon={Gauge}
+              title="No simulation yet"
+              body="Adjust principal, horizon, and shock scenario, then press Run simulation. We replay each pool's APY history forward."
+            />
+          )}
+        </div>
+
+        <aside className="boost-panel">
+          <p className="eyebrow">Inputs</p>
+          <div className="sim-controls">
+            <label>
+              Principal (USD)
+              <input
+                className="number-input"
+                type="number"
+                min={1000}
+                step={1000}
+                value={principal}
+                onChange={(event) => setPrincipal(Math.max(1000, Number(event.target.value) || 0))}
+              />
+            </label>
+            <label>
+              Horizon
+              <select
+                className="select-input"
+                value={horizon}
+                onChange={(event) => setHorizon(Number(event.target.value))}
+              >
+                {HORIZONS.map((h) => (
+                  <option key={h.label} value={h.days}>
+                    {h.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="scenario-grid">
+              {SCENARIOS.map((s) => (
+                <button
+                  className={`tab-button ${scenario === s.key ? "active" : ""}`}
+                  key={s.key}
+                  type="button"
+                  onClick={() => setScenario(s.key)}
+                  title={s.blurb}
                 >
-                  No matches.
-                </div>
-              ) : (
-                filtered.map((p, i) => (
-                  <button
-                    key={p.poolId}
-                    type="button"
-                    onClick={() => addPool(p)}
-                    disabled={selected.length >= MAX_ALLOCS}
-                    style={{
-                      width: "100%",
-                      display: "grid",
-                      gridTemplateColumns: "1fr 80px 80px 24px",
-                      gap: 10,
-                      alignItems: "center",
-                      padding: "10px 14px",
-                      background: "transparent",
-                      color: "var(--text-1)",
-                      border: "none",
-                      borderBottom:
-                        i === filtered.length - 1 ? "none" : "1px solid var(--line)",
-                      cursor: selected.length >= MAX_ALLOCS ? "not-allowed" : "pointer",
-                      fontSize: 12.5,
-                      textAlign: "left",
-                      opacity: selected.length >= MAX_ALLOCS ? 0.5 : 1,
-                    }}
-                  >
-                    <div
-                      style={{
-                        minWidth: 0,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      <span style={{ fontWeight: 500 }}>{p.symbol}</span>
-                      <span style={{ color: "var(--text-dim)" }}>
-                        {" · "}
-                        {p.protocol} · {p.chain}
-                      </span>
+                  {s.label}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={simulate}
+              disabled={running || allocations.length === 0}
+            >
+              <Gauge size={17} aria-hidden="true" />
+              {running ? "Simulating…" : "Run simulation"}
+            </button>
+          </div>
+
+          <div className="ticker" style={{ marginTop: 18 }}>
+            <span>
+              <Banknote size={16} aria-hidden="true" />
+              Total weight <b>{totalWeight.toFixed(0)}%</b>
+            </span>
+          </div>
+
+          <p className="eyebrow" style={{ marginTop: 18 }}>
+            Allocations ({allocations.length}/{MAX_ALLOCATIONS})
+          </p>
+          <div className="allocation-list" style={{ marginBottom: 14 }}>
+            {allocations.length === 0 ? (
+              <span style={{ fontSize: 13, color: "var(--muted)" }}>
+                Add pools below — weights will balance equally.
+              </span>
+            ) : (
+              allocations.map((alloc) => {
+                const chain = chainIdFromName(alloc.pool.chain);
+                return (
+                  <div className="allocation-row" key={`alloc-${alloc.pool.poolId}`}>
+                    <div className="token-cell">
+                      <div className="token-chip" aria-hidden="true">
+                        {alloc.pool.symbol.slice(0, 2)}
+                      </div>
+                      <div>
+                        <strong>{alloc.pool.symbol}</strong>
+                        <span>
+                          {alloc.pool.protocol} · {formatPct(alloc.pool.apy)}
+                        </span>
+                      </div>
                     </div>
-                    <span
-                      className="mono"
-                      style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right" }}
+                    <input
+                      type="number"
+                      className="number-input"
+                      style={{ width: 70, minHeight: 36, padding: "0 8px" }}
+                      min={0}
+                      max={100}
+                      value={alloc.weightPct}
+                      onChange={(event) => changeWeight(alloc.pool.poolId, Number(event.target.value) || 0)}
+                    />
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      style={{ minHeight: 36, padding: "0 8px" }}
+                      aria-label="Remove"
+                      onClick={() => removePool(alloc.pool.poolId)}
                     >
-                      {p.apy.toFixed(2)}%
-                    </span>
-                    <span
-                      className="mono"
-                      style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right" }}
-                    >
-                      {p.tvlUsd >= 1e9
-                        ? `$${(p.tvlUsd / 1e9).toFixed(1)}B`
-                        : `$${(p.tvlUsd / 1e6).toFixed(0)}M`}
-                    </span>
-                    <Icons.plus size={14} style={{ color: "var(--accent)" }} />
+                      <X size={14} aria-hidden="true" />
+                      <ChainBadge chain={chain} />
+                    </button>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          <p className="eyebrow">Add pool</p>
+          <div style={{ position: "relative", marginBottom: 12 }}>
+            <Search
+              size={14}
+              aria-hidden="true"
+              style={{ position: "absolute", top: "50%", left: 12, transform: "translateY(-50%)", color: "var(--muted)" }}
+            />
+            <input
+              className="search-input"
+              style={{ paddingLeft: 32, width: "100%", minWidth: 0 }}
+              placeholder="Search pool, protocol, chain"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </div>
+
+          {poolsErr ? (
+            <span className="severity-high" style={{ fontSize: 12 }}>
+              {poolsErr}
+            </span>
+          ) : (
+            <div className="allocation-list" style={{ maxHeight: 280, overflowY: "auto" }}>
+              {filtered.length === 0 ? (
+                <span style={{ fontSize: 13, color: "var(--muted)" }}>
+                  {pools.length === 0 ? "Loading…" : "No matches."}
+                </span>
+              ) : (
+                filtered.map((pool) => (
+                  <button
+                    key={`add-${pool.poolId}`}
+                    type="button"
+                    className="allocation-row"
+                    disabled={allocations.length >= MAX_ALLOCATIONS}
+                    onClick={() => addPool(pool)}
+                  >
+                    <div className="token-cell">
+                      <div className="token-chip" aria-hidden="true">
+                        {pool.symbol.slice(0, 2)}
+                      </div>
+                      <div>
+                        <strong>{pool.symbol}</strong>
+                        <span>
+                          {pool.protocol} · {formatUsd(pool.tvlUsd)}
+                        </span>
+                      </div>
+                    </div>
+                    <ChainBadge chain={chainIdFromName(pool.chain)} />
+                    <Plus size={16} aria-hidden="true" />
                   </button>
                 ))
               )}
             </div>
           )}
-        </div>
+        </aside>
       </div>
-
-      {/* ---------- PARAMS ---------- */}
-      <div className="card" style={{ padding: 18 }}>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "180px 1fr",
-            gap: 14,
-            alignItems: "center",
-            marginBottom: 14,
-          }}
-        >
-          <span
-            style={{
-              fontSize: 11,
-              color: "var(--text-dim)",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-            }}
-          >
-            Capital
-          </span>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 14, color: "var(--text-dim)" }}>$</span>
-            <input
-              type="number"
-              min={100}
-              step={1000}
-              value={principalUsd}
-              onChange={(e) => {
-                setPrincipalUsd(Math.max(100, Number(e.target.value) || 0));
-                setResult(null);
-              }}
-              style={{
-                width: 160,
-                padding: "8px 10px",
-                fontSize: 13,
-                background: "var(--surface-2)",
-                color: "var(--text-1)",
-                border: "1px solid var(--line)",
-                borderRadius: 6,
-                textAlign: "right",
-              }}
-            />
-            <div style={{ display: "flex", gap: 4 }}>
-              {[1_000, 10_000, 100_000, 1_000_000].map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => {
-                    setPrincipalUsd(v);
-                    setResult(null);
-                  }}
-                  style={{
-                    padding: "4px 8px",
-                    fontSize: 11,
-                    background:
-                      principalUsd === v ? "var(--accent)" : "var(--surface-2)",
-                    color:
-                      principalUsd === v ? "var(--accent-text)" : "var(--text-dim)",
-                    border: "1px solid var(--line)",
-                    borderRadius: 4,
-                    cursor: "pointer",
-                  }}
-                >
-                  {fmtUsd(v)}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "180px 1fr",
-            gap: 14,
-            alignItems: "center",
-            marginBottom: 14,
-          }}
-        >
-          <span
-            style={{
-              fontSize: 11,
-              color: "var(--text-dim)",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-            }}
-          >
-            Horizon
-          </span>
-          <div style={{ display: "flex", gap: 4 }}>
-            {HORIZONS.map((h) => {
-              const active = h.days === horizonDays;
-              return (
-                <button
-                  key={h.days}
-                  type="button"
-                  onClick={() => {
-                    setHorizonDays(h.days);
-                    setResult(null);
-                  }}
-                  style={{
-                    padding: "6px 14px",
-                    fontSize: 12,
-                    background: active ? "var(--accent)" : "var(--surface-2)",
-                    color: active ? "var(--accent-text)" : "var(--text-1)",
-                    border: "1px solid var(--line)",
-                    borderRadius: 6,
-                    cursor: "pointer",
-                    fontWeight: active ? 600 : 400,
-                  }}
-                >
-                  {h.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "180px 1fr",
-            gap: 14,
-            alignItems: "flex-start",
-          }}
-        >
-          <span
-            style={{
-              fontSize: 11,
-              color: "var(--text-dim)",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-              paddingTop: 6,
-            }}
-          >
-            Scenario
-          </span>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 8,
-            }}
-          >
-            {SCENARIOS.map((s) => {
-              const active = s.key === scenario;
-              return (
-                <button
-                  key={s.key}
-                  type="button"
-                  onClick={() => {
-                    setScenario(s.key);
-                    setResult(null);
-                  }}
-                  style={{
-                    padding: "10px 12px",
-                    background: active ? "var(--surface-3)" : "var(--surface-2)",
-                    color: "var(--text-1)",
-                    border: `1px solid ${active ? "var(--accent)" : "var(--line)"}`,
-                    borderRadius: 8,
-                    cursor: "pointer",
-                    textAlign: "left",
-                  }}
-                >
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
-                    {s.label}
-                  </div>
-                  <div style={{ fontSize: 11.5, color: "var(--text-dim)", lineHeight: 1.4 }}>
-                    {s.blurb}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* ---------- RUN ---------- */}
-      <div
-        className="card"
-        style={{
-          padding: 16,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-          gap: 12,
-        }}
-      >
-        <div style={{ fontSize: 12.5, color: "var(--text-dim)" }}>
-          {weightOk
-            ? "Ready to simulate."
-            : selected.length === 0
-              ? "Pick at least one market to begin."
-              : `Weights must sum to 100% (currently ${totalWeight.toFixed(1)}%).`}
-        </div>
-        <button
-          type="button"
-          className="btn"
-          onClick={run}
-          disabled={running || !weightOk}
-        >
-          {running ? "Analyzing…" : "Run analysis"}
-        </button>
-      </div>
-
-      {err && (
-        <div
-          className="card"
-          style={{ padding: 14, fontSize: 12.5, color: "#ef4444", borderColor: "#ef4444" }}
-        >
-          {err}
-        </div>
-      )}
-
-      {/* ---------- RESULTS ---------- */}
-      {result && <ResultsPanel result={result} />}
-    </div>
-  );
-}
-
-function ResultsPanel({ result }: { result: SimulationResult }) {
-  const isStress = result.scenario !== "baseline";
-
-  return (
-    <>
-      {/* Stat row */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          gap: 12,
-        }}
-      >
-        <Stat label="Modeled value" value={fmtUsd(result.endUsd)} hint={`from ${fmtUsd(result.startUsd)}`} />
-        <Stat
-          label="Total return"
-          value={fmtPct(result.returnPct)}
-          tone={result.returnPct >= 0 ? "good" : "bad"}
-          hint={`weighted APY ${result.weightedApy.toFixed(2)}%`}
-        />
-        <Stat
-          label="Max drawdown"
-          value={fmtPct(result.maxDrawdownPct)}
-          tone={result.maxDrawdownPct < -1 ? "bad" : "neutral"}
-          hint={`over ${result.horizonDays} days`}
-        />
-        {isStress && (
-          <Stat
-            label="Scenario effect"
-            value={fmtUsd(result.scenarioImpactUsd)}
-            tone={result.scenarioImpactUsd < 0 ? "bad" : "good"}
-            hint={`vs baseline ${fmtUsd(result.baselineEndUsd)}`}
-          />
-        )}
-      </div>
-
-      {/* Chart */}
-      <div className="card" style={{ padding: 18 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>
-          Modeled portfolio value
-        </div>
-        <ResponsiveContainer width="100%" height={300}>
-          <AreaChart data={result.series} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
-            <defs>
-              <linearGradient id="gScenario" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#00D4AA" stopOpacity={0.4} />
-                <stop offset="100%" stopColor="#00D4AA" stopOpacity={0} />
-              </linearGradient>
-              <linearGradient id="gBaseline" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#8a8f99" stopOpacity={0.18} />
-                <stop offset="100%" stopColor="#8a8f99" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
-            <XAxis
-              dataKey="day"
-              stroke="var(--text-dim)"
-              fontSize={10}
-              tickFormatter={(d: number) => `D${d}`}
-              tickLine={false}
-              axisLine={false}
-            />
-            <YAxis
-              stroke="var(--text-dim)"
-              fontSize={10}
-              tickFormatter={(v: number) => fmtUsd(v)}
-              tickLine={false}
-              axisLine={false}
-              width={70}
-            />
-            <Tooltip
-              contentStyle={{
-                background: "var(--surface-2)",
-                border: "1px solid var(--line)",
-                borderRadius: 6,
-                fontSize: 12,
-              }}
-              labelFormatter={(d) =>
-                `Day ${d} · ${result.series[Number(d)]?.date ?? ""}`
-              }
-              formatter={(v, name) => [fmtUsd(Number(v)), String(name)]}
-            />
-            <Legend
-              wrapperStyle={{ fontSize: 12 }}
-              formatter={(v: string) => (v === "totalUsd" ? "Scenario" : "Baseline")}
-            />
-            {isStress && (
-              <Area
-                type="monotone"
-                dataKey="baselineUsd"
-                stroke="#8a8f99"
-                strokeDasharray="4 4"
-                fill="url(#gBaseline)"
-                strokeWidth={1.5}
-              />
-            )}
-            <Area
-              type="monotone"
-              dataKey="totalUsd"
-              stroke="#00D4AA"
-              fill="url(#gScenario)"
-              strokeWidth={2}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Market breakdown */}
-      <div className="card" style={{ padding: 18 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>
-          Market breakdown
-        </div>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-            <thead>
-              <tr style={{ color: "var(--text-dim)", textAlign: "left" }}>
-                <th style={{ padding: "8px 4px", fontWeight: 500 }}>Market</th>
-                <th style={{ padding: "8px 4px", fontWeight: 500, textAlign: "right" }}>Weight</th>
-                <th style={{ padding: "8px 4px", fontWeight: 500, textAlign: "right" }}>Mean APY</th>
-                <th style={{ padding: "8px 4px", fontWeight: 500, textAlign: "right" }}>Start</th>
-                <th style={{ padding: "8px 4px", fontWeight: 500, textAlign: "right" }}>End</th>
-                <th style={{ padding: "8px 4px", fontWeight: 500, textAlign: "right" }}>Return</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.poolBreakdown.map((p) => (
-                <tr key={p.poolId} style={{ borderTop: "1px solid var(--line)" }}>
-                  <td style={{ padding: "10px 4px" }}>
-                    <div style={{ fontWeight: 500 }}>{p.symbol}</div>
-                    <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
-                      {p.protocol} · {p.chain}
-                    </div>
-                  </td>
-                  <td className="mono" style={{ padding: "10px 4px", textAlign: "right" }}>
-                    {p.weightPct.toFixed(1)}%
-                  </td>
-                  <td className="mono" style={{ padding: "10px 4px", textAlign: "right" }}>
-                    {p.meanApy.toFixed(2)}%
-                  </td>
-                  <td className="mono" style={{ padding: "10px 4px", textAlign: "right" }}>
-                    {fmtUsd(p.startUsd)}
-                  </td>
-                  <td className="mono" style={{ padding: "10px 4px", textAlign: "right" }}>
-                    {fmtUsd(p.endUsd)}
-                  </td>
-                  <td
-                    className="mono"
-                    style={{
-                      padding: "10px 4px",
-                      textAlign: "right",
-                      color: p.returnPct >= 0 ? "#10b981" : "#ef4444",
-                    }}
-                  >
-                    {fmtPct(p.returnPct)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {result.skipped.length > 0 && (
-          <div style={{ marginTop: 10, fontSize: 11.5, color: "var(--text-dim)" }}>
-            Skipped due to insufficient history: {result.skipped.length} market(s).
-          </div>
-        )}
-      </div>
-
-      <div
-        style={{
-          fontSize: 11,
-          color: "var(--text-dim)",
-          padding: "0 4px",
-          lineHeight: 1.5,
-        }}
-      >
-        Model output is an estimate. Past APY does not guarantee future returns.
-        Scenario assumptions are planning inputs, not predictions.
-      </div>
-    </>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  hint,
-  tone,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-  tone?: "good" | "bad" | "neutral";
-}) {
-  const color =
-    tone === "good" ? "#10b981" : tone === "bad" ? "#ef4444" : "var(--text-1)";
-  return (
-    <div className="card" style={{ padding: 14 }}>
-      <div
-        style={{
-          fontSize: 11,
-          color: "var(--text-dim)",
-          textTransform: "uppercase",
-          letterSpacing: "0.06em",
-          marginBottom: 6,
-        }}
-      >
-        {label}
-      </div>
-      <div className="mono" style={{ fontSize: 22, fontWeight: 600, color, lineHeight: 1.2 }}>
-        {value}
-      </div>
-      {hint && (
-        <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 4 }}>{hint}</div>
-      )}
     </div>
   );
 }

@@ -1,16 +1,20 @@
 "use client";
 
+import type React from "react";
 import { useEffect, useMemo, useState } from "react";
-import { Icons, ThemeToggle } from "@/components/sovereign";
-
-interface LivePool {
-  poolId: string;
-  symbol: string;
-  protocol: string;
-  chain: string;
-  tvlUsd: number;
-  apy: number;
-}
+import { Network, Plus, Search, X } from "lucide-react";
+import {
+  ChainBadge,
+  CommandStrip,
+  EmptyState,
+  MetricTile,
+} from "@/components/site/ui";
+import {
+  chainIdFromName,
+  formatPct,
+  formatUsd,
+} from "@/lib/design-utils";
+import type { LivePool } from "@/app/api/yields/live/route";
 
 interface MatrixResponse {
   poolIds: string[];
@@ -28,24 +32,14 @@ const WINDOWS: Array<{ label: string; days: number }> = [
   { label: "180D", days: 180 },
 ];
 
-const MAX_POOLS = 12;
+const MAX_SELECTED = 8;
 
-function correlationColor(value: number): string {
-  if (!Number.isFinite(value)) return "var(--surface-3)";
-  // Bipolar scale: -1 (uncorrelated) → blue, 0 → neutral, +1 (correlated) → red.
-  // Diversification logic = lower abs(corr) is better for portfolio construction.
-  const v = Math.max(-1, Math.min(1, value));
-  if (v >= 0) {
-    const alpha = v;
-    return `rgba(239, 68, 68, ${alpha.toFixed(2)})`;
-  }
-  const alpha = -v;
-  return `rgba(56, 189, 248, ${alpha.toFixed(2)})`;
-}
-
-function correlationLabel(value: number): string {
-  if (!Number.isFinite(value)) return "—";
-  return value.toFixed(2);
+function correlationHue(value: number): string {
+  if (!Number.isFinite(value)) return "#1e2226";
+  if (value > 0.66) return "#fb7185";
+  if (value > 0.34) return "#fbbf24";
+  if (value > 0.1) return "#60a5fa";
+  return "#6ee7b7";
 }
 
 export default function CorrelationPage() {
@@ -60,12 +54,17 @@ export default function CorrelationPage() {
 
   useEffect(() => {
     let abort = false;
-    fetch("/api/yields/live")
+    fetch("/api/yields/live", { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
         if (abort) return;
-        if (Array.isArray(d.pools)) setPools(d.pools);
-        else setPoolsErr(d.error ?? "Failed to load market list");
+        if (Array.isArray(d.pools)) {
+          setPools(d.pools as LivePool[]);
+          // Pre-seed with the first five top-TVL pools so the matrix has shape on first paint.
+          setSelected((current) => (current.length === 0 ? (d.pools as LivePool[]).slice(0, 5) : current));
+        } else {
+          setPoolsErr(d.error ?? "Failed to load market list");
+        }
       })
       .catch((e) => !abort && setPoolsErr(String(e)));
     return () => {
@@ -77,32 +76,24 @@ export default function CorrelationPage() {
     if (pools.length === 0) return [];
     const q = search.trim().toLowerCase();
     const selectedIds = new Set(selected.map((p) => p.poolId));
-    const base = pools.filter((p) => !selectedIds.has(p.poolId));
-    if (!q) return base.slice(0, 50);
-    return base
-      .filter(
-        (p) =>
+    return pools
+      .filter((p) => !selectedIds.has(p.poolId))
+      .filter((p) => {
+        if (!q) return true;
+        return (
           p.symbol.toLowerCase().includes(q) ||
           p.protocol.toLowerCase().includes(q) ||
-          p.chain.toLowerCase().includes(q),
-      )
-      .slice(0, 50);
-  }, [pools, search, selected]);
-
-  function addPool(pool: LivePool) {
-    if (selected.length >= MAX_POOLS) return;
-    if (selected.some((p) => p.poolId === pool.poolId)) return;
-    setSelected([...selected, pool]);
-    setResult(null);
-  }
-
-  function removePool(poolId: string) {
-    setSelected(selected.filter((p) => p.poolId !== poolId));
-    setResult(null);
-  }
+          p.chain.toLowerCase().includes(q)
+        );
+      })
+      .slice(0, 30);
+  }, [pools, selected, search]);
 
   async function compute() {
-    if (selected.length < 2) return;
+    if (selected.length < 2) {
+      setErr("Select at least 2 pools.");
+      return;
+    }
     setRunning(true);
     setErr(null);
     setResult(null);
@@ -116,414 +107,280 @@ export default function CorrelationPage() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(data.error ?? `Correlation failed (${res.status})`);
       setResult(data as MatrixResponse);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+    } catch (caught) {
+      setErr(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setRunning(false);
     }
   }
 
-  const labelMap = useMemo(() => {
-    const m = new Map<string, LivePool>();
-    for (const p of selected) m.set(p.poolId, p);
-    return m;
-  }, [selected]);
+  const matrix = result?.matrix ?? [];
+  const orderedSelected = useMemo(() => {
+    if (!result) return selected;
+    const map = new Map(selected.map((p) => [p.poolId, p]));
+    return result.poolIds.map((id) => map.get(id)).filter((p): p is LivePool => Boolean(p));
+  }, [selected, result]);
+
+  const meanRel = useMemo(() => {
+    if (matrix.length < 2) return null;
+    let total = 0;
+    let count = 0;
+    for (let i = 0; i < matrix.length; i++) {
+      for (let j = i + 1; j < matrix.length; j++) {
+        const v = matrix[i][j];
+        if (Number.isFinite(v)) {
+          total += v;
+          count += 1;
+        }
+      }
+    }
+    return count === 0 ? null : total / count;
+  }, [matrix]);
+
+  const lowestPair = useMemo(() => {
+    if (matrix.length < 2) return null;
+    let lo = Infinity;
+    for (let i = 0; i < matrix.length; i++) {
+      for (let j = i + 1; j < matrix.length; j++) {
+        if (Number.isFinite(matrix[i][j])) lo = Math.min(lo, matrix[i][j]);
+      }
+    }
+    return Number.isFinite(lo) ? lo : null;
+  }, [matrix]);
+
+  const highestPair = useMemo(() => {
+    if (matrix.length < 2) return null;
+    let hi = -Infinity;
+    for (let i = 0; i < matrix.length; i++) {
+      for (let j = i + 1; j < matrix.length; j++) {
+        if (Number.isFinite(matrix[i][j])) hi = Math.max(hi, matrix[i][j]);
+      }
+    }
+    return Number.isFinite(hi) ? hi : null;
+  }, [matrix]);
 
   return (
-    <div className="page-wrap">
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-end",
-          flexWrap: "wrap",
-          gap: 12,
-        }}
-      >
+    <div className="page">
+      <div className="page-title">
         <div>
-          <div className="eyebrow">MODELS · CORRELATION</div>
-          <h1
-            className="display"
-            style={{ fontSize: 28, margin: "6px 0 2px", letterSpacing: "-0.02em" }}
-          >
-            Confirm diversification.
-          </h1>
-          <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
-            Compare market relationships before increasing concentration across similar exposures.
-          </div>
+          <p className="eyebrow">Tools / Correlation</p>
+          <h1>Find crowded exposure early.</h1>
+          <p>
+            Pearson correlation across up to {MAX_SELECTED} live pools using day-over-day
+            APY changes. Lower magnitudes = better diversification.
+          </p>
         </div>
-        <ThemeToggle />
       </div>
 
-      {/* ---------- SELECTOR ---------- */}
-      <div className="card" style={{ padding: 18 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 12,
-          }}
-        >
-          <div style={{ fontSize: 14, fontWeight: 600 }}>Selected markets</div>
-          <div className="mono" style={{ fontSize: 11, color: "var(--text-dim)" }}>
-            {selected.length}/{MAX_POOLS}
-          </div>
+      <CommandStrip
+        file="file/06b.correlation"
+        items={[
+          { label: "selected", value: String(selected.length), tone: "ok" },
+          { label: "window", value: `${windowDays}d`, tone: "info" },
+          { label: "limit", value: `${MAX_SELECTED} pools`, tone: "warn" },
+        ]}
+      />
+
+      <div className="metric-grid" style={{ marginBottom: 18 }}>
+        <MetricTile label="Selected" value={String(selected.length)} icon={Network} tone="#60a5fa" />
+        <MetricTile
+          label="Mean relation"
+          value={meanRel == null ? "—" : meanRel.toFixed(2)}
+          icon={Network}
+          tone="#6ee7b7"
+        />
+        <MetricTile
+          label="Lowest pair"
+          value={lowestPair == null ? "—" : lowestPair.toFixed(2)}
+          icon={Network}
+          tone="#fbbf24"
+        />
+        <MetricTile
+          label="Highest pair"
+          value={highestPair == null ? "—" : highestPair.toFixed(2)}
+          icon={Network}
+          tone="#fb7185"
+        />
+      </div>
+
+      <div className="page-tools" style={{ marginBottom: 18 }}>
+        <div className="filter-row">
+          {WINDOWS.map((w) => (
+            <button
+              type="button"
+              key={w.label}
+              className={`chip-button ${windowDays === w.days ? "active" : ""}`}
+              onClick={() => setWindowDays(w.days)}
+            >
+              {w.label}
+            </button>
+          ))}
         </div>
-
-        {selected.length === 0 ? (
-          <div
-            style={{
-              padding: "12px 14px",
-              border: "1px dashed var(--line)",
-              borderRadius: 8,
-              fontSize: 12.5,
-              color: "var(--text-dim)",
-            }}
+        <div className="filter-row">
+          <button type="button" className="ghost-button" onClick={() => setSelected([])}>
+            <X size={16} aria-hidden="true" /> Clear
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={compute}
+            disabled={running || selected.length < 2}
           >
-            Select 2–{MAX_POOLS} markets from the list below.
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {selected.map((p) => (
-              <button
-                key={p.poolId}
-                type="button"
-                onClick={() => removePool(p.poolId)}
-                className="chip"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "5px 10px",
-                  fontSize: 12,
-                  cursor: "pointer",
-                }}
-              >
-                <span style={{ color: "var(--text-1)" }}>
-                  {p.symbol} <span style={{ color: "var(--text-dim)" }}>· {p.protocol}</span>
-                </span>
-                <Icons.x size={11} />
-              </button>
-            ))}
-          </div>
-        )}
+            <Network size={16} aria-hidden="true" />
+            {running ? "Computing…" : "Compute matrix"}
+          </button>
+        </div>
+      </div>
 
-        <div style={{ marginTop: 16 }}>
-          <input
-            type="text"
-            placeholder="Search by symbol, protocol, or chain (USDC, Aave, Arbitrum...)"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{
-              width: "100%",
-              padding: "10px 12px",
-              fontSize: 13,
-              background: "var(--surface-2)",
-              color: "var(--text-1)",
-              border: "1px solid var(--line)",
-              borderRadius: 8,
-            }}
-          />
+      {err ? (
+        <div className="ticker" style={{ marginBottom: 18 }}>
+          <span className="severity-high">{err}</span>
+        </div>
+      ) : null}
 
-          {poolsErr ? (
-            <div style={{ marginTop: 10, fontSize: 12, color: "#ef4444" }}>
-              Couldn&rsquo;t load market list: {poolsErr}
-            </div>
-          ) : pools.length === 0 ? (
-            <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-dim)" }}>
-              Loading market catalog…
-            </div>
+      <div className="tool-layout">
+        <div className="tool-stack">
+          {orderedSelected.length < 2 ? (
+            <EmptyState
+              icon={Network}
+              title="Pick at least two pools"
+              body="Use the search panel on the right to add up to eight pools to the matrix."
+            />
+          ) : !result ? (
+            <EmptyState
+              icon={Network}
+              title="Matrix not yet computed"
+              body="Press Compute matrix to fan out to DeFiLlama history and build the Pearson grid."
+            />
           ) : (
             <div
-              style={{
-                marginTop: 10,
-                maxHeight: 280,
-                overflowY: "auto",
-                border: "1px solid var(--line)",
-                borderRadius: 8,
-              }}
+              className="correlation-grid"
+              style={{ "--matrix-size": orderedSelected.length } as React.CSSProperties}
             >
-              {filtered.length === 0 ? (
-                <div
-                  style={{
-                    padding: 16,
-                    fontSize: 12.5,
-                    color: "var(--text-dim)",
-                    textAlign: "center",
-                  }}
+              {matrix.map((row, rowIndex) =>
+                row.map((value, colIndex) => {
+                  const hue = correlationHue(value);
+                  return (
+                    <div
+                      className="correlation-cell"
+                      key={`${rowIndex}-${colIndex}`}
+                      style={{
+                        background: `color-mix(in srgb, ${hue} ${Math.round(Math.abs(value) * 62)}%, rgba(30,34,38,.92))`,
+                      }}
+                    >
+                      <div>
+                        {Number.isFinite(value) ? value.toFixed(2) : "—"}
+                        <small>{orderedSelected[colIndex]?.symbol}</small>
+                      </div>
+                    </div>
+                  );
+                }),
+              )}
+            </div>
+          )}
+
+          {result?.missing && result.missing.length > 0 ? (
+            <div className="ticker">
+              <span className="severity-medium">
+                Skipped: {result.missing.length} pool(s) had insufficient history.
+              </span>
+            </div>
+          ) : null}
+        </div>
+
+        <aside className="boost-panel">
+          <p className="eyebrow">Selected ({selected.length}/{MAX_SELECTED})</p>
+          <div className="allocation-list" style={{ marginBottom: 14 }}>
+            {selected.length === 0 ? (
+              <span style={{ fontSize: 13, color: "var(--muted)" }}>None yet — add pools below.</span>
+            ) : (
+              selected.map((pool) => (
+                <button
+                  key={`sel-${pool.poolId}`}
+                  type="button"
+                  className="allocation-row tab-button active"
+                  onClick={() =>
+                    setSelected((current) => current.filter((p) => p.poolId !== pool.poolId))
+                  }
                 >
-                  No matches.
-                </div>
-              ) : (
-                filtered.map((p, i) => (
-                  <button
-                    key={p.poolId}
-                    type="button"
-                    onClick={() => addPool(p)}
-                    disabled={selected.length >= MAX_POOLS}
-                    style={{
-                      width: "100%",
-                      display: "grid",
-                      gridTemplateColumns: "1fr 80px 80px 24px",
-                      gap: 10,
-                      alignItems: "center",
-                      padding: "10px 14px",
-                      background: "transparent",
-                      color: "var(--text-1)",
-                      border: "none",
-                      borderBottom:
-                        i === filtered.length - 1 ? "none" : "1px solid var(--line)",
-                      cursor: selected.length >= MAX_POOLS ? "not-allowed" : "pointer",
-                      fontSize: 12.5,
-                      textAlign: "left",
-                      opacity: selected.length >= MAX_POOLS ? 0.5 : 1,
-                    }}
-                  >
-                    <div style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      <span style={{ fontWeight: 500 }}>{p.symbol}</span>
-                      <span style={{ color: "var(--text-dim)" }}>
-                        {" · "}
-                        {p.protocol} · {p.chain}
+                  <div className="token-cell">
+                    <div className="token-chip" aria-hidden="true">
+                      {pool.symbol.slice(0, 2)}
+                    </div>
+                    <div>
+                      <strong>{pool.symbol}</strong>
+                      <span>
+                        {pool.protocol} · {formatPct(pool.apy)}
                       </span>
                     </div>
-                    <span className="mono" style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right" }}>
-                      {p.apy.toFixed(2)}%
-                    </span>
-                    <span className="mono" style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right" }}>
-                      {p.tvlUsd >= 1e9
-                        ? `$${(p.tvlUsd / 1e9).toFixed(1)}B`
-                        : `$${(p.tvlUsd / 1e6).toFixed(0)}M`}
-                    </span>
-                    <Icons.plus size={14} style={{ color: "var(--accent)" }} />
+                  </div>
+                  <ChainBadge chain={chainIdFromName(pool.chain)} />
+                  <X size={16} aria-hidden="true" />
+                </button>
+              ))
+            )}
+          </div>
+
+          <p className="eyebrow">Add pool</p>
+          <div style={{ position: "relative", marginBottom: 12 }}>
+            <Search
+              size={14}
+              aria-hidden="true"
+              style={{ position: "absolute", top: "50%", left: 12, transform: "translateY(-50%)", color: "var(--muted)" }}
+            />
+            <input
+              className="search-input"
+              style={{ paddingLeft: 32, width: "100%", minWidth: 0 }}
+              placeholder="Search pool, protocol, chain"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </div>
+
+          {poolsErr ? (
+            <span className="severity-high" style={{ fontSize: 12 }}>
+              {poolsErr}
+            </span>
+          ) : (
+            <div className="allocation-list" style={{ maxHeight: 360, overflowY: "auto" }}>
+              {filtered.length === 0 ? (
+                <span style={{ fontSize: 13, color: "var(--muted)" }}>
+                  {pools.length === 0 ? "Loading…" : "No matches."}
+                </span>
+              ) : (
+                filtered.map((pool) => (
+                  <button
+                    key={`add-${pool.poolId}`}
+                    type="button"
+                    className="allocation-row"
+                    disabled={selected.length >= MAX_SELECTED}
+                    onClick={() =>
+                      setSelected((current) =>
+                        current.length < MAX_SELECTED ? [...current, pool] : current,
+                      )
+                    }
+                  >
+                    <div className="token-cell">
+                      <div className="token-chip" aria-hidden="true">
+                        {pool.symbol.slice(0, 2)}
+                      </div>
+                      <div>
+                        <strong>{pool.symbol}</strong>
+                        <span>
+                          {pool.protocol} · {formatUsd(pool.tvlUsd)}
+                        </span>
+                      </div>
+                    </div>
+                    <ChainBadge chain={chainIdFromName(pool.chain)} />
+                    <Plus size={16} aria-hidden="true" />
                   </button>
                 ))
               )}
             </div>
           )}
-        </div>
-      </div>
-
-      {/* ---------- COMPUTE ---------- */}
-      <div
-        className="card"
-        style={{
-          padding: 16,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-          gap: 12,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ fontSize: 12, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-            Window
-          </span>
-          <div style={{ display: "flex", gap: 4 }}>
-            {WINDOWS.map((w) => {
-              const active = w.days === windowDays;
-              return (
-                <button
-                  key={w.days}
-                  type="button"
-                  onClick={() => setWindowDays(w.days)}
-                  style={{
-                    padding: "6px 12px",
-                    fontSize: 12,
-                    background: active ? "var(--accent)" : "var(--surface-2)",
-                    color: active ? "var(--accent-text)" : "var(--text-1)",
-                    border: "1px solid var(--line)",
-                    borderRadius: 6,
-                    cursor: "pointer",
-                    fontWeight: active ? 600 : 400,
-                  }}
-                >
-                  {w.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <button
-          type="button"
-          className="btn"
-          onClick={compute}
-          disabled={running || selected.length < 2}
-        >
-          {running ? "Computing…" : "Run correlation"}
-        </button>
-      </div>
-
-      {err && (
-        <div
-          className="card"
-          style={{ padding: 14, fontSize: 12.5, color: "#ef4444", borderColor: "#ef4444" }}
-        >
-          {err}
-        </div>
-      )}
-
-      {/* ---------- HEATMAP ---------- */}
-      {result && (
-        <div className="card" style={{ padding: 18 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "baseline",
-              justifyContent: "space-between",
-              marginBottom: 14,
-              flexWrap: "wrap",
-              gap: 6,
-            }}
-          >
-            <div style={{ fontSize: 14, fontWeight: 600 }}>Heatmap</div>
-            <div className="mono" style={{ fontSize: 11, color: "var(--text-dim)" }}>
-              {result.overlapDays} overlapping days · {result.startDate} → {result.endDate}
-            </div>
-          </div>
-
-          <HeatmapGrid result={result} labelMap={labelMap} />
-
-          <div
-            style={{
-              marginTop: 18,
-              display: "flex",
-              alignItems: "center",
-              gap: 16,
-              fontSize: 11,
-              color: "var(--text-dim)",
-              flexWrap: "wrap",
-            }}
-          >
-            <span>Legend:</span>
-            <LegendCell label="−1.00" color={correlationColor(-1)} />
-            <LegendCell label="0" color={correlationColor(0)} />
-            <LegendCell label="+1.00" color={correlationColor(1)} />
-            <span style={{ marginLeft: "auto" }}>
-              Lower absolute correlation indicates stronger diversification.
-            </span>
-          </div>
-
-          {result.missing.length > 0 && (
-            <div
-              style={{
-                marginTop: 12,
-                fontSize: 11.5,
-                color: "var(--text-dim)",
-              }}
-            >
-              Skipped due to limited history: {result.missing.length} market(s).
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LegendCell({ label, color }: { label: string; color: string }) {
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-      <span
-        style={{
-          width: 14,
-          height: 14,
-          background: color,
-          border: "1px solid var(--line)",
-          borderRadius: 3,
-        }}
-      />
-      <span className="mono">{label}</span>
-    </span>
-  );
-}
-
-function HeatmapGrid({
-  result,
-  labelMap,
-}: {
-  result: MatrixResponse;
-  labelMap: Map<string, { symbol: string; protocol: string }>;
-}) {
-  const labels = result.poolIds.map((id) => {
-    const meta = labelMap.get(id);
-    return meta ? `${meta.symbol} · ${meta.protocol}` : id.slice(0, 8);
-  });
-
-  const cellSize = 64;
-  const headerW = 200;
-
-  return (
-    <div style={{ overflowX: "auto" }}>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: `${headerW}px repeat(${labels.length}, ${cellSize}px)`,
-          gap: 2,
-        }}
-      >
-        <div />
-        {labels.map((l, j) => (
-          <div
-            key={`col-${j}`}
-            style={{
-              fontSize: 10.5,
-              color: "var(--text-dim)",
-              textAlign: "center",
-              padding: "0 4px",
-              wordBreak: "break-word",
-              lineHeight: 1.2,
-            }}
-            title={l}
-          >
-            {l}
-          </div>
-        ))}
-
-        {labels.map((rowLabel, i) => (
-          <div key={`row-${i}`} style={{ display: "contents" }}>
-            <div
-              style={{
-                fontSize: 11,
-                color: "var(--text-1)",
-                textAlign: "right",
-                padding: "0 8px",
-                alignSelf: "center",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-              title={rowLabel}
-            >
-              {rowLabel}
-            </div>
-            {result.matrix[i].map((v, j) => (
-              <div
-                key={`cell-${i}-${j}`}
-                style={{
-                  width: cellSize,
-                  height: cellSize,
-                  background: correlationColor(v),
-                  border: "1px solid var(--line)",
-                  borderRadius: 4,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: 12,
-                  fontFamily: "ui-monospace, monospace",
-                  color: Math.abs(v) > 0.5 ? "#fff" : "var(--text-1)",
-                }}
-                title={`${labels[i]}  ↔  ${labels[j]}: ${correlationLabel(v)}`}
-              >
-                {correlationLabel(v)}
-              </div>
-            ))}
-          </div>
-        ))}
+        </aside>
       </div>
     </div>
   );

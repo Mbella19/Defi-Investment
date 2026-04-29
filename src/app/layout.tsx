@@ -1,35 +1,35 @@
 import type { Metadata } from "next";
-import { Geist_Mono, Inter } from "next/font/google";
-import ThemeProvider from "@/components/ThemeProvider";
+import { JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const spaceGrotesk = Space_Grotesk({
+  variable: "--font-space-grotesk",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
 });
 
-const inter = Inter({
-  variable: "--font-inter",
+const jetbrains = JetBrains_Mono({
+  variable: "--font-jetbrains",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
 });
 
 export const metadata: Metadata = {
-  title: "Sovereign Investment Group",
+  title: "Sovereign | Yield Command",
   description:
-    "A private DeFi income workspace for market review, allocation planning, contract risk review, and read-only portfolio oversight.",
+    "A pixel-grade DeFi intelligence terminal — markets, allocations, security, and portfolio oversight in one read-only console.",
+  icons: {
+    icon: "/icon.png",
+  },
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" data-theme="light" suppressHydrationWarning>
-      <body className={`${geistMono.variable} ${inter.variable}`}>
-        <ThemeProvider>{children}</ThemeProvider>
+    <html lang="en">
+      <body className={`${spaceGrotesk.variable} ${jetbrains.variable}`}>
+        {children}
       </body>
     </html>
   );

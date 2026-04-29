@@ -1,194 +1,88 @@
-"use client";
-
-import type { ComponentType } from "react";
 import Link from "next/link";
-import { Icons, ThemeToggle } from "@/components/sovereign";
+import {
+  ArrowRight,
+  CircleDollarSign,
+  Coins,
+  Sparkles,
+  TriangleAlert,
+} from "lucide-react";
+import { CommandStrip, SectionHeader } from "@/components/site/ui";
 
-type Tool = {
-  n: string;
-  d: string;
-  href: string;
-  ic: ComponentType<{ size?: number; stroke?: number }>;
-};
-
-const TOOLS: Tool[] = [
+const toolCards = [
   {
-    n: "Scenario Analysis",
-    d: "Estimate how an allocation behaves under changing income rates, liquidity, and market conditions before committing capital.",
+    title: "Scenario simulator",
     href: "/tools/simulator",
-    ic: Icons.activity,
+    icon: Sparkles,
+    body: "Forward-replay an allocation against baseline, depeg, TVL crash, and market drawdown using real DeFiLlama history.",
+    metric: "4 regimes",
   },
   {
-    n: "Correlation Review",
-    d: "Compare up to twelve markets to see whether an allocation is genuinely diversified or simply repeating the same exposure.",
+    title: "Correlation matrix",
     href: "/tools/correlation",
-    ic: Icons.pie,
+    icon: CircleDollarSign,
+    body: "Pearson correlation across up to 12 live pools (day-over-day APY changes) — find crowded exposure before sizing capital.",
+    metric: "≤12 pools",
+  },
+  {
+    title: "Contract review",
+    href: "/security/audit",
+    icon: TriangleAlert,
+    body: "Six-engine smart-contract review with triple-AI synthesis and SCSVS mapping. Heuristic vetoes still apply.",
+    metric: "6 engines",
+  },
+  {
+    title: "Portfolio lens",
+    href: "/portfolio",
+    icon: Coins,
+    body: "Connect a wallet for read-only chain, asset, and strategy exposure across the supported networks.",
+    metric: "7 chains",
   },
 ];
 
-export default function ToolsPage() {
+export default function ToolsHubPage() {
   return (
-    <>
-      {/* ---------- DESKTOP ---------- */}
-      <div className="page-wrap">
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-end",
-            flexWrap: "wrap",
-            gap: 12,
-          }}
-        >
-          <div>
-            <div className="eyebrow">MODELS</div>
-            <h1
-              className="display"
-              style={{ fontSize: 28, margin: "6px 0 2px", letterSpacing: "-0.02em" }}
-            >
-              Model before you allocate.
-            </h1>
-            <div style={{ fontSize: 13, color: "var(--text-dim)" }}>
-              Compare downside, concentration, and return assumptions in a read-only workspace.
-            </div>
-          </div>
-          <ThemeToggle />
-        </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-            gap: 14,
-          }}
-        >
-          {TOOLS.map((t) => {
-            const Ic = t.ic;
-            return (
-              <Link
-                key={t.n}
-                href={t.href}
-                className="card"
-                style={{
-                  padding: 22,
-                  display: "flex",
-                  gap: 16,
-                  alignItems: "flex-start",
-                  minHeight: 150,
-                  textDecoration: "none",
-                  color: "inherit",
-                }}
-              >
-                <div
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: 10,
-                    flexShrink: 0,
-                    background: "var(--surface-3)",
-                    color: "var(--text-1)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    border: "1px solid var(--line)",
-                  }}
-                >
-                  <Ic size={20} />
-                </div>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>
-                    {t.n}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      color: "var(--text-dim)",
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    {t.d}
-                  </div>
-                  <div
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 4,
-                      marginTop: 12,
-                      fontSize: 12.5,
-                      color: "var(--accent)",
-                      fontWeight: 500,
-                    }}
-                  >
-                    Open model <Icons.arrow size={12} />
-                  </div>
-                </div>
-              </Link>
-            );
-          })}
+    <div className="page">
+      <div className="page-title">
+        <div>
+          <p className="eyebrow">Tools</p>
+          <h1>Models for pre-trade judgment.</h1>
+          <p>
+            Stress assumptions, check diversification, and push contract reviews into the
+            same decision surface.
+          </p>
         </div>
       </div>
 
-      {/* ---------- MOBILE ---------- */}
-      <div className="mobile-only">
-        <div className="m-header">
-          <div>
-            <div className="m-title">Models</div>
-            <div className="m-sub">READ-ONLY ANALYSIS</div>
-          </div>
-          <ThemeToggle variant="mobile" />
-        </div>
-        <div className="m-content">
-          {TOOLS.map((t) => {
-            const Ic = t.ic;
-            return (
-              <Link
-                key={`m-${t.n}`}
-                href={t.href}
-                className="card"
-                style={{
-                  padding: 14,
-                  display: "flex",
-                  gap: 12,
-                  alignItems: "flex-start",
-                  textDecoration: "none",
-                  color: "inherit",
-                }}
-              >
-                <div
-                  style={{
-                    width: 38,
-                    height: 38,
-                    borderRadius: 10,
-                    flexShrink: 0,
-                    background: "var(--surface-3)",
-                    color: "var(--text-1)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    border: "1px solid var(--line)",
-                  }}
-                >
-                  <Ic size={17} />
+      <CommandStrip
+        file="file/06.tools"
+        items={[
+          { label: "models", value: "scenario ready", tone: "ok" },
+          { label: "matrix", value: "correlation live", tone: "info" },
+          { label: "audit", value: "same surface", tone: "warn" },
+        ]}
+      />
+
+      <SectionHeader eyebrow="Workspace" title="Choose a model." />
+      <div className="tool-grid">
+        {toolCards.map((tool) => {
+          const Icon = tool.icon;
+          return (
+            <Link href={tool.href} className="tool-card" key={tool.title}>
+              <div>
+                <div className="tool-icon">
+                  <Icon size={24} strokeWidth={1.8} aria-hidden="true" />
                 </div>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>{t.n}</div>
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: "var(--text-dim)",
-                      lineHeight: 1.4,
-                      marginTop: 2,
-                    }}
-                  >
-                    {t.d}
-                  </div>
-                </div>
-                <Icons.chevR size={16} style={{ color: "var(--text-dim)", marginTop: 8 }} />
-              </Link>
-            );
-          })}
-        </div>
+                <h3>{tool.title}</h3>
+                <p>{tool.body}</p>
+              </div>
+              <footer>
+                <span>{tool.metric}</span>
+                <ArrowRight size={17} aria-hidden="true" />
+              </footer>
+            </Link>
+          );
+        })}
       </div>
-    </>
+    </div>
   );
 }

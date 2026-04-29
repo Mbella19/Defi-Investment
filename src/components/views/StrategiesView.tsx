@@ -28,6 +28,16 @@ const STATUS_COLOR: Record<StrategyStatus, string> = {
   archived: "var(--text-muted)",
 };
 
+// Resolve the canonical "open this market in its native venue" URL. Beefy
+// pools are prefixed `beefy-` in our pool aggregator (see pool-aggregator.ts),
+// everything else is a DeFiLlama pool UUID.
+function poolDeepLink(poolId: string): string {
+  if (poolId.startsWith("beefy-")) {
+    return `https://app.beefy.com/vault/${poolId.slice("beefy-".length)}`;
+  }
+  return `https://defillama.com/yields/pool/${poolId}`;
+}
+
 export default function StrategiesPage() {
   const {
     strategies,
@@ -622,8 +632,12 @@ function StrategyCard({
               const directionColor = hasForecast ? DIRECTION_COLOR[fc!.direction] : "var(--text-muted)";
               const directionGlyph = hasForecast ? DIRECTION_GLYPH[fc!.direction] : "·";
               return (
-                <div
+                <a
                   key={i}
+                  href={poolDeepLink(a.poolId)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={`Open ${a.protocol} ${a.symbol} on ${a.poolId.startsWith("beefy-") ? "Beefy" : "DeFiLlama"}`}
                   style={{
                     minWidth: 820,
                     display: "grid",
@@ -632,6 +646,16 @@ function StrategyCard({
                     padding: "10px 0",
                     borderBottom: "1px solid var(--line-2)",
                     alignItems: "center",
+                    color: "inherit",
+                    textDecoration: "none",
+                    cursor: "pointer",
+                    transition: "background 0.12s ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "var(--surface-2)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "transparent";
                   }}
                 >
                   <div>
@@ -738,7 +762,7 @@ function StrategyCard({
                   >
                     {a.legitimacyScore}
                   </span>
-                </div>
+                </a>
               );
             })}
           </div>
