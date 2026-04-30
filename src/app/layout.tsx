@@ -15,7 +15,7 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Sovereign | Yield Command",
+  title: "Sovereign Investment Group | Yield Command",
   description:
     "A pixel-grade DeFi intelligence terminal — markets, allocations, security, and portfolio oversight in one read-only console.",
   icons: {

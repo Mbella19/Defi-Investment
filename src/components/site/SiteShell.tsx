@@ -4,12 +4,10 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import {
-  Bird,
   ChevronDown,
   CircleGauge,
-  Code,
+  Crown,
   Menu,
-  MessageCircle,
   Search,
   ShieldCheck,
   Sparkles,
@@ -19,6 +17,7 @@ import {
 import { useState } from "react";
 import { BrandMark } from "@/components/site/BrandMark";
 import { PixelField } from "@/components/site/PixelField";
+import { SocialIcon, type SocialIconId } from "@/components/site/SocialIcon";
 import { WalletButton } from "@/components/site/WalletButton";
 
 // Existing AlertBell pulls live alerts from /api/strategies/alerts via the
@@ -32,7 +31,14 @@ const nav = [
   { href: "/portfolio", label: "Portfolio", icon: WalletCards },
   { href: "/strategies", label: "Strategy", icon: Sparkles },
   { href: "/security/audit", label: "Security", icon: ShieldCheck },
+  { href: "/plans", label: "Plans", icon: Crown },
   { href: "/tools", label: "More", icon: CircleGauge },
+];
+
+const socialLinks: Array<{ label: string; href: string; icon: SocialIconId }> = [
+  { label: "Discord", href: "https://discord.com", icon: "discord" },
+  { label: "Twitter", href: "https://twitter.com", icon: "twitter" },
+  { label: "GitHub", href: "https://github.com", icon: "github" },
 ];
 
 export function SiteShell({ children }: { children: React.ReactNode }) {
@@ -67,33 +73,18 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="nav-actions">
-          <a
-            className="icon-button nav-social"
-            href="https://discord.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="Community"
-          >
-            <MessageCircle size={17} />
-          </a>
-          <a
-            className="icon-button nav-social"
-            href="https://twitter.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="Twitter"
-          >
-            <Bird size={17} />
-          </a>
-          <a
-            className="icon-button nav-social"
-            href="https://github.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="GitHub"
-          >
-            <Code size={17} />
-          </a>
+          {socialLinks.map((item) => (
+            <a
+              className="icon-button nav-social"
+              href={item.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={item.label}
+              key={item.label}
+            >
+              <SocialIcon id={item.icon} size={22} />
+            </a>
+          ))}
           <span className="alert-slot">
             <AlertBell />
           </span>

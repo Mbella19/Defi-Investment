@@ -22,7 +22,7 @@ if (
 const projectId = RAW_PROJECT_ID || "demo";
 
 export const config = getDefaultConfig({
-  appName: "Sovereign",
+  appName: "Sovereign Investment Group",
   projectId,
   chains: [mainnet, arbitrum, optimism, polygon, base, bsc, avalanche],
   transports: {

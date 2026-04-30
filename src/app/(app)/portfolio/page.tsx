@@ -10,6 +10,7 @@ import {
   MetricTile,
   MiniLine,
 } from "@/components/site/ui";
+import { PoolIcon } from "@/components/site/PoolIcon";
 import {
   chainIdFromEvmId,
   chainMeta,
@@ -19,9 +20,12 @@ import {
   formatUsd,
 } from "@/lib/design-utils";
 import { usePortfolio } from "@/hooks/usePortfolio";
+import { usePlan } from "@/hooks/usePlan";
+import { Paywall } from "@/components/site/Paywall";
 
 export default function PortfolioPage() {
   const { isConnected, address, portfolio, isLoading, error, refetch } = usePortfolio();
+  const plan = usePlan();
 
   const total = portfolio?.totalValueUsd ?? 0;
   const tokens = portfolio?.tokens ?? [];
@@ -68,7 +72,6 @@ export default function PortfolioPage() {
             and yield sleeves in one view — never custodial.
           </p>
         </div>
-        <RainbowConnectButton />
       </div>
 
       <CommandStrip
@@ -84,7 +87,15 @@ export default function PortfolioPage() {
         ]}
       />
 
-      {!isConnected ? (
+      {!plan.isLoading && !plan.capabilities.toolPortfolioLens ? (
+        <Paywall
+          title="Portfolio lens is a paid feature"
+          body="Portfolio lens reads live on-chain balances across 7 supported networks and ties them back to your strategies. It unlocks on the Pro plan."
+          requiredTier="pro"
+          currentTier={plan.tier}
+          feature="Portfolio"
+        />
+      ) : !isConnected ? (
         <EmptyState
           icon={LockKeyhole}
           title="Private by default"
@@ -156,9 +167,7 @@ export default function PortfolioPage() {
                   return (
                     <div className="portfolio-row" key={`${token.chainId}-${token.symbol}-${token.name}`}>
                       <div className="token-cell">
-                        <div className="token-chip" aria-hidden="true">
-                          {token.symbol.slice(0, 2)}
-                        </div>
+                        <PoolIcon symbol={token.symbol} protocol={token.name} />
                         <div>
                           <strong>{token.symbol}</strong>
                           <span>{token.name}</span>

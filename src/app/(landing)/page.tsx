@@ -4,11 +4,8 @@ import type { CSSProperties } from "react";
 import {
   ArrowRight,
   BarChart3,
-  Bird,
-  Code,
   Coins,
-  FileText,
-  MessageCircle,
+  Crown,
   PieChart,
   SearchCheck,
   ShieldCheck,
@@ -18,6 +15,7 @@ import {
 import { fetchAllPools } from "@/lib/defillama";
 import { MiniLine } from "@/components/site/ui";
 import { HeroPixels } from "@/components/site/HeroPixels";
+import { SocialIcon, type SocialIconId } from "@/components/site/SocialIcon";
 import { formatPct, formatUsd } from "@/lib/design-utils";
 
 export const dynamic = "force-dynamic";
@@ -146,11 +144,11 @@ const securitySignals = [
   { label: "Non-custodial", icon: ShieldCheck },
 ];
 
-const community = [
-  { label: "Discord", icon: MessageCircle },
-  { label: "Docs", icon: FileText },
-  { label: "Twitter", icon: Bird },
-  { label: "GitHub", icon: Code },
+const community: Array<{ label: string; icon: SocialIconId }> = [
+  { label: "Discord", icon: "discord" },
+  { label: "Docs", icon: "docs" },
+  { label: "Twitter", icon: "twitter" },
+  { label: "GitHub", icon: "github" },
 ];
 
 export default async function Home() {
@@ -403,15 +401,12 @@ export default async function Home() {
       <section className="section-band community-section">
         <h2 className="center-title">Join the community</h2>
         <div className="community-grid">
-          {community.map((item) => {
-            const Icon = item.icon;
-            return (
-              <Link href="/tools" className="community-card" key={item.label}>
-                <span>{item.label}</span>
-                <Icon size={28} aria-hidden="true" />
-              </Link>
-            );
-          })}
+          {community.map((item) => (
+            <Link href="/tools" className="community-card" key={item.label}>
+              <span>{item.label}</span>
+              <SocialIcon id={item.icon} size={34} />
+            </Link>
+          ))}
         </div>
       </section>
 
@@ -430,6 +425,10 @@ export default async function Home() {
             <Link href="/security/audit" className="secondary-button">
               <ShieldCheck size={18} aria-hidden="true" />
               Audit
+            </Link>
+            <Link href="/plans" className="secondary-button">
+              <Crown size={18} aria-hidden="true" />
+              Plans
             </Link>
           </div>
           <div className="cta-mini-stats">

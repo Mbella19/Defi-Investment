@@ -18,14 +18,17 @@ import {
   MetricTile,
   RiskPill,
 } from "@/components/site/ui";
+import { PoolIcon } from "@/components/site/PoolIcon";
 import {
   chainIdFromName,
   formatMoney,
   formatPct,
   type RiskBand,
 } from "@/lib/design-utils";
+import Link from "next/link";
 import { useActiveStrategies } from "@/hooks/useActiveStrategies";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
+import { usePlan } from "@/hooks/usePlan";
 import type { InvestmentStrategy, StrategyAllocation, StrategyCriteria } from "@/types/strategy";
 import type { ActiveStrategy, StrategyStatus } from "@/types/active-strategy";
 
@@ -73,6 +76,7 @@ function describeStage(stage?: string): string {
 export default function StrategiesPage() {
   const { status: authStatus, signIn } = useSiweAuth();
   const isAuthed = authStatus === "authed";
+  const plan = usePlan();
   const {
     strategies,
     isLoading,
@@ -87,6 +91,10 @@ export default function StrategiesPage() {
   const [budget, setBudget] = useState(125_000);
   const [risk, setRisk] = useState<RiskBand>("Balanced");
   const [stableOnly, setStableOnly] = useState(true);
+  // Custom-APY mode (Ultra-only). When enabled, the user supplies their own APY range.
+  const [customApyEnabled, setCustomApyEnabled] = useState(false);
+  const [customApyMin, setCustomApyMin] = useState(8);
+  const [customApyMax, setCustomApyMax] = useState(20);
   const [job, setJob] = useState<JobView>({ status: "idle", progress: 0 });
   const [activateBusy, setActivateBusy] = useState(false);
   const [scanBusy, setScanBusy] = useState(false);
@@ -114,13 +122,18 @@ export default function StrategiesPage() {
       pollRef.current = null;
     }
     setJob({ status: "running", progress: 0, message: "Preparing allocation workflow…" });
-    const [targetApyMin, targetApyMax] = APY_RANGE[risk];
+    const usingCustomApy = plan.capabilities.customApyMode && customApyEnabled;
+    const [presetMin, presetMax] = APY_RANGE[risk];
+    const targetApyMin = usingCustomApy ? Math.max(0.5, customApyMin) : presetMin;
+    const targetApyMax = usingCustomApy ? Math.max(targetApyMin + 0.5, customApyMax) : presetMax;
+    const effectiveRisk: RiskBand = plan.capabilities.riskBandSelection ? risk : "Balanced";
+    const effectiveStable = plan.capabilities.stablecoinToggle ? stableOnly : false;
     const criteria: StrategyCriteria = {
       budget,
-      riskAppetite: RISK_TO_APPETITE[risk],
+      riskAppetite: RISK_TO_APPETITE[effectiveRisk],
       targetApyMin,
       targetApyMax,
-      assetType: stableOnly ? "stablecoins" : "all",
+      assetType: effectiveStable ? "stablecoins" : "all",
     };
     try {
       const res = await fetch("/api/strategy", {
@@ -191,13 +204,18 @@ export default function StrategiesPage() {
     }
     setActivateBusy(true);
     try {
-      const [targetApyMin, targetApyMax] = APY_RANGE[risk];
+      const usingCustomApy = plan.capabilities.customApyMode && customApyEnabled;
+      const [presetMin, presetMax] = APY_RANGE[risk];
+      const targetApyMin = usingCustomApy ? Math.max(0.5, customApyMin) : presetMin;
+      const targetApyMax = usingCustomApy ? Math.max(targetApyMin + 0.5, customApyMax) : presetMax;
+      const effectiveRisk: RiskBand = plan.capabilities.riskBandSelection ? risk : "Balanced";
+      const effectiveStable = plan.capabilities.stablecoinToggle ? stableOnly : false;
       const criteria: StrategyCriteria = {
         budget,
-        riskAppetite: RISK_TO_APPETITE[risk],
+        riskAppetite: RISK_TO_APPETITE[effectiveRisk],
         targetApyMin,
         targetApyMax,
-        assetType: stableOnly ? "stablecoins" : "all",
+        assetType: effectiveStable ? "stablecoins" : "all",
       };
       await activateStrategy(draftStrategy, criteria);
       // Reset the draft slot once it moves into the active list.
@@ -253,6 +271,17 @@ export default function StrategiesPage() {
           { label: "veto layer", value: "mandatory", tone: "danger" },
         ]}
       />
+
+      {!plan.isLoading && isAuthed ? (
+        <div className="plan-strip">
+          <span className={`plan-strip-tag tier-${plan.tier}`}>{plan.tier}</span>
+          <strong>{plan.usage.strategiesThisMonth}</strong>
+          <span>of {plan.capabilities.monthlyStrategies} strategies used this month</span>
+          {plan.tier !== "ultra" ? (
+            <Link href="/plans">Upgrade →</Link>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="metric-grid" style={{ marginBottom: 18 }}>
         <MetricTile label="Active capital" value={formatMoney(totalCapital)} icon={Activity} tone="#6ee7b7" />
@@ -361,10 +390,16 @@ export default function StrategiesPage() {
             </label>
             <label>
               Risk band
+              {plan.capabilities.riskBandSelection ? null : (
+                <small style={{ color: "var(--soft)", display: "block", marginTop: 2, fontSize: 11, fontWeight: 500 }}>
+                  Locked on Free — <Link href="/plans" style={{ color: "var(--mint)" }}>upgrade</Link>
+                </small>
+              )}
               <select
                 className="select-input"
                 value={risk}
                 onChange={(event) => setRisk(event.target.value as RiskBand)}
+                disabled={!plan.capabilities.riskBandSelection}
               >
                 <option value="Conservative">Conservative</option>
                 <option value="Balanced">Balanced</option>
@@ -374,20 +409,88 @@ export default function StrategiesPage() {
             <label style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--muted)" }}>
               <input
                 type="checkbox"
-                checked={stableOnly}
+                checked={plan.capabilities.stablecoinToggle ? stableOnly : false}
                 onChange={(event) => setStableOnly(event.target.checked)}
+                disabled={!plan.capabilities.stablecoinToggle}
               />
               Stablecoin sleeves only
+              {!plan.capabilities.stablecoinToggle ? (
+                <Link href="/plans" style={{ color: "var(--mint)", fontSize: 11, marginLeft: 6 }}>
+                  Pro+
+                </Link>
+              ) : null}
             </label>
+            {plan.capabilities.customApyMode ? (
+              <label style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--muted)" }}>
+                <input
+                  type="checkbox"
+                  checked={customApyEnabled}
+                  onChange={(event) => setCustomApyEnabled(event.target.checked)}
+                />
+                Custom APY range (Ultra)
+              </label>
+            ) : null}
+            {plan.capabilities.customApyMode && customApyEnabled ? (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <label>
+                  Min APY %
+                  <input
+                    className="number-input"
+                    type="number"
+                    min={0.5}
+                    max={400}
+                    step={0.5}
+                    value={customApyMin}
+                    onChange={(event) =>
+                      setCustomApyMin(Math.max(0.5, Number(event.target.value) || 0.5))
+                    }
+                  />
+                </label>
+                <label>
+                  Max APY %
+                  <input
+                    className="number-input"
+                    type="number"
+                    min={1}
+                    max={500}
+                    step={0.5}
+                    value={customApyMax}
+                    onChange={(event) =>
+                      setCustomApyMax(Math.max(1, Number(event.target.value) || 1))
+                    }
+                  />
+                </label>
+              </div>
+            ) : null}
             <button
               className="primary-button"
               type="button"
               onClick={generate}
-              disabled={job.status === "running"}
+              disabled={
+                job.status === "running" ||
+                (isAuthed &&
+                  !plan.isLoading &&
+                  plan.usage.strategiesThisMonth >= plan.capabilities.monthlyStrategies)
+              }
             >
               <WandSparkles size={18} aria-hidden="true" />
-              {job.status === "running" ? "Generating…" : "Generate draft"}
+              {job.status === "running"
+                ? "Generating…"
+                : isAuthed && plan.usage.strategiesThisMonth >= plan.capabilities.monthlyStrategies
+                  ? "Monthly cap reached"
+                  : "Generate draft"}
             </button>
+            {isAuthed &&
+            !plan.isLoading &&
+            plan.usage.strategiesThisMonth >= plan.capabilities.monthlyStrategies ? (
+              <Link
+                href="/plans"
+                className="ghost-button"
+                style={{ justifyContent: "center" }}
+              >
+                Upgrade for more strategies
+              </Link>
+            ) : null}
           </div>
 
           {job.status !== "idle" ? (
@@ -465,9 +568,7 @@ function DraftAllocation({ allocation }: { allocation: StrategyAllocation }) {
   return (
     <div className="composer-allocation">
       <div className="token-cell">
-        <div className="token-chip" aria-hidden="true">
-          {allocation.symbol.slice(0, 2)}
-        </div>
+        <PoolIcon symbol={allocation.symbol} protocol={allocation.protocol} />
         <div>
           <strong>{allocation.symbol}</strong>
           <span>{allocation.protocol} · {formatMoney(allocation.allocationAmount)}</span>
@@ -540,9 +641,7 @@ function StrategyArticle({
           return (
             <div className="allocation-row" key={`${strategy.id}-${alloc.poolId}`}>
               <div className="token-cell">
-                <div className="token-chip" aria-hidden="true">
-                  {alloc.symbol.slice(0, 2)}
-                </div>
+                <PoolIcon symbol={alloc.symbol} protocol={alloc.protocol} />
                 <div>
                   <strong>{alloc.symbol}</strong>
                   <span>

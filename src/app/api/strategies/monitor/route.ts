@@ -1,6 +1,7 @@
 import { monitorActiveStrategies } from "@/lib/strategy-monitor";
 import { ensureSchedulerStarted, getSchedulerStatus } from "@/lib/monitor-scheduler";
 import { requireWallet } from "@/lib/auth/guard";
+import { requireCapability } from "@/lib/plans/access";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { getDb } from "@/lib/db";
 
@@ -18,6 +19,8 @@ export const maxDuration = 180;
 export async function POST(request: Request) {
   const auth = requireWallet(request);
   if ("response" in auth) return auth.response;
+  const cap = requireCapability(auth.wallet, "realtimeAlerts");
+  if (!cap.ok) return cap.response;
   const limited = enforceRateLimit(request, "monitor.manual", { max: 10, windowMs: 60 * 60 * 1000 });
   if (limited) return limited;
 

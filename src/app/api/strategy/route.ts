@@ -8,20 +8,31 @@ import {
   publicView,
 } from "@/lib/strategy-jobs";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { requireWallet } from "@/lib/auth/guard";
+import { getPlan } from "@/lib/plans/access";
+import {
+  recordStrategyGeneration,
+  strategyGenerationsThisMonth,
+} from "@/lib/plans/usage";
 import type { StrategyCriteria } from "@/types/strategy";
 
-// Pipeline runs >> 60s; the route just kicks off the job and returns the id.
-// Progress is polled via GET /api/strategy?id=<jobId>.
 export const maxDuration = 800;
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const fetchCache = "force-no-store";
 
+const RISK_PRESETS: Record<NonNullable<StrategyCriteria["riskAppetite"]>, [number, number]> = {
+  low: [3, 10],
+  medium: [6, 18],
+  high: [12, 40],
+};
+
 export async function POST(request: Request) {
-  // 5 strategy generations per hour per wallet/IP — each one is a 5-10min
-  // triple-AI pipeline costing $1-5, so this needs to be tight.
   const limited = enforceRateLimit(request, "strategy", { max: 5, windowMs: 60 * 60 * 1000 });
   if (limited) return limited;
+
+  const auth = requireWallet(request);
+  if ("response" in auth) return auth.response;
 
   let criteria: StrategyCriteria;
   try {
@@ -36,6 +47,36 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+
+  const plan = getPlan(auth.wallet);
+  const used = strategyGenerationsThisMonth(auth.wallet);
+  if (used >= plan.capabilities.monthlyStrategies) {
+    return Response.json(
+      {
+        error: "Monthly strategy limit reached",
+        tier: plan.tier,
+        used,
+        limit: plan.capabilities.monthlyStrategies,
+        upgradePath: plan.tier === "free" ? "pro" : plan.tier === "pro" ? "ultra" : null,
+      },
+      { status: 402 },
+    );
+  }
+
+  // Tier-aware criteria coercion. Free can't pick risk band or stable-only;
+  // only Ultra can supply a custom APY range outside the risk-band preset.
+  if (!plan.capabilities.riskBandSelection) {
+    criteria.riskAppetite = "medium";
+  }
+  if (!plan.capabilities.stablecoinToggle) {
+    criteria.assetType = "all";
+  }
+  if (!plan.capabilities.customApyMode) {
+    const preset = RISK_PRESETS[criteria.riskAppetite ?? "medium"] ?? RISK_PRESETS.medium;
+    criteria.targetApyMin = preset[0];
+    criteria.targetApyMax = preset[1];
+  }
+
   if (
     !criteria.targetApyMin ||
     !criteria.targetApyMax ||
@@ -45,12 +86,11 @@ export async function POST(request: Request) {
   }
 
   const job = createJob();
+  recordStrategyGeneration(auth.wallet, job.id);
 
-  // Fire and forget — generateStrategy resolves long after the HTTP response
-  // has shipped. The unhandled-rejection guard funnels every failure into the
-  // job store so the poll endpoint can surface it.
   void generateStrategy(criteria, {
     onProgress: (event) => emitEvent(job.id, event),
+    mode: plan.capabilities.strategistMode,
   })
     .then((result) => completeJob(job.id, result))
     .catch((err) => {
@@ -64,6 +104,9 @@ export async function POST(request: Request) {
     status: job.status,
     progress: 0,
     message: job.events[0]?.message ?? "Preparing allocation workflow...",
+    tier: plan.tier,
+    used: used + 1,
+    limit: plan.capabilities.monthlyStrategies,
   });
 }
 

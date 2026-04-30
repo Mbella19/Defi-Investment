@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Twitter / X">
+  <defs>
+    <linearGradient id="twitter-a" x1="13" y1="12" x2="52" y2="52" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f8fbff"/>
+      <stop offset="0.42" stop-color="#3f83ff"/>
+      <stop offset="1" stop-color="#6ee7b7"/>
+    </linearGradient>
+    <filter id="twitter-glow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="1.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect x="11" y="47" width="5" height="5" fill="#fbbf24" opacity="0.9"/>
+  <rect x="48" y="11" width="5" height="5" fill="#fb7185" opacity="0.86"/>
+  <path
+    fill="url(#twitter-a)"
+    filter="url(#twitter-glow)"
+    d="M15 12h10.1l9.4 12.5L45.7 12H52L37.4 28.5 54 52H43.9L33.6 38.3 21.4 52H15l15.7-17.6L15 12Zm7.4 4.5 23.8 31h1.5l-23.8-31h-1.5Z"
+  />
+</svg>

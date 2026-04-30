@@ -7,6 +7,8 @@ import {
   type Scenario,
 } from "@/lib/tools/yield-simulator";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { requireWallet } from "@/lib/auth/guard";
+import { requireCapability } from "@/lib/plans/access";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -45,6 +47,10 @@ function parseAllocations(raw: unknown): AllocationInput[] {
 }
 
 export async function POST(request: Request) {
+  const auth = requireWallet(request);
+  if ("response" in auth) return auth.response;
+  const cap = requireCapability(auth.wallet, "toolSimulator");
+  if (!cap.ok) return cap.response;
   // Mirrors /api/tools/correlation — both fan out to DeFiLlama history.
   const limited = enforceRateLimit(request, "tools.simulate", { max: 30, windowMs: 60 * 60 * 1000 });
   if (limited) return limited;

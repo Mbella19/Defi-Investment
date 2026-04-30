@@ -11,6 +11,7 @@ import {
   type ChainId,
   type RiskBand,
 } from "@/lib/design-utils";
+import { PoolIcon } from "@/components/site/PoolIcon";
 
 export function ChainBadge({ chain }: { chain: ChainId }) {
   const meta = chainMeta[chain];
@@ -76,9 +77,7 @@ export function MarketRow({ market }: { market: MarketRowData }) {
   return (
     <Tag className="market-row" {...props}>
       <div className="market-main">
-        <div className="token-chip" aria-hidden="true">
-          {market.symbol.slice(0, 2)}
-        </div>
+        <PoolIcon symbol={market.symbol} protocol={market.protocol} category={market.category} />
         <div>
           <strong>{market.symbol}</strong>
           <span>{market.protocol}</span>

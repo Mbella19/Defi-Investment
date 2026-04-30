@@ -9,12 +9,15 @@ import {
   EmptyState,
   MetricTile,
 } from "@/components/site/ui";
+import { PoolIcon } from "@/components/site/PoolIcon";
 import {
   chainIdFromName,
   formatPct,
   formatUsd,
 } from "@/lib/design-utils";
 import type { LivePool } from "@/app/api/yields/live/route";
+import { usePlan } from "@/hooks/usePlan";
+import { Paywall } from "@/components/site/Paywall";
 
 interface MatrixResponse {
   poolIds: string[];
@@ -43,6 +46,7 @@ function correlationHue(value: number): string {
 }
 
 export default function CorrelationPage() {
+  const plan = usePlan();
   const [pools, setPools] = useState<LivePool[]>([]);
   const [poolsErr, setPoolsErr] = useState<string | null>(null);
   const [selected, setSelected] = useState<LivePool[]>([]);
@@ -183,6 +187,16 @@ export default function CorrelationPage() {
         ]}
       />
 
+      {!plan.isLoading && !plan.capabilities.toolCorrelation ? (
+        <Paywall
+          title="Correlation matrix unlocks on Pro"
+          body="Pearson correlation across up to 12 live pools — surfaces crowded exposure before you size capital. Available on Pro and Ultra."
+          requiredTier="pro"
+          currentTier={plan.tier}
+          feature="Correlation"
+        />
+      ) : null}
+
       <div className="metric-grid" style={{ marginBottom: 18 }}>
         <MetricTile label="Selected" value={String(selected.length)} icon={Network} tone="#60a5fa" />
         <MetricTile
@@ -306,9 +320,7 @@ export default function CorrelationPage() {
                   }
                 >
                   <div className="token-cell">
-                    <div className="token-chip" aria-hidden="true">
-                      {pool.symbol.slice(0, 2)}
-                    </div>
+                    <PoolIcon symbol={pool.symbol} protocol={pool.protocol} category={pool.category} />
                     <div>
                       <strong>{pool.symbol}</strong>
                       <span>
@@ -363,9 +375,7 @@ export default function CorrelationPage() {
                     }
                   >
                     <div className="token-cell">
-                      <div className="token-chip" aria-hidden="true">
-                        {pool.symbol.slice(0, 2)}
-                      </div>
+                      <PoolIcon symbol={pool.symbol} protocol={pool.protocol} category={pool.category} />
                       <div>
                         <strong>{pool.symbol}</strong>
                         <span>

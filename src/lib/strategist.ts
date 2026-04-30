@@ -29,6 +29,14 @@ export interface StrategyProgressEvent {
 
 export interface GenerateStrategyOptions {
   onProgress?: (event: StrategyProgressEvent) => void;
+  /**
+   * Strategist depth — controls which review stages run.
+   *  - "solo"    : proposer only, no reviewers, no revision (Free tier)
+   *  - "dual"    : proposer + Gemini reviewer + revision (Pro tier)
+   *  - "council" : proposer + Codex + Gemini + revision (Ultra tier)
+   * Defaults to "council" so existing callers preserve behavior.
+   */
+  mode?: "solo" | "dual" | "council";
 }
 
 interface ProtocolSummary {
@@ -749,6 +757,7 @@ export async function generateStrategy(
   criteria: StrategyCriteria,
   opts: GenerateStrategyOptions = {}
 ): Promise<{ strategy: InvestmentStrategy; poolsScanned: number; protocolsAnalyzed: number; protocolsDeepAnalyzed: number }> {
+  const mode = opts.mode ?? "council";
   const emit = (event: StrategyProgressEvent) => {
     try {
       opts.onProgress?.(event);
@@ -883,11 +892,40 @@ export async function generateStrategy(
     );
   }
 
-  // ===== STAGE 2 — Codex GPT-5.5 + Gemini 3.1 Pro review IN PARALLEL =====
-  console.log("[strategy] stage 2: Codex + Gemini reviewing proposal in parallel");
+  // ===== STAGE 2 — reviewer panel (mode-dependent) =====
+  // solo:    no reviewers — return architect's proposal directly
+  // dual:    one reviewer (Gemini) + revision
+  // council: two reviewers (Codex + Gemini) + revision
+  if (mode === "solo") {
+    emit({
+      stage: "finalizing",
+      message: "Solo strategist mode — returning the architect's proposal without review.",
+    });
+    const collaboration: CollaborationTrail = {
+      bothAisAvailable: false,
+      critiquePoints: [],
+      initialProjectedApy: initialStrategy.projectedApy,
+      finalProjectedApy: initialStrategy.projectedApy,
+      droppedPoolIds: [],
+      addedPoolIds: [],
+      codexVerdict: "unavailable",
+      reviewerVerdicts: { codex: "unavailable", gemini: "unavailable" },
+      revisionNotes: "Solo strategist tier — proposal returned without reviewer panel.",
+    };
+    return {
+      strategy: { ...initialStrategy, collaboration },
+      poolsScanned: qualifying.length,
+      protocolsAnalyzed: summaries.length,
+      protocolsDeepAnalyzed,
+    };
+  }
+
+  console.log(
+    `[strategy] stage 2: ${mode === "dual" ? "Gemini reviewing" : "Codex + Gemini reviewing"} proposal in parallel`,
+  );
   emit({
     stage: "reviewers",
-    message: `Two independent reviewers are stress-testing the architect's ${initialStrategy.allocations?.length ?? "?"}-pool proposal in parallel…`,
+    message: `${mode === "dual" ? "An independent reviewer is" : "Two independent reviewers are"} stress-testing the architect's ${initialStrategy.allocations?.length ?? "?"}-pool proposal…`,
   });
   const critiquePrompt = buildCritiquePrompt(
     criteria,
@@ -896,7 +934,9 @@ export async function generateStrategy(
     qualifying.length
   );
   const [codexResult, geminiResult] = await Promise.all([
-    runReviewer("codex", critiquePrompt, 480_000),
+    mode === "council"
+      ? runReviewer("codex", critiquePrompt, 480_000)
+      : Promise.resolve({ critique: null as ReviewerCritique | null, error: null as string | null }),
     runReviewer("gemini", critiquePrompt, 480_000),
   ]);
 

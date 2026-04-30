@@ -17,6 +17,7 @@ import {
   EmptyState,
   MetricTile,
 } from "@/components/site/ui";
+import { PoolIcon } from "@/components/site/PoolIcon";
 import {
   chainIdFromName,
   formatMoney,
@@ -24,6 +25,8 @@ import {
   formatUsd,
 } from "@/lib/design-utils";
 import type { LivePool } from "@/app/api/yields/live/route";
+import { usePlan } from "@/hooks/usePlan";
+import { Paywall } from "@/components/site/Paywall";
 
 type Scenario = "baseline" | "depeg" | "tvl_crash" | "market_drawdown";
 
@@ -77,6 +80,7 @@ const SCENARIOS: Array<{ key: Scenario; label: string; blurb: string }> = [
 const MAX_ALLOCATIONS = 8;
 
 export default function SimulatorPage() {
+  const plan = usePlan();
   const [pools, setPools] = useState<LivePool[]>([]);
   const [poolsErr, setPoolsErr] = useState<string | null>(null);
   const [allocations, setAllocations] = useState<Allocation[]>([]);
@@ -234,6 +238,16 @@ export default function SimulatorPage() {
         ]}
       />
 
+      {!plan.isLoading && !plan.capabilities.toolSimulator ? (
+        <Paywall
+          title="Scenario simulator unlocks on Pro"
+          body="Forward-replay your allocation against baseline, depeg, TVL crash, and market drawdown using real DeFiLlama history. Available on Pro and Ultra."
+          requiredTier="pro"
+          currentTier={plan.tier}
+          feature="Simulator"
+        />
+      ) : null}
+
       <div className="metric-grid" style={{ marginBottom: 18 }}>
         <MetricTile
           label="Projected end"
@@ -307,9 +321,7 @@ export default function SimulatorPage() {
                   return (
                     <div className="allocation-row" key={`row-${row.poolId}`}>
                       <div className="token-cell">
-                        <div className="token-chip" aria-hidden="true">
-                          {row.symbol.slice(0, 2)}
-                        </div>
+                        <PoolIcon symbol={row.symbol} protocol={row.protocol} />
                         <div>
                           <strong>{row.symbol}</strong>
                           <span>
@@ -411,9 +423,11 @@ export default function SimulatorPage() {
                 return (
                   <div className="allocation-row" key={`alloc-${alloc.pool.poolId}`}>
                     <div className="token-cell">
-                      <div className="token-chip" aria-hidden="true">
-                        {alloc.pool.symbol.slice(0, 2)}
-                      </div>
+                      <PoolIcon
+                        symbol={alloc.pool.symbol}
+                        protocol={alloc.pool.protocol}
+                        category={alloc.pool.category}
+                      />
                       <div>
                         <strong>{alloc.pool.symbol}</strong>
                         <span>
@@ -482,9 +496,7 @@ export default function SimulatorPage() {
                     onClick={() => addPool(pool)}
                   >
                     <div className="token-cell">
-                      <div className="token-chip" aria-hidden="true">
-                        {pool.symbol.slice(0, 2)}
-                      </div>
+                      <PoolIcon symbol={pool.symbol} protocol={pool.protocol} category={pool.category} />
                       <div>
                         <strong>{pool.symbol}</strong>
                         <span>

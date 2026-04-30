@@ -1,9 +1,15 @@
 import { fetchAllBalances } from "@/lib/wallet/balance-fetcher";
 import { fetchTokenPrices } from "@/lib/coingecko";
 import { calculatePortfolio } from "@/lib/wallet/portfolio-calculator";
+import { requireWallet } from "@/lib/auth/guard";
+import { requireCapability } from "@/lib/plans/access";
 
 export async function POST(request: Request) {
   try {
+    const auth = requireWallet(request);
+    if ("response" in auth) return auth.response;
+    const cap = requireCapability(auth.wallet, "toolPortfolioLens");
+    if (!cap.ok) return cap.response;
     const { address } = await request.json();
 
     if (!address || typeof address !== "string" || !/^0x[a-fA-F0-9]{40}$/.test(address)) {

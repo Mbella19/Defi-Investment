@@ -87,6 +87,50 @@ function migrate(db: InstanceType<typeof Database>) {
     CREATE INDEX IF NOT EXISTS idx_alerts_strategy ON strategy_alerts(strategy_id);
     CREATE INDEX IF NOT EXISTS idx_alerts_read ON strategy_alerts(read);
     CREATE INDEX IF NOT EXISTS idx_breach_strategy ON strategy_breach_state(strategy_id);
+
+    -- Paid subscription state. One row per wallet, replaced on each new payment.
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      wallet_address TEXT PRIMARY KEY,
+      tier TEXT NOT NULL,
+      activated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL,
+      payment_chain TEXT,
+      payment_token TEXT,
+      payment_amount TEXT,
+      payment_tx_hash TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Pending crypto payments. One row per quote — verified or expired.
+    CREATE TABLE IF NOT EXISTS pending_payments (
+      id TEXT PRIMARY KEY,
+      wallet_address TEXT NOT NULL,
+      tier TEXT NOT NULL,
+      chain TEXT NOT NULL,
+      token TEXT NOT NULL,
+      recipient_address TEXT NOT NULL,
+      amount_usd REAL NOT NULL,
+      amount_token TEXT NOT NULL,
+      token_decimals INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      tx_hash TEXT,
+      verified_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL
+    );
+
+    -- One row per strategy generation call so we can enforce monthly caps even
+    -- when generated drafts are discarded before activation.
+    CREATE TABLE IF NOT EXISTS strategy_generations (
+      id TEXT PRIMARY KEY,
+      wallet_address TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pending_wallet ON pending_payments(wallet_address);
+    CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_payments(status);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_tx ON pending_payments(tx_hash) WHERE tx_hash IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_strategy_gen_wallet ON strategy_generations(wallet_address, created_at);
   `);
 
   // One-shot repair for malformed alert.pool_id values written before the

@@ -1,11 +1,14 @@
 import { getDb } from "@/lib/db";
 import { requireWallet } from "@/lib/auth/guard";
+import { requireCapability } from "@/lib/plans/access";
 import type { StrategyAlert } from "@/types/active-strategy";
 
 export async function GET(request: Request) {
   try {
     const auth = requireWallet(request);
     if ("response" in auth) return auth.response;
+    const cap = requireCapability(auth.wallet, "realtimeAlerts");
+    if (!cap.ok) return cap.response;
     const { searchParams } = new URL(request.url);
     const unreadOnly = searchParams.get("unread") === "true";
     // Clamp 1–100. Without a max, an unbounded `limit` lets a caller pull
@@ -60,6 +63,8 @@ export async function PATCH(request: Request) {
   try {
     const auth = requireWallet(request);
     if ("response" in auth) return auth.response;
+    const cap = requireCapability(auth.wallet, "realtimeAlerts");
+    if (!cap.ok) return cap.response;
     const body = await request.json();
     const { alertIds, markAllRead } = body as {
       alertIds?: string[];
