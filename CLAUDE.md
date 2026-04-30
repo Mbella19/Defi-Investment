@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Stack
 
-Next.js 16.2.1 (App Router, Turbopack) · React 19.2 with the React Compiler enabled (`reactCompiler: true` in `next.config.ts` + `babel-plugin-react-compiler`) · TypeScript · Tailwind 4 · `better-sqlite3` for local persistence (declared in `serverExternalPackages` so it isn't bundled) · `wagmi`/`viem`/RainbowKit for wallet UX. Imported `@AGENTS.md` above warns: this Next.js has breaking changes vs. training data — consult `node_modules/next/dist/docs/` before changing routing, server actions, or config.
+Next.js 16.2.1 (App Router, Turbopack) · React 19.2 with the React Compiler enabled (`reactCompiler: true` in `next.config.ts` + `babel-plugin-react-compiler`) · TypeScript · Tailwind 4 · `better-sqlite3` for local persistence (declared in `serverExternalPackages` so it isn't bundled) · `wagmi`/`viem`/RainbowKit for wallet UX (also used for in-site EVM payments). Imported `@AGENTS.md` warns: this Next.js has breaking changes vs. training data — consult `node_modules/next/dist/docs/` before changing routing, server actions, or config.
 
 ## Commands
 
@@ -17,7 +17,7 @@ npx tsc --noEmit   # standalone type-check (faster than build)
 
 There is no test runner configured. `next build` is the canonical "does it compile" gate — it type-checks and statically generates all pages.
 
-The SQLite DB (`sovereign.db`) is created on first server route hit via `src/lib/db.ts`'s `getDb()`; deleting it is safe (it migrates on next boot). Two DDL paths coexist: `db.ts`'s `migrate()` creates `active_strategies` + `strategy_alerts` eagerly on first connection, while `src/lib/security/exploit-monitor.ts`'s `ensureSchema()` creates `exploit_alerts` lazily on first read. New tables should follow one of those two patterns — don't introduce a third.
+The SQLite DB (`sovereign.db`) is created on first server route hit via `src/lib/db.ts`'s `getDb()`; deleting it is safe (it migrates on next boot). Two DDL paths coexist: `db.ts`'s `migrate()` creates the eager tables (`active_strategies`, `strategy_alerts`, `strategy_breach_state`, `subscriptions`, `pending_payments`, `strategy_generations`) on first connection, while `src/lib/security/exploit-monitor.ts`'s `ensureSchema()` creates `exploit_alerts` lazily on first read. New tables should follow one of those two patterns — don't introduce a third.
 
 ## Big-picture architecture
 
@@ -35,11 +35,15 @@ Results are cached in-process for 1 hour keyed by protocol slug.
 
 ### Strategy generation (`src/lib/strategist.ts`)
 
-`generateStrategy(criteria)` is a separate three-stage pipeline for portfolio construction:
+`generateStrategy(criteria, opts)` is a separate three-stage pipeline for portfolio construction. `opts.mode` (default `"council"`) controls the reviewer panel and is set by the API layer from the caller's plan tier (see "Plans, paywall, and capability gating" below):
 
-1. **Claude proposer** — fetches DeFiLlama pools + protocols, filters by APY/TVL/risk, runs `analyzeProtocol` on the top 30 protocols (in batches of 5), and asks Claude to compose an initial allocation strategy via `invokeClaudeCli` (local `claude` CLI subprocess).
-2. **Codex + Gemini reviewers** — both review Claude's proposal in parallel via `runReviewer`. `mergeReviewerCritiques` deduplicates concerns by `category + normalized issue`, escalates severity, and tracks which reviewer(s) flagged each via `sources: ReviewerSource[]`. If both reviewers approve with zero concerns, revision is skipped.
-3. **Claude revision** — Claude rewrites the strategy addressing every high-severity concern. `validateRevisedStrategy` enforces shape + budget tolerance (±1% or $50). `recomputeWeightedApy` ignores the model's stated APY in favour of the actual allocation-weighted average. `concernAddressed` is a deterministic post-hoc check (was the cited pool dropped? was its allocation cut ≥20%? was its reasoning rewritten?) — the AIs cannot self-mark concerns as addressed.
+1. **Claude proposer** — fetches DeFiLlama pools + protocols, filters by APY/TVL/risk, runs `analyzeProtocol` on the top 30 protocols (in batches of 5), and asks Claude to compose an initial allocation strategy via `invokeClaudeCli` (local `claude` CLI subprocess). Always runs.
+2. **Reviewer panel** —
+   - `mode === "solo"` (Free tier): skipped entirely; the architect's proposal is returned with a stub `CollaborationTrail`.
+   - `mode === "dual"` (Pro tier): only Gemini reviews via `runReviewer`.
+   - `mode === "council"` (Ultra tier): Codex + Gemini both review in parallel. `mergeReviewerCritiques` deduplicates concerns by `category + normalized issue`, escalates severity, and tracks which reviewer(s) flagged each via `sources: ReviewerSource[]`.
+   If every available reviewer approved with zero concerns, revision is skipped.
+3. **Claude revision** (dual + council only) — Claude rewrites the strategy addressing every high-severity concern. `validateRevisedStrategy` enforces shape + budget tolerance (±1% or $50). `recomputeWeightedApy` ignores the model's stated APY in favour of the actual allocation-weighted average. `concernAddressed` is a deterministic post-hoc check (was the cited pool dropped? was its allocation cut ≥20%? was its reasoning rewritten?) — the AIs cannot self-mark concerns as addressed.
 
 The per-stage trail is preserved on `InvestmentStrategy.collaboration` (`CollaborationTrail`) so the UI can show what each reviewer flagged and what changed.
 
@@ -56,11 +60,44 @@ The per-stage trail is preserved on `InvestmentStrategy.collaboration` (`Collabo
 
 A full audit takes 5–10 minutes, so it runs as a background job (`audit/jobs.ts` — in-memory `Map` with TTL pruning, mirroring `strategy-jobs.ts`); the API exposes `start` + `status` endpoints and the client polls.
 
+### Plans, paywall, and capability gating (`src/lib/plans/`)
+
+Three subscription tiers — Free, Pro ($100/mo), Ultra ($200/mo) — with capabilities defined as a typed map in `src/lib/plans/access.ts` (`TIER_CAPS: Record<Tier, Capabilities>`). Every gated feature is a boolean (or list/number) on `Capabilities`, never an inline tier check, so adding a new gated feature means adding a key to one type.
+
+- `resolveTier(wallet)` reads `subscriptions.expires_at` and returns `"free"|"pro"|"ultra"`. Expired rows fall back to free.
+- `isOwnerWallet(wallet)` reads the `OWNER_WALLETS` env var (comma-separated lowercase 0x addresses) and short-circuits to Ultra. Use this for the project owner / staff testing.
+- `requireCapability(wallet, capabilityKey)` is the **server-side gate** — returns `{ ok: true }` or `{ ok: false, response }` (a 402). Every paid-feature route calls it after `requireWallet()`.
+- `activateSubscription({ wallet, tier, ... })` upserts `subscriptions` with a 30-day expiry (extends from existing expiry if still in the future).
+
+Monthly strategy caps live in `src/lib/plans/usage.ts` — `strategy_generations` is appended-to on every job creation and counted against `TIER_CAPS[tier].monthlyStrategies` per calendar month (UTC).
+
+Client-side: `src/hooks/usePlan.ts` hits `/api/me/plan` and exposes `{ tier, capabilities, isOwner, usage, refetch }`. Pages render `<Paywall>` (`src/components/site/Paywall.tsx`) when a capability is missing; the strategies composer disables risk-band / stable-only / custom-APY controls based on the same flags. The strategist's `mode` is set in `/api/strategy` from `plan.capabilities.strategistMode`, never from the client.
+
+### Crypto payments & subscriptions (`src/lib/payments/`, `src/app/(app)/plans/checkout/`)
+
+Subscriptions are paid in crypto from the SIWE-authed wallet. Supported tokens/chains live in `src/lib/payments/config.ts` (`PAYMENT_PAIRS`):
+
+- **EVM** (in-site send via wagmi): ETH, USDC, USDT on Ethereum (chainId 1) and BSC (56).
+- **Non-EVM** (manual paste-tx-hash flow): SOL, BTC, and USDC/USDT on Tron (Tron only enabled if `PAYMENT_ADDRESS_TRON` env is set).
+
+Recipient addresses are loaded from env (`PAYMENT_ADDRESS_EVM` / `PAYMENT_ADDRESS_BTC` / `PAYMENT_ADDRESS_SOL` / `PAYMENT_ADDRESS_TRON`) with hardcoded fallbacks. The `GET /api/payments/quote` response **never includes the recipient address** — only the per-quote POST does, and the address is held in memory for the wagmi flow rather than rendered.
+
+Checkout flow:
+
+1. `POST /api/payments/quote` (`src/lib/payments/quote.ts → createQuote`) prices the tier in the chosen token (USD-pinned for stables, live CoinGecko for ETH/BTC/SOL via `quoteAmount`), inserts a `pending_payments` row with a 30-min expiry, and returns the recipient + amount.
+2. **EVM**: the checkout page (`src/app/(app)/plans/checkout/page.tsx`) uses wagmi's `useSendTransaction` (native) or `useWriteContract` (`erc20Abi.transfer`) to send. `useWaitForTransactionReceipt` watches confirmation and auto-submits the hash to verify.
+3. **Non-EVM**: address is hidden behind a "Reveal deposit address" button (collapsed by default); user pastes the tx hash from their external wallet manually.
+4. `POST /api/payments/verify` looks up the quote, dispatches to the appropriate verifier (`verify-evm.ts` / `verify-tron.ts` / `verify-solana.ts` / `verify-btc.ts`), confirms recipient + amount + sufficient confirmations, then calls `activateSubscription`.
+
+Per-chain verifiers live one-per-file under `src/lib/payments/verify-*.ts` and are dispatched by `verify.ts`. EVM uses viem against `getRpcUrl(chainId)`; Tron hits TronGrid; Solana hits the configured RPC; BTC hits mempool.space. Confirmations: 6 (Ethereum), 12 (BSC), finalized (Solana), 1 block (BTC). Amount comparison uses `compareAmount` in `pricing.ts` with ±0.5% tolerance.
+
+Real-gas display in checkout: gas units come from `useEstimateGas` against `chainId: targetChainId` (runs even when wallet is on the wrong chain — wagmi routes through the configured transport for that chain), per-gas fee from `useEstimateFeesPerGas`, native USD price from `/api/payments/native-prices` (60s server cache, 30s browser cache). If the simulator reverts (no token balance), the fee row falls back to the deterministic typical units (21000 native, 65000 ERC20) and is **labeled "typical"** — never silently mocked.
+
 ### Background scheduler & job stores
 
 Two in-memory job stores back the long-running pipelines: `strategy-jobs.ts` for `generateStrategy` and `audit/jobs.ts` for `runMultiEngineAudit`. Both are `Map<id, Job>` with TTL pruning (a periodic `setInterval(...).unref()` sweep on top of the on-write checks) and append-only `events[]` arrays for progress streaming — clients poll `…/status` and render a live event log. New long-running pipelines should follow the same shape.
 
-Alongside them, `monitor-scheduler.ts`'s `ensureSchedulerStarted()` is idempotently invoked from strategy API routes; on first call it spawns a 15-min `setInterval` that runs `monitorActiveStrategies()` to scan stored strategies and write new `strategy_alerts` rows. The scheduler lives inside the Next server process — for serverless deployments, `vercel.json` configures Vercel Cron to POST `/api/strategies/monitor` every 15 min instead. That route accepts `Authorization: Bearer ${CRON_SECRET}` (required in prod, optional in dev) and runs one `monitorActiveStrategies()` sweep per invocation. GET on the same route returns scheduler status with a `stale` flag if no scan has run in 30+ min.
+Alongside them, `monitor-scheduler.ts`'s `ensureSchedulerStarted()` is idempotently invoked from strategy API routes; on first call it spawns a 15-min `setInterval` that runs `monitorActiveStrategies()` to scan stored strategies and write new `strategy_alerts` rows. The scheduler lives inside the Next server process — for serverless deployments, `vercel.json` configures Vercel Cron to POST `/api/cron/monitor` every 15 min instead. That route accepts `Authorization: Bearer ${CRON_SECRET}` (required in prod, optional in dev) and runs one `monitorActiveStrategies()` sweep per invocation. GET on `/api/strategies/monitor` returns scheduler status with a `stale` flag if no scan has run in 30+ min.
 
 ### Auth & per-route guards
 
@@ -71,19 +108,19 @@ SIWE (EIP-4361) is the only auth path. The flow:
 3. `POST /api/auth/verify` → `src/lib/auth/siwe.ts` regex-parses the message, validates Domain/URI/Version/Chain ID/Issued At against the request Host (`expectedOrigin`), calls viem's `verifyMessage`, consumes the nonce, then `src/lib/auth/session.ts` mints an HMAC-signed `sov_session` cookie (24h TTL, `HttpOnly`, `SameSite=Lax`, `Secure` in prod). No JWT lib — just Node `crypto`.
 4. `POST /api/auth/logout` clears the cookie. `GET /api/auth/me` returns `{ wallet }` or null.
 
-The client wiring lives in `SiweAuthProvider` (mounted inside `Web3Provider` so it sits inside `WagmiProvider`). It auto-prompts the SIWE message when a wallet first connects — `useActiveStrategies` and `useStrategyAlerts` consume `useSiweAuth()` and gate their fetches on `status === "authed"` so unauthenticated calls don't fire 401s.
+The client wiring lives in `SiweAuthProvider` (mounted inside `Web3Provider` so it sits inside `WagmiProvider`). It auto-prompts the SIWE message when a wallet first connects — `useActiveStrategies`, `useStrategyAlerts`, and `usePlan` consume `useSiweAuth()` and gate their fetches on `status === "authed"` so unauthenticated calls don't fire 401s.
 
 `SESSION_SECRET` (≥32 chars) is required — auth-protected routes return 503 if it's unset.
 
-Wallet-scoped routes use `requireWallet(request)` from `src/lib/auth/guard.ts`, which returns either `{ wallet }` or `{ response }` (a 401/503). All `/api/strategies*` routes scope queries by `wallet_address = ?` from the session and **ignore any client-supplied wallet/walletAddress params** — that's the auth boundary, not just a convenience.
+Wallet-scoped routes use `requireWallet(request)` from `src/lib/auth/guard.ts`, which returns either `{ wallet }` or `{ response }` (a 401/503). All `/api/strategies*` routes scope queries by `wallet_address = ?` from the session and **ignore any client-supplied wallet/walletAddress params** — that's the auth boundary, not just a convenience. Paid-feature routes layer `requireCapability()` on top of `requireWallet()`.
 
 ### Cron / monitor scheduler
 
-`/api/cron/monitor` (GET, `CRON_SECRET` Bearer-gated) is the production scan entry point — Vercel Cron sends GETs, so the cron lives on its own path rather than sharing `/api/strategies/monitor` (whose GET is a status check). `/api/strategies/monitor` POST is the manual UI trigger and uses `requireWallet` instead of `CRON_SECRET`. Both paths call into `monitorActiveStrategies(strategyId?, wallet?)` in `src/lib/strategy-monitor.ts` — passing `wallet` scopes the scan to that user, the cron path passes neither and scans every active strategy.
+`/api/cron/monitor` (GET, `CRON_SECRET` Bearer-gated) is the production scan entry point — Vercel Cron sends GETs, so the cron lives on its own path rather than sharing `/api/strategies/monitor` (whose GET is a status check). `/api/strategies/monitor` POST is the manual UI trigger and uses `requireWallet` + `requireCapability("realtimeAlerts")` — Free wallets get a 402. Both paths call into `monitorActiveStrategies(strategyId?, wallet?)` in `src/lib/strategy-monitor.ts` — passing `wallet` scopes the scan to that user, the cron path passes neither and scans every active strategy.
 
 ### Rate limiting
 
-`enforceRateLimit(request, endpoint, { max, windowMs })` from `src/lib/rate-limit.ts` is a fixed-window token bucket keyed by authenticated wallet (preferred) or IP. Returns `null` to pass, or a 429 `Response` with `Retry-After`. Per-endpoint caps live at the top of each route handler — current values: `strategy` 5/h, `audit` 3/h, `analyze` 20/h, `forensics` 20/h. The store is in-process — for multi-instance deployments swap to Redis.
+`enforceRateLimit(request, endpoint, { max, windowMs })` from `src/lib/rate-limit.ts` is a fixed-window token bucket keyed by authenticated wallet (preferred) or IP. Returns `null` to pass, or a 429 `Response` with `Retry-After`. Per-endpoint caps live at the top of each route handler — current values: `strategy` 5/h, `audit` 3/h, `analyze` 20/h, `forensics` 20/h, `tools.*` 30/h, `payments.quote`/`payments.verify` 30/h. The store is in-process — for multi-instance deployments swap to Redis.
 
 ### SSRF guard
 
@@ -107,15 +144,15 @@ Two ad-hoc shell scripts exist for second-opinion review during development: `sc
 
 App Router with two route groups:
 
-- `src/app/(app)/{discover,portfolio,security,strategies,tools}` — authenticated app pages. `security/audit/` is a nested route hosting the multi-engine contract auditor UI.
+- `src/app/(app)/{discover,portfolio,security,strategies,tools,plans}` — authenticated app pages. `security/audit/` hosts the multi-engine contract auditor UI; `plans/` hosts the pricing page; `plans/checkout/` hosts the wallet-driven crypto checkout.
 - `src/app/(landing)` — marketing.
-- `src/app/api/*` — server routes (DeFiLlama scan, analyze, strategy, monitor, security/forensics/audit/alerts, portfolio/balances, etc.). All API routes are `ƒ` (dynamic, server-rendered on demand) — none are statically prerendered.
+- `src/app/api/*` — server routes (DeFiLlama scan, analyze, strategy, monitor, security/forensics/audit/alerts, portfolio/balances, me/plan, payments/{quote,verify,native-prices}, etc.). All API routes are `ƒ` (dynamic, server-rendered on demand) — none are statically prerendered.
 
-Strategies and alerts persist to SQLite via `getDb()` (`src/lib/db.ts`). The schema migrates on first connection.
+Strategies, alerts, subscriptions, and pending payments persist to SQLite via `getDb()` (`src/lib/db.ts`). The schema migrates on first connection.
 
 ### Data sources (mostly free-tier)
 
-DeFiLlama (protocols, pools, TVL), CoinGecko (token market data), GoPlus (contract security), Beefy (auto-compound vaults), Etherscan-family (on-chain deployer forensics + source audits). Each lives in its own `src/lib/<source>.ts` module and exports a typed result + a `formatXForPrompt()` helper used by `analyzeProtocol`.
+DeFiLlama (protocols, pools, TVL), CoinGecko (token market data + native gas-token USD prices for the checkout fee row), GoPlus (contract security), Beefy (auto-compound vaults), Etherscan-family (on-chain deployer forensics + source audits). Each lives in its own `src/lib/<source>.ts` module and exports a typed result + a `formatXForPrompt()` helper used by `analyzeProtocol`.
 
 ## Conventions worth knowing
 
@@ -129,3 +166,8 @@ DeFiLlama (protocols, pools, TVL), CoinGecko (token market data), GoPlus (contra
 - **Use `fetchWithTimeout` + `warnUpstream` for upstream APIs.** All DeFiLlama / CoinGecko / GoPlus / Beefy / Etherscan calls go through `src/lib/fetch-utils.ts`'s `fetchWithTimeout` (10s default via AbortController) and log failures via `warnUpstream(source, err)`. Don't bare-`fetch()` upstreams — a hung connection will block a route past its `maxDuration`.
 - **Use `boundCache(map, maxSize)` before `cache.set()`.** Long-lived process caches in `anthropic.ts`, `source-audit.ts`, `deployer-forensics.ts` are bounded to 500 entries via `src/lib/cache-utils.ts` — TTL prune first, then FIFO drop. New caches should follow the same shape rather than growing unboundedly.
 - **Use `getRpcUrl(chainId)` from `src/lib/rpc.ts` for viem clients.** Resolves per-chain `RPC_URL_*` env first, then `ALCHEMY_API_KEY`, then `INFURA_API_KEY`, then falls back to viem's public RPC. Don't `http()` with no argument — public RPCs rate-limit aggressively under load.
+- **Capability-first gating.** Don't write `if (tier === "pro")` inline — add the boolean to `Capabilities` in `src/lib/plans/access.ts`, gate the route with `requireCapability(wallet, "yourFlag")`, and gate the UI on `usePlan().capabilities.yourFlag`. Tier strings only appear in three places: `TIER_CAPS`, the plans page copy, and the checkout tier-price map.
+- **Owner-wallet bypass exists for testing.** `OWNER_WALLETS` (comma-separated lowercase 0x addresses) resolves listed wallets to Ultra unconditionally. Use it for local development and demo accounts — don't use it as a substitute for actual subscription state in code.
+- **Store EVM addresses lowercase in payment config.** viem rejects mixed-case addresses unless the EIP-55 checksum matches exactly — so `src/lib/payments/config.ts` keeps every contract / recipient as all-lowercase. The protocol treats lowercase and checksummed addresses as identical; the checksum is purely an integrity hint. If you add a new EVM token, lowercase the contract address before committing.
+- **Real gas, never fake.** The checkout's "Network fee" row shows live values: gas units from `useEstimateGas` (real RPC simulation), per-gas fee from `useEstimateFeesPerGas`, native USD price from CoinGecko. The deterministic 21000/65000 fallback only triggers when `useEstimateGas` errors (typically because the wallet has no token balance), and the UI labels that state explicitly with "· typical" so users can tell. Don't paper over a missing estimate with hardcoded numbers in any new payment code.
+- **Address is never rendered in the EVM checkout summary.** The recipient flows from quote → wagmi tx params → user wallet, never into a copy/paste block. For non-EVM, address reveal is gated behind an explicit "Reveal deposit address" click. Treat the recipient as a system value, not user-facing copy.
