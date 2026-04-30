@@ -8,7 +8,8 @@ import { sessionCookieHeader } from "@/lib/auth/session";
  * round-trip every page load.
  *
  * Hard guarantees:
- *  - Refuses on Vercel (VERCEL=1) — production deployments must use real SIWE.
+ *  - Refuses in production builds and on Vercel — deployed apps must use real SIWE.
+ *  - Refuses unless the request is served from localhost / loopback.
  *  - Refuses unless ENABLE_DEV_LOGIN=true is explicitly set in env.
  *  - Refuses unless SESSION_SECRET is set (otherwise sessionCookieHeader throws).
  *  - Wallet must be in OWNER_WALLETS — randoms can't grant themselves Ultra.
@@ -20,14 +21,25 @@ import { sessionCookieHeader } from "@/lib/auth/session";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function isEnabled(): boolean {
+function isLocalRequest(request: Request): boolean {
+  const hostname = new URL(request.url).hostname.toLowerCase();
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
+}
+
+function isEnabled(request: Request): boolean {
+  if (process.env.NODE_ENV === "production") return false;
   if (process.env.VERCEL === "1") return false;
   if (process.env.ENABLE_DEV_LOGIN !== "true") return false;
-  return true;
+  return isLocalRequest(request);
 }
 
 export async function POST(request: Request) {
-  if (!isEnabled()) {
+  if (!isEnabled(request)) {
     // Return 404 (not 401) so the route is invisible when disabled — a real
     // production deployment shouldn't even hint that this exists.
     return new Response("Not Found", { status: 404 });
@@ -71,16 +83,17 @@ export async function POST(request: Request) {
   });
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   // Surface the OWNER_WALLETS list to the client so the dev-login UI can
   // auto-fill the first one. Only useful when dev-login is enabled.
+  const enabled = isEnabled(request);
   const ownersRaw = process.env.OWNER_WALLETS ?? "";
   const owners = ownersRaw
     .split(",")
     .map((w) => w.trim().toLowerCase())
     .filter((w) => /^0x[0-9a-f]{40}$/.test(w));
   return Response.json({
-    enabled: isEnabled(),
-    owners: isEnabled() ? owners : [],
+    enabled,
+    owners: enabled ? owners : [],
   });
 }

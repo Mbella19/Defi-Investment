@@ -98,14 +98,14 @@ export function getSessionWallet(request: Request): string | null {
 }
 
 /**
- * Whether to emit the `Secure` flag. Browsers refuse to store `Secure` cookies
- * over plain HTTP, which breaks local-prod testing on http://localhost. Mirror
- * the codebase convention used elsewhere (AI mode, etc.) — only treat
- * VERCEL=1 as real HTTPS production. Everywhere else, omit Secure so the
- * cookie actually persists.
+ * Emit Secure for production auth cookies. Local `next dev` over plain
+ * http://localhost cannot store Secure cookies, so development is the only
+ * environment where we omit it.
  */
 function secureFlag(): string {
-  return process.env.VERCEL === "1" ? "; Secure" : "";
+  return process.env.NODE_ENV === "production" || process.env.VERCEL === "1"
+    ? "; Secure"
+    : "";
 }
 
 export function sessionCookieHeader(wallet: string): string {
