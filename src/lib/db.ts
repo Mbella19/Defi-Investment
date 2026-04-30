@@ -127,10 +127,53 @@ function migrate(db: InstanceType<typeof Database>) {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    -- One row per smart-contract audit run so we can enforce monthly caps
+    -- per tier. Recorded at job creation; failed runs still count toward
+    -- the cap so users can't retry-spam after failures.
+    CREATE TABLE IF NOT EXISTS audit_runs (
+      id TEXT PRIMARY KEY,
+      wallet_address TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Per-user notification channels. One row per (wallet, channel) pair —
+    -- so a user can have at most one email, one telegram, one slack, one
+    -- per-user discord channel configured at a time. The endpoint format
+    -- depends on channel: email = address, telegram = chat_id, slack =
+    -- webhook URL, discord = webhook URL.
+    CREATE TABLE IF NOT EXISTS user_channels (
+      wallet_address TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      endpoint TEXT NOT NULL,
+      verified INTEGER NOT NULL DEFAULT 0,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      verified_at TEXT,
+      PRIMARY KEY (wallet_address, channel)
+    );
+
+    -- Pending verification challenges. For email: 6-digit numeric code sent
+    -- via the email itself. For telegram: alphanumeric token used as the
+    -- /start parameter on the deeplink; the bot replies + we match it back
+    -- to this row when the user pings the bot.
+    CREATE TABLE IF NOT EXISTS channel_verifications (
+      wallet_address TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      endpoint TEXT NOT NULL,
+      code TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (wallet_address, channel)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_pending_wallet ON pending_payments(wallet_address);
     CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_payments(status);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_tx ON pending_payments(tx_hash) WHERE tx_hash IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_strategy_gen_wallet ON strategy_generations(wallet_address, created_at);
+    CREATE INDEX IF NOT EXISTS idx_audit_runs_wallet ON audit_runs(wallet_address, created_at);
+    CREATE INDEX IF NOT EXISTS idx_user_channels_wallet ON user_channels(wallet_address);
+    CREATE INDEX IF NOT EXISTS idx_channel_verif_code ON channel_verifications(channel, code);
   `);
 
   // One-shot repair for malformed alert.pool_id values written before the

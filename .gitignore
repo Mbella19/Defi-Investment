@@ -45,6 +45,10 @@ next-env.d.ts
 sovereign.db
 sovereign.db-wal
 sovereign.db-shm
+sovereign 2.db-*
+
+# local browser automation artifacts
+.playwright-cli/
 
 # Claude Code local runtime artifacts (project state, lock files, worktrees).
 # Never commit these — they're per-machine.

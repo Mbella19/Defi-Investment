@@ -34,3 +34,30 @@ export function recordStrategyGeneration(wallet: string, id: string): void {
     console.warn("[plans] generation record failed:", err);
   }
 }
+
+export function auditsThisMonth(wallet: string): number {
+  try {
+    const db = getDb();
+    const since = startOfMonthIso();
+    const row = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM audit_runs WHERE LOWER(wallet_address) = ? AND created_at >= ?",
+      )
+      .get(wallet.toLowerCase(), since) as { n: number } | undefined;
+    return row?.n ?? 0;
+  } catch (err) {
+    console.warn("[plans] audit count read failed:", err);
+    return 0;
+  }
+}
+
+export function recordAuditRun(wallet: string, id: string): void {
+  try {
+    const db = getDb();
+    db.prepare(
+      "INSERT INTO audit_runs (id, wallet_address) VALUES (?, ?)",
+    ).run(id, wallet.toLowerCase());
+  } catch (err) {
+    console.warn("[plans] audit record failed:", err);
+  }
+}

@@ -110,10 +110,11 @@ export default function DiscoverPage() {
       <div className="page-title">
         <div>
           <p className="eyebrow">Markets</p>
-          <h1>Yield shelves with risk in view.</h1>
+          <h1>The DeFi market, curated.</h1>
           <p>
-            Live DeFiLlama pools ranked by protocol, chain, TVL, APY, stability, and
-            review status before any allocation gets composed.
+            Thousands of yield opportunities, filtered down to the ones worth your time.
+            Sortable by chain, asset class, depth, and stability — every line carries a
+            risk band so you know what you&apos;re looking at before you click in.
           </p>
         </div>
       </div>
@@ -204,7 +205,7 @@ export default function DiscoverPage() {
         <div className="empty-state">
           <Sparkles size={28} aria-hidden="true" />
           <strong>Pulling live pools…</strong>
-          <span>DeFiLlama scanner is syncing — should take a few seconds.</span>
+          <span>Market scanner is syncing — should take a few seconds.</span>
         </div>
       ) : filtered.length === 0 ? (
         <div className="empty-state">

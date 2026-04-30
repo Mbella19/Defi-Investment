@@ -237,7 +237,13 @@ export default function AlertBell() {
             )}
           </div>
 
-          {alerts.length > 0 ? (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              borderTop: "1px solid var(--line)",
+            }}
+          >
             <Link
               href="/strategies"
               className="mono"
@@ -247,14 +253,29 @@ export default function AlertBell() {
                 letterSpacing: "0.22em",
                 color: "var(--accent)",
                 padding: "12px",
-                borderTop: "1px solid var(--line)",
+                textDecoration: "none",
+                textTransform: "uppercase",
+                borderRight: "1px solid var(--line)",
+              }}
+            >
+              VIEW STRATEGIES
+            </Link>
+            <Link
+              href="/account/alerts"
+              className="mono"
+              style={{
+                textAlign: "center",
+                fontSize: 10,
+                letterSpacing: "0.22em",
+                color: "var(--text-dim)",
+                padding: "12px",
                 textDecoration: "none",
                 textTransform: "uppercase",
               }}
             >
-              VIEW ALL ALLOCATIONS →
+              MANAGE CHANNELS
             </Link>
-          ) : null}
+          </div>
         </div>
       ) : null}
     </div>

@@ -4,7 +4,6 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import {
-  ChevronDown,
   CircleGauge,
   Crown,
   Menu,
@@ -53,11 +52,6 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
           <BrandMark />
         </Link>
 
-        <button className="app-switcher" type="button" aria-label="Choose app">
-          <span>Choose App</span>
-          <ChevronDown size={16} aria-hidden="true" />
-        </button>
-
         <nav className="nav-links" aria-label="Primary navigation">
           {nav.map((item) => {
             const active =
@@ -82,7 +76,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
               aria-label={item.label}
               key={item.label}
             >
-              <SocialIcon id={item.icon} size={22} />
+              <SocialIcon id={item.icon} size={28} />
             </a>
           ))}
           <span className="alert-slot">

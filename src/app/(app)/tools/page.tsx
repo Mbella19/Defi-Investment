@@ -13,28 +13,28 @@ const toolCards = [
     title: "Scenario simulator",
     href: "/tools/simulator",
     icon: Sparkles,
-    body: "Forward-replay an allocation against baseline, depeg, TVL crash, and market drawdown using real DeFiLlama history.",
+    body: "Forward-replay any allocation against four real-world stress regimes — baseline, stablecoin depeg, TVL crash, and market drawdown — using each protocol's own historical yield data. Find out how your portfolio behaves before the market makes you find out.",
     metric: "4 regimes",
   },
   {
     title: "Correlation matrix",
     href: "/tools/correlation",
     icon: CircleDollarSign,
-    body: "Pearson correlation across up to 12 live pools (day-over-day APY changes) — find crowded exposure before sizing capital.",
-    metric: "≤12 pools",
+    body: "See where your positions secretly move together. Crowded exposure is the silent portfolio killer — we surface it before you size up so you can hold real diversification, not the appearance of it.",
+    metric: "Live cross-asset",
   },
   {
     title: "Contract review",
     href: "/security/audit",
     icon: TriangleAlert,
-    body: "Six-engine smart-contract review with triple-AI synthesis and SCSVS mapping. Heuristic vetoes still apply.",
-    metric: "6 engines",
+    body: "Institutional-grade security review on any verified contract — source, on-chain state, governance, deployer history — mapped to industry standards and delivered in minutes. Free gets 2 a month; Pro gets 20; Ultra is unlimited.",
+    metric: "Verdict in minutes",
   },
   {
     title: "Portfolio lens",
     href: "/portfolio",
     icon: Coins,
-    body: "Connect a wallet for read-only chain, asset, and strategy exposure across the supported networks.",
+    body: "Read-only view of every DeFi position you hold across every supported chain. We never request approvals; we just watch — and fold the picture into the same decision surface as everything else.",
     metric: "7 chains",
   },
 ];
@@ -45,10 +45,11 @@ export default function ToolsHubPage() {
       <div className="page-title">
         <div>
           <p className="eyebrow">Tools</p>
-          <h1>Models for pre-trade judgment.</h1>
+          <h1>Models for pre-trade conviction.</h1>
           <p>
-            Stress assumptions, check diversification, and push contract reviews into the
-            same decision surface.
+            Stress-test allocations, surface hidden exposure, and run contract reviews —
+            all in the same workspace where you decide where capital goes. Built so you
+            never deploy on a hunch.
           </p>
         </div>
       </div>
@@ -62,7 +63,7 @@ export default function ToolsHubPage() {
         ]}
       />
 
-      <SectionHeader eyebrow="Workspace" title="Choose a model." />
+      <SectionHeader eyebrow="Workspace" title="Pick your lens." />
       <div className="tool-grid">
         {toolCards.map((tool) => {
           const Icon = tool.icon;

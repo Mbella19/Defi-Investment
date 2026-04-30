@@ -1,6 +1,6 @@
 import { requireWallet } from "@/lib/auth/guard";
 import { getPlan, TIER_PRICE_USD } from "@/lib/plans/access";
-import { strategyGenerationsThisMonth } from "@/lib/plans/usage";
+import { auditsThisMonth, strategyGenerationsThisMonth } from "@/lib/plans/usage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,13 +18,14 @@ export async function GET(request: Request) {
         wallet: null,
         expiresAt: null,
         prices: TIER_PRICE_USD,
-        usage: { strategiesThisMonth: 0 },
+        usage: { strategiesThisMonth: 0, auditsThisMonth: 0 },
       });
     }
     return auth.response;
   }
   const plan = getPlan(auth.wallet);
-  const used = strategyGenerationsThisMonth(auth.wallet);
+  const usedStrategies = strategyGenerationsThisMonth(auth.wallet);
+  const usedAudits = auditsThisMonth(auth.wallet);
   return Response.json({
     tier: plan.tier,
     capabilities: plan.capabilities,
@@ -32,6 +33,9 @@ export async function GET(request: Request) {
     wallet: auth.wallet,
     expiresAt: plan.expiresAt,
     prices: TIER_PRICE_USD,
-    usage: { strategiesThisMonth: used },
+    usage: {
+      strategiesThisMonth: usedStrategies,
+      auditsThisMonth: usedAudits,
+    },
   });
 }

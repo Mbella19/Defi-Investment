@@ -637,7 +637,7 @@ function StrategyCard({
                   href={poolDeepLink(a.poolId)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  title={`Open ${a.protocol} ${a.symbol} on ${a.poolId.startsWith("beefy-") ? "Beefy" : "DeFiLlama"}`}
+                  title={`Open ${a.protocol} ${a.symbol} pool details`}
                   style={{
                     minWidth: 820,
                     display: "grid",

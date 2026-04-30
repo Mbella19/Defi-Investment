@@ -47,7 +47,7 @@ const PLANS: Plan[] = [
     price: "$0",
     cadence: "/month",
     pitch:
-      "Get on the terminal — full smart-contract audit and a taste of the strategy engine with a solo strategist.",
+      "Get on the terminal — taste the strategy engine and run two contract reviews a month on the house.",
     accent: "#a7b0ba",
     ctaLabel: "Start free",
     ctaHref: "/strategies",
@@ -55,7 +55,7 @@ const PLANS: Plan[] = [
     features: [
       { label: "2 strategies per month", included: true },
       { label: "Solo strategist — single mind working alone", included: true },
-      { label: "Full access to the six-engine smart-contract audit", included: true },
+      { label: "2 smart-contract audits per month", included: true },
       { label: "Risk-band selection (Conservative · Balanced · Asymmetric)", included: false },
       { label: "Stablecoin-only allocation toggle", included: false },
       { label: "Real-time portfolio alerts", included: false },
@@ -68,10 +68,10 @@ const PLANS: Plan[] = [
     name: "Pro",
     badge: "Most popular",
     icon: Zap,
-    price: "$100",
+    price: "$49",
     cadence: "/month",
     pitch:
-      "Operating mode for active allocators — dual-strategist synthesis, full toolkit, real-time alerts on every active mandate.",
+      "Operating mode for active allocators — dual-strategist synthesis, 20 contract reviews, real-time alerts on every active mandate.",
     accent: "#6ee7b7",
     ctaLabel: "Upgrade to Pro",
     ctaHref: "/plans/checkout?tier=pro",
@@ -79,11 +79,12 @@ const PLANS: Plan[] = [
     features: [
       { label: "Everything in Free", included: true },
       { label: "20 strategies per month", included: true },
+      { label: "20 smart-contract audits per month", included: true },
       { label: "Dual strategist synthesis — two minds cross-reviewing each other", included: true },
       { label: "Risk-band selection unlocked", included: true },
       { label: "Stablecoin-only sleeves", included: true },
       { label: "Real-time alerts on active portfolio", included: true },
-      { label: "All workspace tools — Simulator · Correlation · Audit · Portfolio lens", included: true },
+      { label: "All workspace tools — Simulator · Correlation · Portfolio lens", included: true },
       { label: "Custom APY-range mode", included: false },
       { label: "Email · Slack · Telegram · SMS alert delivery", included: false },
     ],
@@ -93,10 +94,10 @@ const PLANS: Plan[] = [
     name: "Ultra",
     badge: "Most powerful",
     icon: Crown,
-    price: "$200",
+    price: "$149",
     cadence: "/month",
     pitch:
-      "The full strategist council — three minds, custom APY targeting, and alerts wherever you live.",
+      "The full strategist council — three minds, unlimited contract reviews, custom APY targeting, alerts wherever you live.",
     accent: "#fbbf24",
     ctaLabel: "Go Ultra",
     ctaHref: "/plans/checkout?tier=ultra",
@@ -104,6 +105,7 @@ const PLANS: Plan[] = [
     features: [
       { label: "Everything in Pro", included: true },
       { label: "60 strategies per month", included: true },
+      { label: "Unlimited smart-contract audits", included: true },
       { label: "Strategist council — three minds with synthesis + veto layer", included: true },
       { label: "Custom APY-range mode in the allocation composer", included: true },
       { label: "Alerts to Email · Slack · Telegram · SMS · Discord", included: true },
@@ -140,13 +142,19 @@ const MATRIX: MatrixGroup[] = [
       { feature: "Risk-band selection", free: false, pro: true, ultra: true },
       { feature: "Stablecoin-only sleeves", free: false, pro: true, ultra: true },
       { feature: "Custom APY-range mode", free: false, pro: false, ultra: true },
-      { feature: "Heuristic veto layer", free: true, pro: true, ultra: true },
+      { feature: "Hard safety guardrails", free: true, pro: true, ultra: true },
     ],
   },
   {
     title: "Workspace",
     rows: [
-      { feature: "Six-engine smart-contract audit", free: true, pro: true, ultra: true },
+      {
+        feature: "Smart-contract audits per month",
+        free: "2",
+        pro: "20",
+        ultra: "Unlimited",
+      },
+      { feature: "Institutional-grade audit pipeline", free: true, pro: true, ultra: true },
       { feature: "Scenario simulator", free: false, pro: true, ultra: true },
       { feature: "Correlation matrix", free: false, pro: true, ultra: true },
       { feature: "Portfolio lens", free: false, pro: true, ultra: true },
@@ -181,25 +189,25 @@ interface FaqItem {
 const FAQ: FaqItem[] = [
   {
     icon: BadgeDollarSign,
-    title: "Cancel anytime",
-    body: "Plans bill monthly. Cancel from your account and you keep the tier through the current period.",
+    title: "Cancel anytime, paid in crypto",
+    body: "Plans bill monthly, paid from your connected wallet — ETH, USDC, USDT, BTC, or SOL. Cancel and you keep the tier through the current period. No card numbers, no chargebacks, no resubscribe loops.",
   },
   {
     icon: ShieldCheck,
-    title: "Non-custodial by design",
-    body: "Sovereign never moves your funds. We surface, score, and monitor positions — every transaction stays in your wallet.",
+    title: "Non-custodial. Always.",
+    body: "Sovereign never holds your funds, never requests transaction approvals, never moves a position. We surface, score, and monitor — every dollar stays in your wallet, every key stays with you.",
   },
   {
     icon: LifeBuoy,
-    title: "Need a custom volume?",
-    body: "Funds, DAOs, and treasuries with sustained scan volume can request a tailored quote with dedicated SLAs.",
+    title: "Need more than Ultra?",
+    body: "Funds, DAOs, and treasuries with sustained volume can request custom quotas, dedicated alert channels, and an SLA. Drop us a line.",
   },
 ];
 
 export const metadata = {
   title: "Plans — Sovereign",
   description:
-    "Pick the Sovereign tier that fits how aggressively you allocate. Free, Pro at $100/month, Ultra at $200/month.",
+    "Pick the Sovereign tier that fits how aggressively you allocate. Free, Pro at $49/month, Ultra at $149/month.",
 };
 
 export default function PlansPage() {
@@ -208,11 +216,12 @@ export default function PlansPage() {
       <div className="page-title">
         <div>
           <p className="eyebrow">Plans</p>
-          <h1>Tier up your edge.</h1>
+          <h1>Pick your edge.</h1>
           <p>
-            Three tiers, one terminal. Start free with the full smart-contract audit, scale into
-            dual- or triple-AI synthesis, and unlock the custom-APY composer when you want
-            surgical control.
+            Three tiers, one terminal, paid in crypto. Start free with a solo analyst and
+            two contract reviews on the house. Step up to Pro for dual-mind allocations,
+            twenty audits a month, and live alerts. Go Ultra for the full analyst council,
+            unlimited contract reviews, and pings to every channel you live on.
           </p>
         </div>
       </div>
@@ -340,49 +349,53 @@ export default function PlansPage() {
 
       <div className="plan-foot">
         <div>
-          <p className="eyebrow">Stack details</p>
-          <h2>What you actually get</h2>
+          <p className="eyebrow">What you actually get</p>
+          <h2>The same security spine, every tier.</h2>
           <p>
-            Every tier runs on the same security spine — heuristic vetoes, SIWE-scoped sessions,
-            and live ground-truth checks against audits, exploits, and TVL crashes. Higher tiers
-            broaden the AI panel and unlock the deeper analytics surface.
+            Every plan — Free, Pro, Ultra — runs through the same institutional-grade
+            security engine: hard safety rules, wallet-scoped sessions, and live checks
+            against audits, exploits, and TVL crashes. Higher tiers broaden the analyst
+            panel, lift the audit cap, and open more places we can reach you when
+            something breaks.
           </p>
         </div>
         <ul className="plan-foot-list">
           <li>
             <Bot size={18} aria-hidden="true" />
             <div>
-              <strong>Strategist depth scales with your tier</strong>
+              <strong>Allocation depth scales with your tier</strong>
               <span>
-                Free runs a solo strategist. Pro pairs two strategists in cross-review.
-                Ultra activates the full council — three strategists with synthesis + veto.
+                Free runs a single analyst. Pro pairs two in adversarial cross-review.
+                Ultra activates the full council — three independent minds, conflicts
+                surfaced, the most-conservative call wins.
               </span>
             </div>
           </li>
           <li>
             <Bell size={18} aria-hidden="true" />
             <div>
-              <strong>Real-time monitoring</strong>
+              <strong>24/7 surveillance on every position</strong>
               <span>
-                APY drops, TVL drains, exploit feeds, deployer downgrades — Pro &amp; Ultra
-                fire alerts the moment ground-truth changes.
+                APY collapse, TVL drain, contract pauses, exploit feeds, deployer
+                downgrades — Pro and Ultra ping you the moment risk shifts, not the next
+                business day.
               </span>
             </div>
           </li>
           <li>
             <Radio size={18} aria-hidden="true" />
             <div>
-              <strong>Multi-channel delivery</strong>
+              <strong>Reached the way you actually live</strong>
               <span>
-                Ultra fans alerts to Email, Slack, Telegram, and SMS in addition to Discord —
-                so the right person gets the right ping.
+                Pro alerts go to Discord. Ultra fans them to Email, Slack, Telegram, and
+                SMS as well — so the right person gets the right ping, even at 3 AM.
               </span>
             </div>
           </li>
         </ul>
         <div className="plan-foot-cta">
           <Link href="/strategies" className="secondary-button">
-            Try the strategy engine
+            Build your first strategy
             <ArrowRight size={16} aria-hidden="true" />
           </Link>
           <Link

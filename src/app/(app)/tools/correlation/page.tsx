@@ -266,7 +266,7 @@ export default function CorrelationPage() {
             <EmptyState
               icon={Network}
               title="Matrix not yet computed"
-              body="Press Compute matrix to fan out to DeFiLlama history and build the Pearson grid."
+              body="Press Compute matrix to pull live yield history and build the correlation grid."
             />
           ) : (
             <div

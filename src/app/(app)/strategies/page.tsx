@@ -117,6 +117,22 @@ export default function StrategiesPage() {
   const draftApy = draftStrategy?.projectedApy ?? 0;
 
   async function generate() {
+    // If wagmi connected but SIWE session is missing, transparently sign first
+    // so the user doesn't have to click a separate sign-in button before the
+    // actual action. The wallet is already shown in the topbar — they think
+    // they're signed in.
+    if (!isAuthed) {
+      try {
+        await signIn();
+      } catch {
+        setJob({
+          status: "error",
+          progress: 0,
+          error: "Wallet authorization was cancelled — accept the signature request to generate a strategy.",
+        });
+        return;
+      }
+    }
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
@@ -255,10 +271,12 @@ export default function StrategiesPage() {
       <div className="page-title">
         <div>
           <p className="eyebrow">Strategies</p>
-          <h1>Mandates that can be inspected.</h1>
+          <h1>Allocations that hold up to scrutiny.</h1>
           <p>
-            Compose an allocation, watch the triple-AI review fire, then move it under
-            monitoring. Codex + Gemini veto Claude before any draft is accepted.
+            Tell us your risk and budget. An independent analyst council builds your
+            allocation, an adversarial review challenges every pick, and only the strategy
+            that survives both reaches you. Then we watch it for as long as your capital
+            sits in it.
           </p>
         </div>
       </div>
@@ -267,8 +285,8 @@ export default function StrategiesPage() {
         file="file/03.strategies"
         items={[
           { label: "composer", value: job.status === "running" ? "running" : "ready", tone: job.status === "running" ? "warn" : "ok" },
-          { label: "review engines", value: "3 online", tone: "info" },
-          { label: "veto layer", value: "mandatory", tone: "danger" },
+          { label: "analyst panel", value: "online", tone: "info" },
+          { label: "safety guardrails", value: "active", tone: "danger" },
         ]}
       />
 
@@ -277,6 +295,7 @@ export default function StrategiesPage() {
           <span className={`plan-strip-tag tier-${plan.tier}`}>{plan.tier}</span>
           <strong>{plan.usage.strategiesThisMonth}</strong>
           <span>of {plan.capabilities.monthlyStrategies} strategies used this month</span>
+          <Link href="/account/alerts" style={{ marginLeft: "auto" }}>Manage alert channels →</Link>
           {plan.tier !== "ultra" ? (
             <Link href="/plans">Upgrade →</Link>
           ) : null}
@@ -302,24 +321,14 @@ export default function StrategiesPage() {
 
       <div className="strategy-layout">
         <div className="strategy-stack">
-          {!isAuthed ? (
+          {authStatus === "checking" || isLoading ? (
+            <EmptyState icon={RefreshCw} title="Loading mandates" body="Reading wallet-scoped strategies…" />
+          ) : !isAuthed ? (
             <EmptyState
               icon={WandSparkles}
-              title="Sign in to monitor allocations"
-              body="Connect a wallet and sign the SIWE message — strategies are scoped to the authenticated wallet."
-              action={
-                <button
-                  type="button"
-                  className="primary-button"
-                  style={{ marginTop: 14 }}
-                  onClick={() => signIn().catch(() => {})}
-                >
-                  <WandSparkles size={16} aria-hidden="true" /> Sign in
-                </button>
-              }
+              title="Draft your first mandate"
+              body="Use the composer on the right — set your budget and risk band, then hit Generate. We'll prompt your wallet for a one-time authorization signature, then build a custom-weighted allocation."
             />
-          ) : isLoading ? (
-            <EmptyState icon={RefreshCw} title="Loading mandates" body="Reading wallet-scoped strategies…" />
           ) : strategies.length === 0 ? (
             <EmptyState
               icon={WandSparkles}
@@ -468,6 +477,8 @@ export default function StrategiesPage() {
               onClick={generate}
               disabled={
                 job.status === "running" ||
+                authStatus === "signing" ||
+                authStatus === "checking" ||
                 (isAuthed &&
                   !plan.isLoading &&
                   plan.usage.strategiesThisMonth >= plan.capabilities.monthlyStrategies)
@@ -476,9 +487,13 @@ export default function StrategiesPage() {
               <WandSparkles size={18} aria-hidden="true" />
               {job.status === "running"
                 ? "Generating…"
-                : isAuthed && plan.usage.strategiesThisMonth >= plan.capabilities.monthlyStrategies
-                  ? "Monthly cap reached"
-                  : "Generate draft"}
+                : authStatus === "checking"
+                  ? "Loading session…"
+                  : authStatus === "signing"
+                    ? "Confirm in wallet…"
+                    : isAuthed && plan.usage.strategiesThisMonth >= plan.capabilities.monthlyStrategies
+                      ? "Monthly cap reached"
+                      : "Generate draft"}
             </button>
             {isAuthed &&
             !plan.isLoading &&

@@ -13,6 +13,7 @@ import { getDb } from "@/lib/db";
 import { fetchAllPools, fetchProtocols } from "@/lib/defillama";
 import { runMonitorScan } from "@/lib/monitor";
 import { sendDiscordAlertBatch, isDiscordWebhookConfigured } from "@/lib/discord-notifier";
+import { dispatchAlertBatch } from "@/lib/notifications/dispatcher";
 import { getPoolStability, type PoolStability } from "@/lib/pool-stability";
 import { getRpcUrl } from "@/lib/rpc";
 import { DEFAULT_ALERT_CONFIG } from "@/types/portfolio";
@@ -179,6 +180,8 @@ export interface StrategyMonitorAlert {
   message: string;
   detail: string;
   createdAt: string;
+  /** Owner of the strategy that produced this alert. Used for per-user dispatch. */
+  walletAddress?: string;
 }
 
 export interface MonitorScanResult {
@@ -270,6 +273,10 @@ export async function monitorActiveStrategies(
 
   const newAlerts: StrategyMonitorAlert[] = [];
 
+  // strategyId → wallet_address. Built as we iterate the strategy rows so
+  // alert dispatch can fan out per-user without an extra DB roundtrip.
+  const strategyToWallet = new Map<string, string>();
+
   function tryInsert(
     sId: string,
     type: string,
@@ -297,11 +304,14 @@ export async function monitorActiveStrategies(
       message,
       detail,
       createdAt: new Date().toISOString(),
+      walletAddress: strategyToWallet.get(sId),
     });
   }
 
   for (const row of rows as Record<string, unknown>[]) {
     const sId = row.id as string;
+    const ownerWallet = (row.wallet_address as string | null | undefined)?.toLowerCase();
+    if (ownerWallet) strategyToWallet.set(sId, ownerWallet);
     const strategy = JSON.parse(row.strategy_json as string) as InvestmentStrategy;
     const criteria = JSON.parse(row.criteria_json as string) as StrategyCriteria;
     const createdAt = row.created_at as string;
@@ -497,9 +507,19 @@ export async function monitorActiveStrategies(
     }
   }
 
-  if (newAlerts.length > 0 && isDiscordWebhookConfigured()) {
-    // Fire-and-forget — webhook failures must not abort the scan.
-    void sendDiscordAlertBatch(newAlerts).catch(() => undefined);
+  if (newAlerts.length > 0) {
+    // Per-user dispatch via the notifications layer. Fans out to every
+    // verified+enabled channel each user has configured (email, telegram,
+    // slack, discord) and that their tier permits. Fire-and-forget — channel
+    // failures must not abort the scan.
+    void dispatchAlertBatch(newAlerts).catch(() => undefined);
+
+    // Server-wide Discord webhook (legacy / ops). If configured, ALL alerts
+    // also fan out to a single ops channel for staff visibility. Independent
+    // of per-user channels — keep, remove, or hard-disable later.
+    if (isDiscordWebhookConfigured()) {
+      void sendDiscordAlertBatch(newAlerts).catch(() => undefined);
+    }
   }
 
   return { scanned: (rows as unknown[]).length, newAlerts };

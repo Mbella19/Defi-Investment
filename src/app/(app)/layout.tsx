@@ -1,10 +1,7 @@
-import ClientWeb3Provider from "@/components/providers/ClientWeb3Provider";
 import { SiteShell } from "@/components/site/SiteShell";
 
+// Web3Provider lives in the root layout (src/app/layout.tsx) so the wallet
+// connection and SIWE session ref survive navigation between route groups.
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <ClientWeb3Provider>
-      <SiteShell>{children}</SiteShell>
-    </ClientWeb3Provider>
-  );
+  return <SiteShell>{children}</SiteShell>;
 }

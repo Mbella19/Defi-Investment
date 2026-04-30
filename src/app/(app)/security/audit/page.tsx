@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -11,6 +12,8 @@ import {
   TimerReset,
 } from "lucide-react";
 import { CommandStrip, MetricTile } from "@/components/site/ui";
+import { usePlan } from "@/hooks/usePlan";
+import { useSiweAuth } from "@/hooks/useSiweAuth";
 import type { AuditReport } from "@/types/audit";
 
 const CHAINS: Array<{ id: number; name: string }> = [
@@ -54,7 +57,7 @@ const ENGINE_LABEL: Record<string, string> = {
   aderyn: "Structure coverage",
   mythril: "Execution coverage",
   regex_pattern: "Pattern coverage",
-  ai_explainer: "Triple-AI synthesis",
+  ai_explainer: "Analyst panel review",
   onchain_interrogator: "Control coverage",
 };
 
@@ -103,11 +106,20 @@ function AuditSkeleton() {
 
 function AuditConsole() {
   const searchParams = useSearchParams();
+  const plan = usePlan();
+  const { status: authStatus, signIn } = useSiweAuth();
+  const isAuthed = authStatus === "authed";
   const [address, setAddress] = useState("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
   const [chainId, setChainId] = useState(1);
   const [job, setJob] = useState<JobView>({ status: "idle", progress: 0 });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autostartedRef = useRef(false);
+
+  const auditCap = plan.capabilities.monthlyAudits;
+  const auditsUsed = plan.usage.auditsThisMonth;
+  const unlimited = auditCap === -1;
+  const remaining = unlimited ? Infinity : Math.max(0, auditCap - auditsUsed);
+  const atCap = !unlimited && remaining <= 0;
 
   useEffect(() => {
     return () => {
@@ -149,6 +161,21 @@ function AuditConsole() {
       setJob({ status: "error", progress: 0, error: "Enter a valid 0x-prefixed contract address." });
       return;
     }
+    // If wagmi connected but SIWE session is missing, transparently sign first.
+    // Wallet shown in topbar → user thinks they're "signed in"; we shouldn't
+    // make them click a separate sign-in button before the actual action.
+    if (authStatus !== "authed") {
+      try {
+        await signIn();
+      } catch {
+        setJob({
+          status: "error",
+          progress: 0,
+          error: "Wallet authorization was cancelled — accept the signature request to run a review.",
+        });
+        return;
+      }
+    }
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
@@ -161,7 +188,18 @@ function AuditConsole() {
         body: JSON.stringify({ address: targetAddress, chain: targetChain }),
       });
       const data = await res.json();
+      if (res.status === 402) {
+        setJob({
+          status: "error",
+          progress: 0,
+          error: `Monthly audit cap reached on the ${data.tier ?? "current"} plan (${data.used}/${data.limit}). Upgrade to keep reviewing.`,
+        });
+        await plan.refetch();
+        return;
+      }
       if (!res.ok) throw new Error(reviewCopy(data.error ?? "Failed to start review"));
+      // Tick the local usage counter so the gate updates immediately.
+      await plan.refetch();
 
       setJob({
         jobId: data.jobId,
@@ -228,11 +266,13 @@ function AuditConsole() {
     <div className="page">
       <div className="page-title">
         <div>
-          <p className="eyebrow">Security / Audit</p>
-          <h1>Contract controls before conviction.</h1>
+          <p className="eyebrow">Security / Contract Review</p>
+          <h1>Verify any contract, in minutes.</h1>
           <p>
-            Six-engine review (source, structure, execution, pattern, on-chain interrogator,
-            triple-AI synthesis) with SCSVS mapping. Heuristic vetoes still apply.
+            Paste an address. Get an institutional-grade security review with a clear
+            verdict — source code, on-chain controls, governance posture, deployer history,
+            and an analyst-led briefing — mapped to industry security standards. Built for
+            capital, not curiosity.
           </p>
         </div>
       </div>
@@ -301,12 +341,58 @@ function AuditConsole() {
                 className="primary-button"
                 type="button"
                 onClick={() => runReview()}
-                disabled={job.status === "running" || !validAddress}
+                disabled={
+                  job.status === "running" ||
+                  !validAddress ||
+                  atCap ||
+                  authStatus === "checking" ||
+                  authStatus === "signing"
+                }
               >
                 <ShieldCheck size={18} aria-hidden="true" />
-                {job.status === "running" ? "Reviewing" : "Run review"}
+                {job.status === "running"
+                  ? "Reviewing"
+                  : authStatus === "checking"
+                    ? "Loading session…"
+                    : authStatus === "signing"
+                      ? "Confirm in wallet…"
+                      : atCap
+                        ? "Monthly cap reached"
+                        : "Run review"}
               </button>
             </div>
+
+            {isAuthed ? (
+              <div
+                style={{
+                  marginTop: 12,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 12,
+                  fontSize: 12,
+                  color: "var(--muted)",
+                }}
+              >
+                <span>
+                  <strong style={{ color: atCap ? "var(--coral)" : "var(--ink)" }}>
+                    {auditsUsed}
+                  </strong>{" "}
+                  of{" "}
+                  {unlimited ? "∞" : auditCap} contract reviews used this month
+                  {plan.tier !== "free" ? ` · ${plan.tier} plan` : ""}
+                </span>
+                {atCap ? (
+                  <Link
+                    href={plan.tier === "free" ? "/plans/checkout?tier=pro" : "/plans/checkout?tier=ultra"}
+                    className="ghost-button"
+                    style={{ fontSize: 12, padding: "4px 10px" }}
+                  >
+                    Upgrade
+                  </Link>
+                ) : null}
+              </div>
+            ) : null}
 
             <div style={{ marginTop: 18 }}>
               <div className="audit-progress" aria-label={`${job.progress}% complete`}>

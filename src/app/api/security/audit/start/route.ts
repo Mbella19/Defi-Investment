@@ -7,6 +7,9 @@ import {
 } from "@/lib/security/audit/jobs";
 import { CHAIN_NAME_TO_ID } from "@/lib/security/etherscan";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { requireWallet } from "@/lib/auth/guard";
+import { getPlan } from "@/lib/plans/access";
+import { auditsThisMonth, recordAuditRun } from "@/lib/plans/usage";
 
 // Multi-engine audit takes 5-10 minutes; this route fires the job and returns
 // the id. Client polls /api/security/audit/status?id=<jobId>.
@@ -36,6 +39,9 @@ export async function POST(request: Request) {
   const limited = enforceRateLimit(request, "audit", { max: 3, windowMs: 60 * 60 * 1000 });
   if (limited) return limited;
 
+  const auth = requireWallet(request);
+  if ("response" in auth) return auth.response;
+
   let body: { address?: string; chain?: string | number; skipMythril?: boolean; skipAi?: boolean };
   try {
     body = await request.json();
@@ -56,7 +62,26 @@ export async function POST(request: Request) {
     return Response.json({ error: `Unsupported chain: ${body.chain}` }, { status: 400 });
   }
 
+  const plan = getPlan(auth.wallet);
+  const cap = plan.capabilities.monthlyAudits;
+  if (cap !== -1) {
+    const used = auditsThisMonth(auth.wallet);
+    if (used >= cap) {
+      return Response.json(
+        {
+          error: "Monthly audit limit reached",
+          tier: plan.tier,
+          used,
+          limit: cap,
+          upgradePath: plan.tier === "free" ? "pro" : plan.tier === "pro" ? "ultra" : null,
+        },
+        { status: 402 },
+      );
+    }
+  }
+
   const job = createAuditJob(address, chainId);
+  recordAuditRun(auth.wallet, job.id);
 
   // Fire and forget — orchestrator resolves long after the response ships.
   void runMultiEngineAudit(address, chainId, {
@@ -71,6 +96,7 @@ export async function POST(request: Request) {
       failAuditJob(job.id, message);
     });
 
+  const used = cap === -1 ? 0 : auditsThisMonth(auth.wallet);
   return Response.json({
     jobId: job.id,
     status: job.status,
@@ -78,5 +104,8 @@ export async function POST(request: Request) {
     chainId,
     progress: 0,
     message: job.events[0]?.message ?? "Starting contract review...",
+    tier: plan.tier,
+    used,
+    limit: cap,
   });
 }

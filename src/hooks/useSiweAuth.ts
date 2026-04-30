@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { useAccount, useChainId, useDisconnect, useSignMessage } from "wagmi";
+import { usePathname } from "next/navigation";
 
 export type SiweAuthStatus =
   | "idle" // no wallet connected
@@ -30,6 +31,12 @@ interface SiweAuthValue {
   signIn: () => Promise<void>;
   /** Clear the server session (and also disconnect the wagmi connection). */
   signOut: () => Promise<void>;
+  /**
+   * Re-probe /api/auth/me to sync provider state with the server cookie.
+   * Useful after a side-channel sign-in (e.g. /dev/owner-login) where the
+   * cookie was set without going through the SIWE flow.
+   */
+  refresh: () => Promise<void>;
 }
 
 const SiweAuthContext = createContext<SiweAuthValue | null>(null);
@@ -67,6 +74,7 @@ export function SiweAuthProvider({ children }: { children: ReactNode }) {
   const chainId = useChainId();
   const { signMessageAsync } = useSignMessage();
   const { disconnect } = useDisconnect();
+  const pathname = usePathname();
 
   const [status, setStatus] = useState<SiweAuthStatus>("checking");
   const [authedWallet, setAuthedWallet] = useState<string | null>(null);
@@ -76,33 +84,29 @@ export function SiweAuthProvider({ children }: { children: ReactNode }) {
   const addressRef = useRef<string | undefined>(undefined);
   addressRef.current = address;
 
+  const probeSession = useCallback(async (): Promise<void> => {
+    try {
+      const res = await fetch("/api/auth/me", { cache: "no-store" });
+      if (res.ok) {
+        const data = (await res.json()) as { address?: string | null };
+        if (data.address) {
+          setAuthedWallet(data.address.toLowerCase());
+          setError(null);
+          setStatus("authed");
+          return;
+        }
+      }
+    } catch {
+      /* fall through */
+    }
+    setAuthedWallet(null);
+    setStatus(addressRef.current ? "needs-signature" : "idle");
+  }, []);
+
   // Probe existing session on mount (Set-Cookie may have survived a refresh).
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/auth/me", { cache: "no-store" });
-        if (cancelled) return;
-        if (res.ok) {
-          const data = (await res.json()) as { address?: string | null };
-          if (data.address) {
-            setAuthedWallet(data.address.toLowerCase());
-            setStatus("authed");
-            return;
-          }
-        }
-      } catch {
-        /* fall through */
-      }
-      if (!cancelled) {
-        setAuthedWallet(null);
-        setStatus(addressRef.current ? "needs-signature" : "idle");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    void probeSession();
+  }, [probeSession]);
 
   // Reconcile session against the connected wallet whenever either changes.
   useEffect(() => {
@@ -129,10 +133,13 @@ export function SiweAuthProvider({ children }: { children: ReactNode }) {
 
   // Auto-prompt the SIWE flow once per wallet connection. We DON'T auto-retry
   // on error — let the user click the manual sign-in button after dismissing.
+  // Suppressed on /dev/* routes — the dev-login page exists specifically to
+  // bypass hardware signing, so a competing auto-prompt would defeat its purpose.
   const lastAutoSignedRef = useRef<string | null>(null);
   useEffect(() => {
     if (status !== "needs-signature") return;
     if (!address) return;
+    if (pathname?.startsWith("/dev/")) return;
     const lower = address.toLowerCase();
     if (lastAutoSignedRef.current === lower) return;
     lastAutoSignedRef.current = lower;
@@ -140,7 +147,7 @@ export function SiweAuthProvider({ children }: { children: ReactNode }) {
   // signIn is stable enough; we intentionally don't depend on it to avoid
   // re-firing when its identity changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, address]);
+  }, [status, address, pathname]);
 
   const signIn = useCallback(async () => {
     if (!address || !isConnected) {
@@ -202,6 +209,7 @@ export function SiweAuthProvider({ children }: { children: ReactNode }) {
     error,
     signIn,
     signOut,
+    refresh: probeSession,
   };
 
   return createElement(SiweAuthContext.Provider, { value }, children);

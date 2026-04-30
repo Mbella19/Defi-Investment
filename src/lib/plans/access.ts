@@ -7,6 +7,8 @@ export type AlertChannel = "discord" | "email" | "slack" | "telegram" | "sms";
 
 export interface Capabilities {
   monthlyStrategies: number;
+  /** Monthly smart-contract audit cap. -1 means unlimited. */
+  monthlyAudits: number;
   strategistMode: StrategistMode;
   riskBandSelection: boolean;
   stablecoinToggle: boolean;
@@ -23,6 +25,7 @@ export interface Capabilities {
 export const TIER_CAPS: Record<Tier, Capabilities> = {
   free: {
     monthlyStrategies: 2,
+    monthlyAudits: 2,
     strategistMode: "solo",
     riskBandSelection: false,
     stablecoinToggle: false,
@@ -37,6 +40,7 @@ export const TIER_CAPS: Record<Tier, Capabilities> = {
   },
   pro: {
     monthlyStrategies: 20,
+    monthlyAudits: 20,
     strategistMode: "dual",
     riskBandSelection: true,
     stablecoinToggle: true,
@@ -51,6 +55,7 @@ export const TIER_CAPS: Record<Tier, Capabilities> = {
   },
   ultra: {
     monthlyStrategies: 60,
+    monthlyAudits: -1,
     strategistMode: "council",
     riskBandSelection: true,
     stablecoinToggle: true,
@@ -67,8 +72,8 @@ export const TIER_CAPS: Record<Tier, Capabilities> = {
 
 export const TIER_PRICE_USD: Record<Tier, number> = {
   free: 0,
-  pro: 100,
-  ultra: 200,
+  pro: 49,
+  ultra: 149,
 };
 
 /**

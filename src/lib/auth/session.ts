@@ -97,14 +97,25 @@ export function getSessionWallet(request: Request): string | null {
   return payload.wallet;
 }
 
+/**
+ * Whether to emit the `Secure` flag. Browsers refuse to store `Secure` cookies
+ * over plain HTTP, which breaks local-prod testing on http://localhost. Mirror
+ * the codebase convention used elsewhere (AI mode, etc.) — only treat
+ * VERCEL=1 as real HTTPS production. Everywhere else, omit Secure so the
+ * cookie actually persists.
+ */
+function secureFlag(): string {
+  return process.env.VERCEL === "1" ? "; Secure" : "";
+}
+
 export function sessionCookieHeader(wallet: string): string {
   const value = buildSessionCookie(wallet);
   const maxAge = Math.floor(SESSION_TTL_MS / 1000);
-  return `${COOKIE_NAME}=${encodeURIComponent(value)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`;
+  return `${COOKIE_NAME}=${encodeURIComponent(value)}; HttpOnly${secureFlag()}; SameSite=Lax; Path=/; Max-Age=${maxAge}`;
 }
 
 export function clearSessionCookieHeader(): string {
-  return `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
+  return `${COOKIE_NAME}=; HttpOnly${secureFlag()}; SameSite=Lax; Path=/; Max-Age=0`;
 }
 
 /** 32-byte random nonce, base64url-encoded. */

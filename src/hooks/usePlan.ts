@@ -8,6 +8,8 @@ export type StrategistMode = "solo" | "dual" | "council";
 
 export interface PlanCapabilities {
   monthlyStrategies: number;
+  /** Monthly audit cap. -1 means unlimited. */
+  monthlyAudits: number;
   strategistMode: StrategistMode;
   riskBandSelection: boolean;
   stablecoinToggle: boolean;
@@ -28,7 +30,7 @@ export interface PlanState {
   wallet: string | null;
   expiresAt: string | null;
   prices: Record<Tier, number>;
-  usage: { strategiesThisMonth: number };
+  usage: { strategiesThisMonth: number; auditsThisMonth: number };
   isLoading: boolean;
   error: string | null;
   refetch: () => Promise<void>;
@@ -38,6 +40,7 @@ const FREE_DEFAULT: PlanState = {
   tier: "free",
   capabilities: {
     monthlyStrategies: 2,
+    monthlyAudits: 2,
     strategistMode: "solo",
     riskBandSelection: false,
     stablecoinToggle: false,
@@ -53,8 +56,8 @@ const FREE_DEFAULT: PlanState = {
   isOwner: false,
   wallet: null,
   expiresAt: null,
-  prices: { free: 0, pro: 100, ultra: 200 },
-  usage: { strategiesThisMonth: 0 },
+  prices: { free: 0, pro: 49, ultra: 149 },
+  usage: { strategiesThisMonth: 0, auditsThisMonth: 0 },
   isLoading: true,
   error: null,
   refetch: async () => {},

@@ -68,7 +68,7 @@ interface VerifyResponse {
   expiresAt?: string;
 }
 
-const TIER_PRICE: Record<"pro" | "ultra", number> = { pro: 100, ultra: 200 };
+const TIER_PRICE: Record<"pro" | "ultra", number> = { pro: 49, ultra: 149 };
 const TIER_LABEL: Record<"pro" | "ultra", string> = { pro: "Pro", ultra: "Ultra" };
 
 const TOKEN_BLURB: Record<string, string> = {

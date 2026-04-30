@@ -221,10 +221,11 @@ export default function SimulatorPage() {
       <div className="page-title">
         <div>
           <p className="eyebrow">Tools / Simulator</p>
-          <h1>Stress the mandate before it moves.</h1>
+          <h1>See your allocation under fire — before the market gets to it.</h1>
           <p>
-            Forward-replay a custom allocation against baseline + three shock regimes
-            using real DeFiLlama daily history.
+            Forward-replay any allocation against four real-world stress regimes —
+            baseline, stablecoin depeg, TVL crash, and market drawdown — using each
+            protocol&apos;s actual historical yield data. Find the holes before capital does.
           </p>
         </div>
       </div>
@@ -241,7 +242,7 @@ export default function SimulatorPage() {
       {!plan.isLoading && !plan.capabilities.toolSimulator ? (
         <Paywall
           title="Scenario simulator unlocks on Pro"
-          body="Forward-replay your allocation against baseline, depeg, TVL crash, and market drawdown using real DeFiLlama history. Available on Pro and Ultra."
+          body="Forward-replay your allocation against baseline, stablecoin depeg, TVL crash, and market drawdown using each protocol's real historical yield data. Available on Pro and Ultra."
           requiredTier="pro"
           currentTier={plan.tier}
           feature="Simulator"

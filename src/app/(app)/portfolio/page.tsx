@@ -66,10 +66,12 @@ export default function PortfolioPage() {
       <div className="page-title">
         <div>
           <p className="eyebrow">Portfolio</p>
-          <h1>Read-only exposure command.</h1>
+          <h1>Your DeFi positions, one console.</h1>
           <p>
-            Wallet positions become allocation context: chain mix, token shelves, drift,
-            and yield sleeves in one view — never custodial.
+            Live exposure across every supported chain, watched by the same security
+            engine that vets your allocations. We never request approvals, never custody
+            funds, never move a position — we just give you the picture and ping you
+            when something changes.
           </p>
         </div>
       </div>
