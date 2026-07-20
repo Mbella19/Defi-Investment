@@ -1,6 +1,6 @@
 import {
-  tripleInvoke,
-  tripleExtractJson,
+  ensembleInvoke,
+  ensembleExtractJson,
   type AiSource,
 } from "../dual-llm";
 import type {
@@ -12,14 +12,14 @@ import type {
 /**
  * AI explainer
  * ------------
- * The triple-AI ensemble (Claude Opus 4.7, Codex GPT-5.5 xhigh, Gemini 3.1 Pro
- * Preview) is demoted from "find vulnerabilities" to "explain tool-grounded
- * findings". This is a deliberate constraint: the analyzers (Slither, Aderyn,
- * Mythril, on-chain interrogator) ground every finding in real source or live
- * state, so the AIs cannot hallucinate issues — only enrich what the tools
- * already detected.
+ * The ensemble (Codex GPT-5.6 xhigh + Gemini 3.5 Flash high) is demoted from
+ * "find vulnerabilities" to "explain tool-grounded findings". This is a
+ * deliberate constraint: the analyzers (Slither, Aderyn, Mythril, on-chain
+ * interrogator) ground every finding in real source or live state, so the
+ * models cannot hallucinate issues — only enrich what the tools already
+ * detected.
  *
- * For each finding, all three AIs produce: whatHappened, whyItMatters,
+ * For each finding, both models produce: whatHappened, whyItMatters,
  * exploitScenario, recommendedFix, finalSeverity. Disagreement is recorded
  * as `aiConsensus` ∈ {all, majority, split, single} so users can see which
  * findings are safe to act on vs. which need a human eye.
@@ -47,9 +47,9 @@ interface AiExplanationRaw {
 }
 
 /**
- * Explain each consensus finding via all three AIs in parallel. Returns the
+ * Explain each consensus finding via both models in parallel. Returns the
  * findings array enriched with `aiExplanation`. Findings without an
- * explanation (all three AIs failed) are returned unchanged.
+ * explanation (both models failed) are returned unchanged.
  */
 export async function explainFindings(
   findings: ConsensusFinding[],
@@ -90,15 +90,11 @@ export async function explainFindings(
 
 async function explainOne(finding: ConsensusFinding): Promise<AiExplanation | null> {
   const prompt = buildPrompt(finding);
-  const raw = await tripleInvoke(prompt, { timeoutMs: PER_FINDING_TIMEOUT_MS });
-  const { claude, codex, gemini, errors } = tripleExtractJson<AiExplanationRaw>(raw);
+  const raw = await ensembleInvoke(prompt, { timeoutMs: PER_FINDING_TIMEOUT_MS });
+  const { codex, gemini, errors } = ensembleExtractJson<AiExplanationRaw>(raw);
 
   const reviewedBy: AiSource[] = [];
   const explanations: { source: AiSource; data: AiExplanationRaw }[] = [];
-  if (claude) {
-    reviewedBy.push("claude");
-    explanations.push({ source: "claude", data: claude });
-  }
   if (codex) {
     reviewedBy.push("codex");
     explanations.push({ source: "codex", data: codex });
@@ -134,8 +130,8 @@ async function explainOne(finding: ConsensusFinding): Promise<AiExplanation | nu
     return lenCur > lenBest ? cur : best;
   });
 
-  // Final severity: max across AIs, but never escalate past "high" unless
-  // all three agree (prevents one model alone from raising to critical).
+  // Final severity: max across the models, but never escalate past "high"
+  // unless both agree (prevents one model alone from raising to critical).
   const reportedSeverities = explanations
     .map((e) => normalizeSeverity(e.data.finalSeverity))
     .filter((s): s is AuditSeverity => !!s);

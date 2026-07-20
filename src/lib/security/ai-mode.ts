@@ -1,8 +1,7 @@
-export type AiProvider = "claude" | "codex" | "gemini";
+export type AiProvider = "codex" | "gemini";
 export type AiMode = "cli" | "api";
 
 const PER_PROVIDER_ENV: Record<AiProvider, string> = {
-  claude: "CLAUDE_MODE",
   codex: "OPENAI_MODE",
   gemini: "GEMINI_MODE",
 };
@@ -18,12 +17,12 @@ function normalize(value: string | undefined): AiMode | undefined {
  * Resolve the runtime mode for a given AI provider.
  *
  * Precedence:
- *   1. Per-provider env var (CLAUDE_MODE / OPENAI_MODE / GEMINI_MODE)
+ *   1. Per-provider env var (OPENAI_MODE / GEMINI_MODE)
  *   2. Global AI_MODE
  *   3. Default to "cli" (local dev parity)
  *
  * On hosted deploys, "cli" is rejected because serverless runtimes don't
- * have local `claude` / `codex` / `gemini` binaries — calling AI routes
+ * have the local `codex` / `agy` (Gemini) binaries — calling AI routes
  * would fail with cryptic spawn ENOENT after the first request. We detect
  * "hosted" via VERCEL=1 (Vercel sets it) rather than NODE_ENV=production,
  * because `next start` locally also sets NODE_ENV=production but the local

@@ -57,10 +57,8 @@ export interface DeployerForensicsReport {
   recommendations: string[];
   analyzedAt: string;
   dualAi?: {
-    claudeOk: boolean;
     codexOk: boolean;
     geminiOk: boolean;
-    claudeSummary?: string;
     codexSummary?: string;
     geminiSummary?: string;
     errors: { source: AiSource; error: string }[];
@@ -89,8 +87,9 @@ export interface CandidateSnippet {
   reason: string;
 }
 
-export type AiSource = "claude" | "codex" | "gemini";
-export type Consensus = "all-three" | "two-of-three" | "one-only";
+export type AiSource = "codex" | "gemini";
+// Two-model ensemble: a finding is flagged by both reviewers or just one.
+export type Consensus = "both" | "one-only";
 
 export interface AuditFinding {
   id: string;
@@ -107,17 +106,14 @@ export interface AuditFinding {
   consensus?: Consensus;
   /** Which AIs confirmed this finding. */
   confirmedBy?: AiSource[];
-  claudeConfidence?: number;
   codexConfidence?: number;
   geminiConfidence?: number;
 }
 
 export interface DualAiMeta {
-  claudeOk: boolean;
   codexOk: boolean;
   geminiOk: boolean;
-  allThreeConfirmed: number;
-  twoOfThreeConfirmed: number;
+  bothConfirmed: number;
   oneOnly: number;
   errors: { source: AiSource; error: string }[];
 }
@@ -162,13 +158,10 @@ export interface RelevantAlert extends ExploitAlert {
   actionItems: string[];
   aiInterpretation: string;
   dualAi?: {
-    claudeOk: boolean;
     codexOk: boolean;
     geminiOk: boolean;
-    claudeRelevance?: number;
     codexRelevance?: number;
     geminiRelevance?: number;
-    claudeInterpretation?: string;
     codexInterpretation?: string;
     geminiInterpretation?: string;
   };

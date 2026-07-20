@@ -54,3 +54,6 @@ sovereign 2.db-*
 # Never commit these — they're per-machine.
 .claude/scheduled_tasks.lock
 .claude/worktrees/
+
+# local production run log
+prod-server.log

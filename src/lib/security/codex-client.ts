@@ -5,7 +5,7 @@ import { join } from "path";
 import { getAiMode, requireEnv, resolveBaseUrl } from "./ai-mode";
 
 export interface CodexInvokeOptions {
-  /** Override model. CLI: ~/.codex/config.toml default. API: OPENAI_MODEL env or gpt-5.5. */
+  /** Override model. Default gpt-5.6-sol (overridable via OPENAI_MODEL). */
   model?: string;
   /** Override reasoning effort. CLI: user's config (typically "xhigh"). API: maps to OpenAI effort levels. */
   effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -16,7 +16,12 @@ export interface CodexInvokeOptions {
 
 const STDERR_CAP_BYTES = 64 * 1024;
 const TIMEOUT_GRACE_MS = 1_500;
-const DEFAULT_API_MODEL = "gpt-5.5";
+// Codex GPT-5.6 (sol) is the LEAD reasoner — it proposes strategies,
+// synthesizes the security scores, and revises. Model + effort are pinned
+// here (overridable via OPENAI_MODEL) so behavior doesn't drift with whatever
+// the local ~/.codex/config.toml happens to be set to.
+const DEFAULT_MODEL = "gpt-5.6-sol";
+const DEFAULT_EFFORT = "xhigh" as const;
 
 /**
  * Invoke OpenAI's reasoning model. Routes to the local `codex` CLI or the
@@ -31,21 +36,24 @@ export function invokeCodex(prompt: string, opts: CodexInvokeOptions = {}): Prom
 
 async function invokeCodexCli(prompt: string, opts: CodexInvokeOptions): Promise<string> {
   const timeoutMs = opts.timeoutMs ?? 360_000;
+  const model = opts.model ?? DEFAULT_MODEL;
+  const effort = opts.effort ?? DEFAULT_EFFORT;
 
   const outDir = await mkdtemp(join(tmpdir(), "codex-out-"));
   const outFile = join(outDir, "last.txt");
 
   try {
     return await new Promise<string>((resolve, reject) => {
+      // Pin model + reasoning effort explicitly rather than inheriting config.
       const args = [
         "exec",
         "--sandbox", "read-only",
         "--skip-git-repo-check",
         "--color", "never",
         "-o", outFile,
+        "-m", model,
+        "-c", `model_reasoning_effort="${effort}"`,
       ];
-      if (opts.model) args.push("-m", opts.model);
-      if (opts.effort) args.push("-c", `model_reasoning_effort="${opts.effort}"`);
       args.push("-");
 
       const errChunks: Buffer[] = [];
@@ -138,10 +146,10 @@ function mapEffort(effort: CodexInvokeOptions["effort"]): "minimal" | "low" | "m
 
 async function invokeCodexApi(prompt: string, opts: CodexInvokeOptions): Promise<string> {
   const apiKey = requireEnv("OPENAI_API_KEY");
-  const model = opts.model ?? process.env.OPENAI_MODEL ?? DEFAULT_API_MODEL;
+  const model = opts.model ?? process.env.OPENAI_MODEL ?? DEFAULT_MODEL;
   const timeoutMs = opts.timeoutMs ?? 360_000;
   const baseUrl = resolveBaseUrl("OPENAI_BASE_URL", "https://api.openai.com");
-  const effort = mapEffort(opts.effort ?? "xhigh");
+  const effort = mapEffort(opts.effort ?? DEFAULT_EFFORT);
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);

@@ -71,7 +71,7 @@ function reviewCopy(message?: string): string {
   return message
     .replace(/multi-engine audit pipeline/gi, "contract review")
     .replace(/audit pipeline/gi, "contract review")
-    .replace(/Triple-AI explainer/gi, "Report review")
+    .replace(/Ensemble explainer/gi, "Report review")
     .replace(/AI explainer/gi, "Report review")
     .replace(/AI panel/gi, "Review panel")
     .replace(/Slither|Aderyn|Mythril/gi, "review coverage")

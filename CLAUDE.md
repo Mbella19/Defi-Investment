@@ -28,25 +28,24 @@ The SQLite DB (`sovereign.db`) is created on first server route hit via `src/lib
 
 `analyzeProtocol(protocol, pools)` is the security-scoring entry point. It runs three stages:
 
-1. **Triple-AI scoring** — `tripleInvoke` (in `src/lib/security/dual-llm.ts`) fans the same prompt out to Claude Opus 4.7, Codex GPT-5.5 (xhigh), and Gemini 3.1 Pro Preview in parallel via `Promise.allSettled`. Each AI returns its own `legitimacyScore`, `verdict`, `redFlags`, `sections{...}`. Partial failures are tolerated.
-2. **Synthesis** — Claude (`invokeClaude` again) reconciles the three outputs with a min-score / most-conservative-verdict bias and an explicit `disagreements[]` array. If synthesis fails, `mechanicalReconcile()` deterministically merges (min score, union flags, average sections) so the analysis still ships.
+1. **Ensemble scoring** — `ensembleInvoke` (in `src/lib/security/dual-llm.ts`) fans the same prompt out to Codex GPT-5.6 (sol, xhigh) and Gemini 3.5 Flash (high) in parallel via `Promise.allSettled`. Each model returns its own `legitimacyScore`, `verdict`, `redFlags`, `sections{...}`. Partial failures are tolerated.
+2. **Synthesis** — Codex (the lead, `invokeCodex` again at xhigh) reconciles the two outputs with a min-score / most-conservative-verdict bias and an explicit `disagreements[]` array. If synthesis fails, `mechanicalReconcile()` deterministically merges (min score, union flags, average sections) so the analysis still ships.
 3. **Heuristic veto** — `applyHeuristicVetoes()` enforces hard ceilings the AI cannot override: recent on-chain exploits, TVL crashes, "avoid"-rated deployers, dangerous source-audit verdicts, all-broken audit links. Each applied veto is recorded on `ProtocolAnalysis.vetoes[]` and prepended to `redFlags` so downstream prompts see it.
 
 Ground-truth facts (`src/lib/security/ground-truth.ts`) are gathered in parallel before stage 1: HEAD-checks each audit link, queries the local `exploit_alerts` table, detects TVL crashes (1d ≤ −40% or 7d ≤ −55%), and reads cached deployer/source-audit data. They're embedded verbatim in the scoring prompt and the synthesis prompt — the AIs are told they MUST engage with them.
 
-Results are cached three ways, all keyed by protocol slug: an in-process map (1h TTL), a durable `protocol_analyses` SQLite row (same 1h TTL semantics — survives restarts, reused across users; rows retained 30 days), and an in-flight promise map so concurrent requests for the same protocol share ONE triple-AI run instead of each paying for their own.
+Results are cached three ways, all keyed by protocol slug: an in-process map (1h TTL), a durable `protocol_analyses` SQLite row (same 1h TTL semantics — survives restarts, reused across users; rows retained 30 days), and an in-flight promise map so concurrent requests for the same protocol share ONE ensemble run instead of each paying for their own.
 
 ### Strategy generation (`src/lib/strategist.ts`)
 
 `generateStrategy(criteria, opts)` is a separate three-stage pipeline for portfolio construction. `opts.mode` (default `"council"`) controls the reviewer panel and is set by the API layer from the caller's plan tier (see "Plans, paywall, and capability gating" below):
 
-1. **Claude proposer** — fetches DeFiLlama pools + protocols, filters by APY/TVL/risk (plus a long-horizon stability gate for low/medium risk), runs `analyzeProtocol` on the top 10 protocols by TVL with a concurrency cap of 4 (`mapWithConcurrency` — each protocol is 3 AI invocations, so unbounded parallelism exhausted the box), and asks Claude to compose an initial allocation strategy via `invokeClaudeCli` (local `claude` CLI subprocess). Always runs. The proposer's output is validated by `validateStrategyShape` (`src/lib/strategy-validate.ts`) before any fast-path branch can return it.
-2. **Reviewer panel** —
-   - `mode === "solo"` (Free tier): skipped entirely; the architect's proposal is returned with a stub `CollaborationTrail`.
-   - `mode === "dual"` (Pro tier): only Gemini reviews via `runReviewer`.
-   - `mode === "council"` (Ultra tier): Codex + Gemini both review in parallel. `mergeReviewerCritiques` deduplicates concerns by `category + normalized issue`, escalates severity, and tracks which reviewer(s) flagged each via `sources: ReviewerSource[]`.
-   If every available reviewer approved with zero concerns, revision is skipped.
-3. **Claude revision** (dual + council only) — Claude rewrites the strategy addressing every high-severity concern. `validateRevisedStrategy` enforces shape + budget tolerance (±1% or $50). `recomputeWeightedApy` ignores the model's stated APY in favour of the actual allocation-weighted average. `concernAddressed` is a deterministic post-hoc check (was the cited pool dropped? was its allocation cut ≥20%? was its reasoning rewritten?) — the AIs cannot self-mark concerns as addressed.
+1. **Codex proposer (lead)** — fetches DeFiLlama pools + protocols, filters by APY/TVL/risk (plus a long-horizon stability gate for low/medium risk), runs `analyzeProtocol` on the top 10 protocols by TVL with a concurrency cap of 4 (`mapWithConcurrency` — each protocol is 2 model invocations plus synthesis, so unbounded parallelism exhausted the box), and asks Codex (the lead, `invokeLead` → `invokeCodex` at xhigh) to compose an initial allocation strategy. Always runs. The proposer's output is validated by `validateStrategyShape` (`src/lib/strategy-validate.ts`) before any fast-path branch can return it.
+2. **Reviewer panel** — the reviewer is Gemini 3.5 Flash (Codex is the lead/proposer, so it can't review its own work; with a two-model ensemble there's no independent third voice, so `dual` and `council` share the same single-reviewer panel — the mode only gates whether review runs at all).
+   - `mode === "solo"` (Free tier): skipped entirely; the proposal is returned with a stub `CollaborationTrail`.
+   - `mode === "dual"` / `"council"` (Pro / Ultra): Gemini reviews via `runReviewer`. `mergeReviewerCritiques` still dedupes concerns by `category + normalized issue`, escalates severity, and tracks flagging reviewer(s) via `sources: ReviewerSource[]` (the codex reviewer slot is retained as always-unavailable so the merge + trail code is unchanged).
+   If the reviewer approved with zero concerns, revision is skipped.
+3. **Codex revision** (dual + council only) — Codex (lead) rewrites the strategy addressing every high-severity concern. `validateStrategyShape` enforces shape + budget tolerance (±1% or $50). `recomputeWeightedApy` ignores the model's stated APY in favour of the actual allocation-weighted average. `concernAddressed` is a deterministic post-hoc check (was the cited pool dropped? was its allocation cut ≥20%? was its reasoning rewritten?) — the models cannot self-mark concerns as addressed.
 
 The per-stage trail is preserved on `InvestmentStrategy.collaboration` (`CollaborationTrail`) so the UI can show what each reviewer flagged and what changed.
 
@@ -58,7 +57,7 @@ The per-stage trail is preserved on `InvestmentStrategy.collaboration` (`Collabo
 2. **On-chain interrogation** — `onchain/interrogator.ts` reads live state with `viem` (proxy slots, owner, multisig, timelock).
 3. **Static + symbolic tools in parallel** — `tools/slither.ts`, `tools/aderyn.ts`, `tools/mythril.ts`. Missing binaries or unverified source are tolerated; affected SCSVS checks become `indeterminate` instead of aborting the run.
 4. **Consensus** — `audit/consensus.ts` groups + dedupes findings across engines and escalates confidence on agreement.
-5. **AI explanation** — top-25 findings get `tripleInvoke`'d through Claude/Codex/Gemini for plain-English context. AIs cannot invent new findings — they only annotate what the tools already produced.
+5. **AI explanation** — top-25 findings get `ensembleInvoke`'d through Codex + Gemini for plain-English context. The models cannot invent new findings — they only annotate what the tools already produced.
 6. **SCSVS mapping** — `audit/scsvs.ts` maps findings to OWASP SCSVS v12 categories.
 
 A full audit takes 5–10 minutes, so it runs as a background job (`audit/jobs.ts` — in-memory `Map` hot path with SQLite write-through to `audit_jobs`, mirroring `strategy-jobs.ts`); the API exposes `start` + `status` endpoints (both `requireWallet`; status 404s for jobs the caller doesn't own) and the client polls. Finished reports can be shared publicly: `POST /api/security/audit/share` mints a token, `/report/[token]` renders the persisted report with no auth, and shared jobs are pinned past the normal 30-day `audit_jobs` retention.
@@ -134,13 +133,12 @@ Wallet-scoped routes use `requireWallet(request)` from `src/lib/auth/guard.ts`, 
 
 Each provider has one exported entry point that branches on a runtime mode:
 
-- `src/lib/security/claude-client.ts` → `invokeClaude` (CLI: `claude -p --model claude-opus-4-7 --effort max`; API: Anthropic Messages w/ extended thinking)
-- `src/lib/security/codex-client.ts` → `invokeCodex` (CLI: `codex` exec; API: OpenAI Responses, reasoning effort mapped from xhigh→high)
-- `src/lib/security/gemini-client.ts` → `invokeGemini` (CLI: `gemini -p` w/ approval-mode plan; API: Generative Language `:generateContent`)
+- `src/lib/security/codex-client.ts` → `invokeCodex` — the **lead** (CLI: `codex exec -m gpt-5.6-sol -c model_reasoning_effort="xhigh"`; API: OpenAI Responses, xhigh→high)
+- `src/lib/security/gemini-client.ts` → `invokeGemini` — the **reviewer** (CLI: the `agy` binary — `agy --print --model "Gemini 3.5 Flash (High)" --mode plan`, overridable via `GEMINI_CLI_BIN` / `GEMINI_CLI_MODEL`; API: Generative Language `:generateContent` with `thinkingConfig.thinkingLevel`)
 
-Mode resolution lives in `src/lib/security/ai-mode.ts`. Precedence: per-provider env (`CLAUDE_MODE` / `OPENAI_MODE` / `GEMINI_MODE`) → global `AI_MODE` → default `cli`. API mode requires `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`; model + base URL are also env-overridable. Local dev defaults to CLI for offline parity; hosted deployments set `AI_MODE=api`. See `.env.example`.
+Mode resolution lives in `src/lib/security/ai-mode.ts`. Precedence: per-provider env (`OPENAI_MODE` / `GEMINI_MODE`) → global `AI_MODE` → default `cli`. API mode requires `OPENAI_API_KEY` / `GEMINI_API_KEY`; model + base URL are also env-overridable. Local dev defaults to CLI for offline parity; hosted deployments set `AI_MODE=api`. See `.env.example`.
 
-All three accept a prompt and resolve to a string regardless of mode, so callers (`tripleInvoke`, `analyzeProtocol`, `generateStrategy`, audit orchestrator) don't branch. Strategist's local Claude wrapper delegates to `invokeClaude` so it inherits the same switching. `extractJson()` in `claude-client.ts` is the shared JSON extractor — strips markdown fences, returns the outermost balanced `{...}`. Prefer it over ad-hoc parsing when adding a new AI consumer.
+Both accept a prompt and resolve to a string regardless of mode, so callers (`ensembleInvoke`, `analyzeProtocol`, `generateStrategy`, audit orchestrator) don't branch. The strategist's `invokeLead` delegates to `invokeCodex`. `extractJson()` lives in `src/lib/security/extract-json.ts` (the shared JSON extractor — strips markdown fences, returns the outermost balanced `{...}`); prefer it over ad-hoc parsing when adding a new AI consumer.
 
 Two ad-hoc shell scripts exist for second-opinion review during development: `scripts/codex-review.sh` and `scripts/gemini-review.sh`. They take an instruction arg + optional piped context and print the model's response. Useful for security-review of diffs.
 
@@ -165,11 +163,12 @@ DeFiLlama (protocols, pools, TVL), CoinGecko (token market data + native gas-tok
 - **Use `mapWithConcurrency` from `src/lib/async-utils.ts`** for fan-outs to AI subprocesses or upstream APIs. Current caps: 4 concurrent protocol deep-analyses, 10 concurrent pool-history fetches. Don't add new unbounded `Promise.all` fan-outs.
 - **Use `log` from `src/lib/log.ts`** in new server code (JSON lines in production, pretty in dev) rather than bare `console.*`.
 - **Ground-truth before AI.** Any new safety signal that's verifiable from a free API or local DB should land in `gatherGroundTruth` and be formatted into the prompt, not asked of the AI.
-- **Partial AI failure must not abort the pipeline.** Both `tripleInvoke` and the strategy reviewer pair are designed for `Promise.allSettled` semantics. Mirror that pattern when adding new AI calls.
+- **Partial AI failure must not abort the pipeline.** Both `ensembleInvoke` and the strategy reviewer are designed for `Promise.allSettled` semantics. Mirror that pattern when adding new AI calls.
 - **Use the provided `extractJson` helper.** AI outputs frequently include prose around the JSON; ad-hoc `JSON.parse(text)` will break.
 - **Long timeouts are intentional.** Scoring/synthesis use 360s timeouts; strategy proposer/reviser use 600s. The AI CLIs at max effort are slow — don't shorten without a reason.
 - **React Compiler is on.** Don't reach for `useMemo` / `useCallback` for performance — the compiler memoizes function components automatically. Hand-written memoization is only justified when memoizing on a value the compiler can't see (e.g., refs, mutable instances).
-- **GEMINI.md is the parallel file for Gemini reviews.** The local `gemini` CLI loads it the way Claude loads `CLAUDE.md`. The two have drifted before — when you change architecture-affecting facts here, mirror the relevant bit in `GEMINI.md`, or at least don't let it contradict.
+- **GEMINI.md is the parallel guidance file for the Gemini (`agy`) reviewer.** The two have drifted before — when you change architecture-affecting facts here, mirror the relevant bit in `GEMINI.md`, or at least don't let it contradict.
+- **The AI ensemble is two models now — Codex is the lead, Gemini reviews.** There is no Claude/Anthropic dependency anywhere in the app runtime. `AiSource` is `"codex" | "gemini"`; don't reintroduce a third source without updating every union + the merge logic.
 - **Use `fetchWithTimeout` + `warnUpstream` for upstream APIs.** All DeFiLlama / CoinGecko / GoPlus / Beefy / Etherscan calls go through `src/lib/fetch-utils.ts`'s `fetchWithTimeout` (10s default via AbortController) and log failures via `warnUpstream(source, err)`. Don't bare-`fetch()` upstreams — a hung connection will block a route past its `maxDuration`.
 - **Use `boundCache(map, maxSize)` before `cache.set()`.** Long-lived process caches in `anthropic.ts`, `source-audit.ts`, `deployer-forensics.ts` are bounded to 500 entries via `src/lib/cache-utils.ts` — TTL prune first, then FIFO drop. New caches should follow the same shape rather than growing unboundedly.
 - **Use `getRpcUrl(chainId)` from `src/lib/rpc.ts` for viem clients.** Resolves per-chain `RPC_URL_*` env first, then `ALCHEMY_API_KEY`, then `INFURA_API_KEY`, then falls back to viem's public RPC. Don't `http()` with no argument — public RPCs rate-limit aggressively under load.

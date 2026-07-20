@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractJson } from "@/lib/security/claude-client";
+import { extractJson } from "@/lib/security/extract-json";
 
 describe("extractJson", () => {
   it("parses a bare JSON object", () => {

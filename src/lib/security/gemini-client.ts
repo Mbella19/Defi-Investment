@@ -2,14 +2,26 @@ import { spawn } from "child_process";
 import { getAiMode, requireEnv, resolveBaseUrl } from "./ai-mode";
 
 export interface GeminiInvokeOptions {
-  /** Model id. Defaults to gemini-3.1-pro-preview. */
+  /** Model id. Defaults to gemini-3.5-flash. */
   model?: string;
+  /** Thinking level (API mode). Defaults to "high". */
+  reasoning?: "low" | "medium" | "high";
   timeoutMs?: number;
   /** Working directory for gemini (CLI mode only). */
   cwd?: string;
 }
 
-const DEFAULT_MODEL = "gemini-3.1-pro-preview";
+// Gemini 3.5 Flash is the adversarial REVIEWER of Codex's proposals, run at
+// high thinking.
+//
+// Two model-name conventions because the local CLI and the hosted API differ:
+//   - CLI (`agy`): reasoning is baked into the human-readable model name, e.g.
+//     "Gemini 3.5 Flash (High)". Binary + name overridable via env.
+//   - API: model id "gemini-3.5-flash" + a separate thinkingLevel.
+const DEFAULT_MODEL = "gemini-3.5-flash"; // API mode
+const DEFAULT_REASONING = "high" as const;
+const CLI_BIN = process.env.GEMINI_CLI_BIN?.trim() || "agy";
+const CLI_MODEL = process.env.GEMINI_CLI_MODEL?.trim() || "Gemini 3.5 Flash (High)";
 const STDERR_CAP_BYTES = 64 * 1024;
 const TIMEOUT_GRACE_MS = 1_500;
 
@@ -26,21 +38,22 @@ export function invokeGemini(prompt: string, opts: GeminiInvokeOptions = {}): Pr
 
 function invokeGeminiCli(prompt: string, opts: GeminiInvokeOptions): Promise<string> {
   const timeoutMs = opts.timeoutMs ?? 360_000;
-  const model = opts.model ?? DEFAULT_MODEL;
+  const model = opts.model ?? CLI_MODEL;
 
-  // `-p ""` (empty prompt) + piping the real prompt over stdin: this forces
-  // the gemini CLI into non-interactive prompt mode without putting the full
-  // prompt onto argv. Long prompts (>100KB) would blow ARG_MAX otherwise, and
-  // some gemini versions won't read stdin unless `-p` is present at all.
-  // `--approval-mode plan` keeps the CLI from trying to execute tool calls.
-  const args = ["-p", "", "-m", model, "--approval-mode", "plan"];
+  // `agy` (the current Gemini CLI): `--print` runs a single prompt
+  // non-interactively (prompt piped over stdin so long prompts don't hit
+  // ARG_MAX); `--mode plan` keeps it from executing tool calls; the model
+  // name encodes the thinking level. `--print-timeout` is raised to our own
+  // budget so agy's internal 5-minute default can't truncate a 6-minute run.
+  const printTimeout = `${Math.ceil(timeoutMs / 1000)}s`;
+  const args = ["--print", "--model", model, "--mode", "plan", "--print-timeout", printTimeout];
 
   return new Promise<string>((resolve, reject) => {
     const stdoutChunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
     let errBytes = 0;
 
-    const proc = spawn("gemini", args, {
+    const proc = spawn(CLI_BIN, args, {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env },
       cwd: opts.cwd,
@@ -109,6 +122,7 @@ function invokeGeminiCli(prompt: string, opts: GeminiInvokeOptions): Promise<str
 async function invokeGeminiApi(prompt: string, opts: GeminiInvokeOptions): Promise<string> {
   const apiKey = requireEnv("GEMINI_API_KEY");
   const model = opts.model ?? process.env.GEMINI_MODEL ?? DEFAULT_MODEL;
+  const reasoning = opts.reasoning ?? DEFAULT_REASONING;
   const timeoutMs = opts.timeoutMs ?? 360_000;
   const baseUrl = resolveBaseUrl("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com");
 
@@ -125,6 +139,10 @@ async function invokeGeminiApi(prompt: string, opts: GeminiInvokeOptions): Promi
       },
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: prompt }] }],
+        // Gemini 3.x thinking level. (API-mode only; CLI mode uses the
+        // model's default thinking. Field name/casing tracks the Generative
+        // Language v1beta thinkingConfig — adjust if Google revises it.)
+        generationConfig: { thinkingConfig: { thinkingLevel: reasoning.toUpperCase() } },
       }),
       signal: ctrl.signal,
     });

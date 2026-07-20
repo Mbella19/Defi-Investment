@@ -195,7 +195,7 @@ export interface AiExplanation {
   /** Severity confirmed/escalated by AI synthesis. */
   finalSeverity: AuditSeverity;
   /** Which AIs participated. */
-  reviewedBy: Array<"claude" | "codex" | "gemini">;
+  reviewedBy: Array<"codex" | "gemini">;
   /** Did all participating AIs agree this is real? */
   aiConsensus: "all" | "majority" | "split" | "single";
   notes?: string;

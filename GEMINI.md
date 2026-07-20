@@ -12,7 +12,7 @@ application for read-only DeFi intelligence:
 
 - live yield discovery from DeFiLlama and Beefy;
 - wallet-scoped portfolio views and active strategy monitoring;
-- tier-aware AI strategy generation with Claude, Codex, and Gemini;
+- tier-aware AI strategy generation with a Codex (lead) + Gemini (reviewer) ensemble;
 - smart-contract and protocol security review;
 - Free, Pro, and Ultra plans with on-chain crypto checkout.
 
@@ -146,8 +146,9 @@ Plans are defined in `src/lib/plans/access.ts`.
 - Pro: 20 monthly generations, Gemini review, risk-band selection,
   stablecoin-only sleeves, realtime alerts, simulator, correlation, portfolio
   lens, Discord alerts.
-- Ultra: 60 monthly generations, Codex plus Gemini council review,
-  custom APY range, expanded alert channels, priority support.
+- Ultra: 60 monthly generations, same Codex-lead + Gemini-review panel as Pro
+  (the two-model ensemble has no third reviewer), custom APY range, expanded
+  alert channels, priority support.
 
 Use capability gates, not scattered tier checks:
 
@@ -169,10 +170,10 @@ Pipeline:
 2. Filter by budget, TVL, APY range, risk appetite, stablecoin preference, and
    APY stability gates.
 3. Run protocol analysis through `analyzeProtocol`, which gathers ground-truth
-   facts and sends prompts through the triple-AI scoring flow.
-4. Claude proposes the allocation.
-5. Depending on plan capability, Gemini and/or Codex review it.
-6. Claude revises when reviewer concerns need a fix.
+   facts and sends prompts through the two-model (Codex + Gemini) scoring flow.
+4. Codex (the lead, gpt-5.6-sol at xhigh) proposes the allocation.
+5. Depending on plan capability, Gemini 3.5 Flash (high) adversarially reviews it.
+6. Codex revises when reviewer concerns need a fix.
 7. The result flows through the job store: in-memory Map hot path with SQLite
    write-through (`strategy_jobs`), so finished strategies survive restarts.
    Job status reads are wallet-scoped. Protocol deep-analysis is capped at 4
@@ -221,10 +222,11 @@ Ground-truth facts include:
 - protocol TVL crash checks;
 - cached source-audit and deployer-forensics data.
 
-Triple-AI helpers live in `src/lib/security/dual-llm.ts`. They call Claude,
-Codex, and Gemini in parallel and tolerate partial failures. Use
-`tripleInvoke`, `tripleExtractJson`, and shared `extractJson` helpers rather
-than ad-hoc model calls or brittle JSON parsing.
+Ensemble helpers live in `src/lib/security/dual-llm.ts`. They call Codex
+(lead) and Gemini (reviewer) in parallel and tolerate partial failures. Use
+`ensembleInvoke`, `ensembleExtractJson`, and the shared `extractJson` helper
+(`src/lib/security/extract-json.ts`) rather than ad-hoc model calls or brittle
+JSON parsing. There is no Claude/Anthropic dependency in the app runtime.
 
 Smart-contract audit flow is orchestrated by
 `src/lib/security/audit/orchestrator.ts`:
@@ -234,7 +236,7 @@ Smart-contract audit flow is orchestrated by
 3. read live contract state with viem;
 4. run Slither, Aderyn, Mythril, and on-chain checks;
 5. build consensus findings;
-6. add triple-AI explanations;
+6. add ensemble (Codex + Gemini) explanations;
 7. map to OWASP SCSVS v12;
 8. assemble an `AuditReport`.
 

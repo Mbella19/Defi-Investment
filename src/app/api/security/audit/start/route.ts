@@ -35,7 +35,7 @@ function isValidAddress(addr: string): boolean {
 
 export async function POST(request: Request) {
   // Multi-engine audits are 5-10min each and run Slither/Aderyn/Mythril
-  // plus 25× triple-AI explanations. Tight per-caller cap.
+  // plus 25× ensemble explanations. Tight per-caller cap.
   const limited = enforceRateLimit(request, "audit", { max: 3, windowMs: 60 * 60 * 1000 });
   if (limited) return limited;
 

@@ -16,8 +16,9 @@ import { fetchTokenDetail, toTokenMarketData, formatMarketDataForPrompt } from "
 import { fetchTokenSecurity, resolveChainId, formatSecurityForPrompt } from "./goplus";
 import type { TokenMarketData } from "@/types/coingecko";
 import type { GoPlusTokenSecurity } from "@/types/goplus";
-import { tripleInvoke, tripleExtractJson } from "./security/dual-llm";
-import { invokeClaude, extractJson } from "./security/claude-client";
+import { ensembleInvoke, ensembleExtractJson } from "./security/dual-llm";
+import { invokeCodex } from "./security/codex-client";
+import { extractJson } from "./security/extract-json";
 import { gatherGroundTruth, formatGroundTruthForPrompt } from "./security/ground-truth";
 
 import { boundCache } from "./cache-utils";
@@ -30,7 +31,7 @@ const ANALYSIS_CACHE_MAX = 500;
 const PERSISTED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 // In-flight dedupe: concurrent calls for the same protocol (parallel
-// strategy generations, multiple users) share ONE triple-AI run instead of
+// strategy generations, multiple users) share ONE ensemble run instead of
 // each paying for their own.
 const inflightAnalyses = new Map<string, Promise<ProtocolAnalysis>>();
 
@@ -154,7 +155,7 @@ interface RawScoreResponse {
   investmentConsiderations?: string[];
 }
 
-const ALL_SOURCES: AnalysisAiSource[] = ["claude", "codex", "gemini"];
+const ALL_SOURCES: AnalysisAiSource[] = ["codex", "gemini"];
 
 function isValidVerdict(v: unknown): v is ProtocolVerdict {
   return (
@@ -172,15 +173,15 @@ function clampScore(n: unknown): number {
 
 /* ==================== STAGE 2 — SYNTHESIS ==================== */
 
-const SYNTHESIS_SYSTEM = `You are reconciling three independent AI security analyses of a DeFi protocol into ONE final analysis. The three AIs (Claude, Codex GPT-5.5, Gemini 3.1 Pro) each scored the protocol from the same facts. Your job:
+const SYNTHESIS_SYSTEM = `You are reconciling two independent AI security analyses of a DeFi protocol into ONE final analysis. The two models (Codex GPT-5.6 and Gemini 3.5 Flash) each scored the protocol from the same facts. Your job:
 
-1. Take the MINIMUM legitimacyScore across the three AIs as your starting score (capital-safety bias). You may apply small adjustments (±5) only with explicit reasoning grounded in ground-truth facts.
-2. Take the MOST CONSERVATIVE overallVerdict across the three AIs (caution > low_confidence > moderate_confidence > high_confidence).
-3. UNION the redFlags across all three AIs, dedup by meaning. Keep the longest phrasing.
+1. Take the MINIMUM legitimacyScore across the two analyses as your starting score (capital-safety bias). You may apply small adjustments (±5) only with explicit reasoning grounded in ground-truth facts.
+2. Take the MOST CONSERVATIVE overallVerdict across the two analyses (caution > low_confidence > moderate_confidence > high_confidence).
+3. UNION the redFlags across both analyses, dedup by meaning. Keep the longest phrasing.
 4. UNION positiveSignals, dedup. (No consensus filter — facts are facts.)
-5. For each section, average the three scores; pick the longest assessment; union keyFindings.
-6. Identify points of DISAGREEMENT — places where the three AIs diverge meaningfully (different scores, different red flags, contradictory verdicts) and resolve each one with explicit reasoning.
-7. Engage with the GROUND-TRUTH FACTS — if any AI ignored them, your synthesis must correct that.
+5. For each section, average the two scores; pick the longest assessment; union keyFindings.
+6. Identify points of DISAGREEMENT — places where the two analyses diverge meaningfully (different scores, different red flags, contradictory verdicts) and resolve each one with explicit reasoning.
+7. Engage with the GROUND-TRUTH FACTS — if either analysis ignored them, your synthesis must correct that.
 
 Return ONLY a JSON object:
 {
@@ -202,7 +203,6 @@ Return ONLY a JSON object:
     {
       "topic": "<short description, e.g., 'Audit history score'>",
       "positions": [
-        {"source": "claude", "position": "<what claude said>"},
         {"source": "codex", "position": "<what codex said>"},
         {"source": "gemini", "position": "<what gemini said>"}
       ],
@@ -358,7 +358,7 @@ function defaultSections(): ProtocolAnalysis["sections"] {
 /**
  * Mechanical fallback when the synthesis call fails: reconcile the per-AI
  * outputs deterministically (min score, most conservative verdict, union flags).
- * Less specific than Claude-synthesized output but never blocks on AI outage.
+ * Less specific than the synthesized output but never blocks on AI outage.
  */
 function mechanicalReconcile(
   perAi: Array<{ source: AnalysisAiSource; raw: RawScoreResponse }>
@@ -511,9 +511,9 @@ async function runProtocolAnalysis(
     securityData
   );
 
-  // ===== STAGE 1 — three AIs score independently in parallel =====
-  const raw = await tripleInvoke(scoringPrompt, { timeoutMs: SCORING_TIMEOUT_MS });
-  const parsed = tripleExtractJson<RawScoreResponse>(raw);
+  // ===== STAGE 1 — both models score independently in parallel =====
+  const raw = await ensembleInvoke(scoringPrompt, { timeoutMs: SCORING_TIMEOUT_MS });
+  const parsed = ensembleExtractJson<RawScoreResponse>(raw);
   const errors: TripleAiMeta["errors"] = parsed.errors.map((e) => ({
     source: e.source as AnalysisAiSource,
     error: e.error,
@@ -530,7 +530,7 @@ async function runProtocolAnalysis(
 
   if (perAi.length === 0) {
     const detail = errors.map((e) => `${e.source}: ${e.error}`).join(" | ");
-    throw new Error(`All three AI analyses failed: ${detail || "no model output"}`);
+    throw new Error(`Both AI analyses failed: ${detail || "no model output"}`);
   }
 
   const perAiScores: PerAiScore[] = perAi.map((p) => ({
@@ -545,18 +545,18 @@ async function runProtocolAnalysis(
   const scoreSpread = scores.length > 0 ? Math.max(...scores) - Math.min(...scores) : 0;
   const disputed = scoreSpread > 25;
 
-  // ===== STAGE 2 — Claude synthesizes the three analyses =====
+  // ===== STAGE 2 — Codex (lead) synthesizes the two analyses =====
   let synthesized: SynthesisOutput | null = null;
   let synthesisError: string | undefined;
 
   if (perAi.length === 1) {
-    // Only one AI succeeded — no synthesis needed, use its output directly.
+    // Only one model succeeded — no synthesis needed, use its output directly.
     synthesized = perAi[0].raw;
   } else {
     const synthesisPrompt = buildSynthesisPrompt(protocol, groundTruth, perAi);
     try {
-      const synthRaw = await invokeClaude(synthesisPrompt, {
-        effort: "max",
+      const synthRaw = await invokeCodex(synthesisPrompt, {
+        effort: "xhigh",
         timeoutMs: SYNTHESIS_TIMEOUT_MS,
       });
       synthesized = extractJson<SynthesisOutput>(synthRaw);
@@ -588,7 +588,7 @@ async function runProtocolAnalysis(
               .map((p) => ({
                 source: (ALL_SOURCES.includes(p.source as AnalysisAiSource)
                   ? p.source
-                  : "claude") as AnalysisAiSource,
+                  : "codex") as AnalysisAiSource,
                 position: String(p.position ?? "").slice(0, 400),
               }))
               .filter((p) => p.position.length > 0)

@@ -21,7 +21,7 @@ function isValidAddress(addr: string): boolean {
 }
 
 export async function POST(request: Request) {
-  // Burns Etherscan quota + triple-AI interpretation — authenticated only.
+  // Burns Etherscan quota + ensemble interpretation — authenticated only.
   const auth = requireWallet(request);
   if ("response" in auth) return auth.response;
   const limited = enforceRateLimit(request, "forensics", { max: 20, windowMs: 60 * 60 * 1000 });

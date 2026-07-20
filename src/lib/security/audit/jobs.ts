@@ -6,7 +6,7 @@ import type { AuditJobEvent, AuditReport, AuditStage } from "@/types/audit";
 /**
  * Audit job store. Mirrors `strategy-jobs.ts` — a verified-contract audit can
  * take 5-10 minutes (Slither + Aderyn + Mythril + on-chain probing + 25 ×
- * triple-AI explanations), so we run it as a background job and the client
+ * ensemble explanations), so we run it as a background job and the client
  * polls for progress. The in-memory Map is the hot path; every mutation is
  * written through to SQLite so a finished report survives restarts and the
  * share feature can serve it later.
@@ -274,7 +274,7 @@ function publicAuditMessage(message: string): string {
     .replace(/audit/gi, "review")
     .replace(/Slither|Aderyn|Mythril/gi, "coverage")
     .replace(/static & symbolic analyzers/gi, "risk checks")
-    .replace(/Triple-AI explainer/gi, "report review")
+    .replace(/Ensemble explainer/gi, "report review")
     .replace(/AI explainer/gi, "report review")
     .replace(/AI|Claude|Codex|Gemini/gi, "review")
     .replace(/tools?/gi, "checks")

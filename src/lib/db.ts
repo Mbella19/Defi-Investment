@@ -200,7 +200,7 @@ function migrate(db: InstanceType<typeof Database>) {
 
     -- Persisted protocol security analyses. The in-process cache in
     -- anthropic.ts remains the hot path; this copy survives restarts and is
-    -- reused across users so the triple-AI ensemble doesn't re-run for the
+    -- reused across users so the ensemble doesn't re-run for the
     -- same protocol within the TTL.
     CREATE TABLE IF NOT EXISTS protocol_analyses (
       slug TEXT PRIMARY KEY,

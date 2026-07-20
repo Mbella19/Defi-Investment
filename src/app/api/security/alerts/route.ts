@@ -7,7 +7,7 @@ export const maxDuration = 180;
 
 export async function POST(request: Request) {
   // Auth + rate-limit. Each call fans out to multiple Etherscan token-tx
-  // queries plus triple-AI interpretation, so unmetered access was a real
+  // queries plus ensemble interpretation, so unmetered access was a real
   // quota burn vector. 20/h matches /api/analyze and /api/security/forensics.
   const auth = requireWallet(request);
   if ("response" in auth) return auth.response;

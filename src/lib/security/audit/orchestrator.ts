@@ -26,7 +26,7 @@ import { explainFindings } from "./explainer";
  *   2. fetching_onchain    — read live state with viem (proxy slots, owner, multisig, timelock)
  *   3. running_tools       — Slither + Aderyn + Mythril + on-chain in parallel
  *   4. consensus           — group + dedupe findings, escalate confidence on agreement
- *   5. ai_explanation      — triple-AI explains each top-25 finding (cannot invent new findings)
+ *   5. ai_explanation      — the ensemble explains each top-25 finding (cannot invent new findings)
  *   6. scsvs_mapping       — map findings to OWASP SCSVS v12 categories
  *   7. assembling_report   — final structured AuditReport
  *
@@ -131,7 +131,7 @@ export async function runMultiEngineAudit(
   if (!opts.skipAiExplanation && consensus.length > 0) {
     emit({
       stage: "ai_explanation",
-      message: `Triple-AI explainer drafting writeups for ${Math.min(25, consensus.length)} findings…`,
+      message: `Ensemble explainer drafting writeups for ${Math.min(25, consensus.length)} findings…`,
     });
     consensus = await explainFindings(consensus, (done, total) => {
       emit({
@@ -259,7 +259,7 @@ function writeExecutiveSummary(
     (f) => f.aiExplanation && f.aiExplanation.aiConsensus === "all" && (f.aiExplanation.finalSeverity === "critical" || f.aiExplanation.finalSeverity === "high")
   );
   if (aiBackedCriticals.length > 0) {
-    parts.push(`${aiBackedCriticals.length} high/critical finding${aiBackedCriticals.length === 1 ? "" : "s"} confirmed by all three AIs.`);
+    parts.push(`${aiBackedCriticals.length} high/critical finding${aiBackedCriticals.length === 1 ? "" : "s"} confirmed by both models.`);
   }
 
   return parts.join(" ");

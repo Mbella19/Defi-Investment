@@ -365,9 +365,9 @@ export default function PlansPage() {
             <div>
               <strong>Allocation depth scales with your tier</strong>
               <span>
-                Free runs a single analyst. Pro pairs two in adversarial cross-review.
-                Ultra activates the full council — three independent minds, conflicts
-                surfaced, the most-conservative call wins.
+                Free runs a single analyst. Pro and Ultra pair the lead strategist with
+                an independent reviewer that adversarially cross-checks every pick, then
+                the lead revises — the most-conservative call wins.
               </span>
             </div>
           </li>

@@ -5,7 +5,7 @@ export interface AnalysisSection {
   keyFindings: string[];
 }
 
-export type AnalysisAiSource = "claude" | "codex" | "gemini";
+export type AnalysisAiSource = "codex" | "gemini";
 export type ProtocolVerdict =
   | "high_confidence"
   | "moderate_confidence"
@@ -76,7 +76,7 @@ export interface TripleAiMeta {
   scoreSpread: number;
   /** Disagreements the synthesizer reconciled explicitly. */
   disagreements: AnalysisDisagreement[];
-  /** Did the synthesis stage (Claude) succeed? */
+  /** Did the synthesis stage (Codex lead) succeed? */
   synthesisOk: boolean;
   synthesisError?: string;
 }
@@ -99,7 +99,7 @@ export interface ProtocolAnalysis {
   positiveSignals: string[];
   investmentConsiderations: string[];
   analyzedAt: string;
-  /** Triple-AI ensemble metadata. Absent if old single-AI cache. */
+  /** Ensemble metadata. Absent if old single-AI cache. */
   tripleAi?: TripleAiMeta;
   /** Hard ground-truth checks (link verification, exploit DB, TVL crash, on-chain cache). */
   groundTruth?: GroundTruthChecks;

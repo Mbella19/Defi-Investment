@@ -20,7 +20,7 @@ import { validateStrategyShape } from "./strategy-validate";
 import { mapWithConcurrency } from "./async-utils";
 import { invokeCodex } from "./security/codex-client";
 import { invokeGemini } from "./security/gemini-client";
-import { extractJson, invokeClaude } from "./security/claude-client";
+import { extractJson } from "./security/extract-json";
 import type { JobStage } from "./strategy-jobs";
 
 export interface StrategyProgressEvent {
@@ -32,10 +32,12 @@ export interface StrategyProgressEvent {
 export interface GenerateStrategyOptions {
   onProgress?: (event: StrategyProgressEvent) => void;
   /**
-   * Strategist depth — controls which review stages run.
-   *  - "solo"    : proposer only, no reviewers, no revision (Free tier)
-   *  - "dual"    : proposer + Gemini reviewer + revision (Pro tier)
-   *  - "council" : proposer + Codex + Gemini + revision (Ultra tier)
+   * Strategist depth — controls which review stages run. Lead = Codex GPT-5.6
+   * (proposes + revises); reviewer = Gemini 3.5 Flash.
+   *  - "solo"    : Codex proposer only, no review, no revision (Free tier)
+   *  - "dual"    : Codex proposer + Gemini reviewer + Codex revision (Pro tier)
+   *  - "council" : same panel as dual — the two-model ensemble has no
+   *                independent third reviewer (Ultra tier)
    * Defaults to "council" so existing callers preserve behavior.
    */
   mode?: "solo" | "dual" | "council";
@@ -553,7 +555,7 @@ function critiqueToPoints(
   });
 }
 
-/* ========== STAGE 3 — CLAUDE REVISION ========== */
+/* ========== STAGE 3 — LEAD (CODEX) REVISION ========== */
 
 interface MergedCritiqueForRevision {
   concerns: Array<ReviewerCritique["concerns"][number] & { sources: ReviewerSource[] }>;
@@ -621,7 +623,7 @@ function buildRevisionPrompt(
     })
     .join("\n\n");
 
-  return `You are revising your DeFi investment strategy after a peer-review by two independent AI reviewers (Codex GPT-5.5 and Gemini 3.1 Pro). Your goal: produce ONE final strategy that resolves the reviewers' valid concerns. Concerns flagged by BOTH reviewers are consensus signals — treat them as priority. You may push back IN THE STRATEGY ITSELF (e.g., keep an allocation but justify it more clearly) but you must address every HIGH severity concern.
+  return `You are revising your DeFi investment strategy after an adversarial peer-review by an independent reviewer (Gemini 3.5 Flash). Your goal: produce ONE final strategy that resolves the reviewer's valid concerns. You may push back IN THE STRATEGY ITSELF (e.g., keep an allocation but justify it more clearly) but you must address every HIGH severity concern.
 
 USER CRITERIA:
 - Budget: $${criteria.budget.toLocaleString()}
@@ -700,7 +702,7 @@ interface RevisedStrategyShape extends InvestmentStrategy {
 /**
  * Recompute projected APY as the allocation-weighted average from the
  * actual allocations, rather than trusting the model's stated projectedApy.
- * This catches the case where Claude's revision changes allocations but
+ * This catches the case where the revision changes allocations but
  * forgets to update the top-level projectedApy field.
  */
 function recomputeWeightedApy(strategy: InvestmentStrategy): number {
@@ -715,8 +717,9 @@ function recomputeWeightedApy(strategy: InvestmentStrategy): number {
 
 /* ========== HELPERS ========== */
 
-async function invokeClaudeCli(prompt: string, timeoutMs: number): Promise<string> {
-  return invokeClaude(prompt, { effort: "max", timeoutMs });
+/** The lead reasoner — Codex GPT-5.6 (sol) at xhigh — proposes and revises. */
+async function invokeLead(prompt: string, timeoutMs: number): Promise<string> {
+  return invokeCodex(prompt, { effort: "xhigh", timeoutMs });
 }
 
 function diffPoolIds(initial: InvestmentStrategy, revised: InvestmentStrategy): {
@@ -822,7 +825,7 @@ export async function generateStrategy(
   const summaries = buildProtocolSummaries(qualifyingAfterStability, allProtocols, stabilityByPool);
 
   // 4. Cap deep analysis at the top 10 protocols by TVL. Each runs the
-  // triple-AI ensemble (Claude+Codex+Gemini) plus a Claude synthesis call,
+  // two-model ensemble (Codex+Gemini) plus a synthesis call,
   // so the wall time scales fast. Beyond ~10 the strategy request reliably
   // outruns the browser's connection budget and the user sees a generic
   // "page couldn't load" instead of the strategy.
@@ -852,14 +855,14 @@ export async function generateStrategy(
   const protocolsDeepAnalyzed = analyzedSummaries.filter((s) => s.analysis).length;
   console.log(`Deep analysis complete: ${protocolsDeepAnalyzed} protocols analyzed successfully`);
 
-  // ===== STAGE 1 — Claude proposes initial strategy =====
-  console.log("[strategy] stage 1: Claude proposing initial strategy");
+  // ===== STAGE 1 — Codex (lead) proposes initial strategy =====
+  console.log("[strategy] stage 1: Codex proposing initial strategy");
   emit({
-    stage: "claude_proposer",
+    stage: "lead_proposer",
     message: `The lead architect is composing an initial allocation across ${protocolsDeepAnalyzed} analyzed protocols…`,
   });
   const initialPrompt = buildStrategyPrompt(criteria, analyzedSummaries, qualifying.length);
-  const initialOutput = await invokeClaudeCli(initialPrompt, 600_000);
+  const initialOutput = await invokeLead(initialPrompt, 600_000);
   const initialStrategy = parseStrategyResponse(initialOutput);
 
   // Validate the lead architect's proposal *before* it can flow down any
@@ -900,12 +903,10 @@ export async function generateStrategy(
     };
   }
 
-  console.log(
-    `[strategy] stage 2: ${mode === "dual" ? "Gemini reviewing" : "Codex + Gemini reviewing"} proposal in parallel`,
-  );
+  console.log("[strategy] stage 2: Gemini reviewing proposal");
   emit({
     stage: "reviewers",
-    message: `${mode === "dual" ? "An independent reviewer is" : "Two independent reviewers are"} stress-testing the architect's ${initialStrategy.allocations?.length ?? "?"}-pool proposal…`,
+    message: `An independent reviewer is stress-testing the architect's ${initialStrategy.allocations?.length ?? "?"}-pool proposal…`,
   });
   const critiquePrompt = buildCritiquePrompt(
     criteria,
@@ -913,12 +914,13 @@ export async function generateStrategy(
     analyzedSummaries,
     qualifying.length
   );
-  const [codexResult, geminiResult] = await Promise.all([
-    mode === "council"
-      ? runReviewer("codex", critiquePrompt, 480_000)
-      : Promise.resolve({ critique: null as ReviewerCritique | null, error: null as string | null }),
-    runReviewer("gemini", critiquePrompt, 480_000),
-  ]);
+  // Codex is the lead proposer, so the adversarial reviewer is Gemini. With a
+  // two-model ensemble there is no independent third voice, so dual and
+  // council share the same single-reviewer panel (the mode still gates
+  // whether review runs at all — solo skips it). The codex reviewer slot is
+  // retained as always-unavailable so the merge + trail code stays unchanged.
+  const geminiResult = await runReviewer("gemini", critiquePrompt, 480_000);
+  const codexResult = { critique: null as ReviewerCritique | null, error: null as string | null };
 
   const codexCritique = codexResult.critique;
   const geminiCritique = geminiResult.critique;
@@ -928,7 +930,7 @@ export async function generateStrategy(
     `[strategy] stage 2 done: codex=${codexVerdictRaw}${codexCritique ? `(${codexCritique.concerns.length})` : ""} gemini=${geminiVerdictRaw}${geminiCritique ? `(${geminiCritique.concerns.length})` : ""}`
   );
 
-  // If BOTH reviewers unavailable, return Claude's proposal unreviewed.
+  // If the reviewer is unavailable, return the lead's proposal unreviewed.
   if (!codexCritique && !geminiCritique) {
     emit({
       stage: "finalizing",
@@ -988,12 +990,12 @@ export async function generateStrategy(
     };
   }
 
-  // ===== STAGE 3 — Claude revises in response to merged critique =====
+  // ===== STAGE 3 — Codex (lead) revises in response to merged critique =====
   console.log(
-    `[strategy] stage 3: Claude revising against ${merged.concerns.length} merged concerns`
+    `[strategy] stage 3: Codex revising against ${merged.concerns.length} merged concerns`
   );
   emit({
-    stage: "claude_revision",
+    stage: "lead_revision",
     message: `The architect is revising the strategy against ${merged.concerns.length} reviewer concern${merged.concerns.length === 1 ? "" : "s"} (reviewer A=${codexVerdictRaw}, reviewer B=${geminiVerdictRaw})…`,
   });
   let revisedStrategy: InvestmentStrategy = initialStrategy;
@@ -1013,7 +1015,7 @@ export async function generateStrategy(
       },
       analyzedSummaries
     );
-    const revisedOutput = await invokeClaudeCli(revisionPrompt, 600_000);
+    const revisedOutput = await invokeLead(revisionPrompt, 600_000);
     const parsedRevised = parseStrategyResponse(revisedOutput) as RevisedStrategyShape;
     const validationError = validateStrategyShape(parsedRevised, criteria);
     if (validationError) {
@@ -1082,8 +1084,8 @@ export async function generateStrategy(
     return { addressed: false, verifiable: false };
   };
 
-  // Map Claude's per-concern rejection rationales (1-based concernIndex from
-  // the prompt) onto the critique points so the UI can show what Claude said
+  // Map the lead's per-concern rejection rationales (1-based concernIndex from
+  // the prompt) onto the critique points so the UI can show what the lead said
   // when it consciously kept a disputed decision.
   const rejectionMap = new Map<number, string>();
   const rawRejections = (revisedStrategy as RevisedStrategyShape).rejections;
@@ -1106,14 +1108,14 @@ export async function generateStrategy(
       ...p,
       addressed,
       verifiable,
-      claudeRejection: rejection,
+      leadRejection: rejection,
     };
   });
 
   // High-severity concerns that were not addressed AND not explicitly rejected
   // with a rationale → those are the truly silent ones and warrant a warning.
   const unresolvedHigh = critiquePoints.filter(
-    (p) => p.severity === "high" && !p.addressed && !p.claudeRejection,
+    (p) => p.severity === "high" && !p.addressed && !p.leadRejection,
   );
   const extraWarnings: string[] = [];
   if (unresolvedHigh.length > 0) {

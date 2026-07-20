@@ -1,13 +1,18 @@
-import { invokeClaude, extractJson } from "./claude-client";
+import { extractJson } from "./extract-json";
 import { invokeCodex } from "./codex-client";
 import { invokeGemini } from "./gemini-client";
 
-export type AiSource = "claude" | "codex" | "gemini";
+/**
+ * The AI ensemble is two independent reasoners: Codex GPT-5.6 (sol) at xhigh
+ * effort — the lead — and Gemini 3.5 Flash at high effort — the adversarial
+ * cross-check. Same prompt to both in parallel; either failing does not abort
+ * the other, so callers must handle partial results.
+ */
+export type AiSource = "codex" | "gemini";
 
 type OkOrErr = { ok: true; text: string } | { ok: false; error: string };
 
-export interface TripleRawResult {
-  claude: OkOrErr;
+export interface EnsembleRawResult {
   codex: OkOrErr;
   gemini: OkOrErr;
 }
@@ -23,21 +28,21 @@ function settleToOkErr(res: PromiseSettledResult<string>): OkOrErr {
 }
 
 /**
- * Run the same prompt through Claude Opus 4.7 (max), Codex GPT-5.5 (xhigh),
- * and Gemini 3.1 Pro Preview in parallel. Any model failing does not abort
- * the others — callers must handle partial results.
+ * Run the same prompt through Codex GPT-5.6 (sol, xhigh) and Gemini 3.5 Flash
+ * (high) in parallel. Either model failing does not abort the other.
  */
-export async function tripleInvoke(prompt: string, opts: InvokeOptions = {}): Promise<TripleRawResult> {
+export async function ensembleInvoke(
+  prompt: string,
+  opts: InvokeOptions = {},
+): Promise<EnsembleRawResult> {
   const timeoutMs = opts.timeoutMs ?? 360_000;
 
-  const [claudeRes, codexRes, geminiRes] = await Promise.allSettled([
-    invokeClaude(prompt, { effort: "max", timeoutMs }),
-    invokeCodex(prompt, { timeoutMs }),
-    invokeGemini(prompt, { timeoutMs }),
+  const [codexRes, geminiRes] = await Promise.allSettled([
+    invokeCodex(prompt, { effort: "xhigh", timeoutMs }),
+    invokeGemini(prompt, { reasoning: "high", timeoutMs }),
   ]);
 
   return {
-    claude: settleToOkErr(claudeRes),
     codex: settleToOkErr(codexRes),
     gemini: settleToOkErr(geminiRes),
   };
@@ -47,8 +52,7 @@ export async function tripleInvoke(prompt: string, opts: InvokeOptions = {}): Pr
  * Parse each model's output as JSON. Returns nulls for models that failed or
  * produced unparseable output, with the error captured in `errors`.
  */
-export function tripleExtractJson<T = unknown>(raw: TripleRawResult): {
-  claude: T | null;
+export function ensembleExtractJson<T = unknown>(raw: EnsembleRawResult): {
   codex: T | null;
   gemini: T | null;
   errors: { source: AiSource; error: string }[];
@@ -68,7 +72,6 @@ export function tripleExtractJson<T = unknown>(raw: TripleRawResult): {
   };
 
   return {
-    claude: extract("claude", raw.claude),
     codex: extract("codex", raw.codex),
     gemini: extract("gemini", raw.gemini),
     errors,

@@ -1,21 +1,19 @@
 #!/usr/bin/env bash
 # Ad-hoc second-opinion review: pipe context (diff, file, or question) to
-# Gemini 3.1 Pro Preview and print its analysis.
+# Gemini 3.5 Flash (High) and print its analysis.
 #
 # Usage:
 #   scripts/gemini-review.sh "Question or instruction"
 #   git diff main | scripts/gemini-review.sh "Review this diff for security issues"
 #   cat src/lib/foo.ts | scripts/gemini-review.sh "Spot bugs in this module"
 #
-# Requires: `gemini` CLI installed and authenticated.
-# Driver = Claude Opus 4.7 (in your Claude Code session). This script is the
-# bridge for fetching a third cold-eyes opinion at decision points.
+# Requires: the `agy` CLI installed and authenticated (override with GEMINI_CLI_BIN).
 
 set -euo pipefail
 
 if [ "$#" -lt 1 ]; then
   cat <<'EOF' >&2
-gemini-review.sh — second-opinion review via Gemini 3.1 Pro Preview
+gemini-review.sh — second-opinion review via Gemini 3.5 Flash (High)
 
 Usage:
   scripts/gemini-review.sh "your question or instruction"
@@ -44,10 +42,12 @@ else
   PROMPT="${INSTRUCTION}"
 fi
 
-# gemini -p takes prompt as an arg but also appends stdin. Empty -p plus stdin
-# keeps long prompts off argv (argv has OS size limits).
-# --approval-mode plan forces read-only; gemini will not edit files.
-printf '%s' "$PROMPT" | gemini \
-  -p "" \
-  -m gemini-3.1-pro-preview \
-  --approval-mode plan
+GEMINI_BIN="${GEMINI_CLI_BIN:-agy}"
+GEMINI_MODEL_NAME="${GEMINI_CLI_MODEL:-Gemini 3.5 Flash (High)}"
+
+# `--print` runs a single non-interactive prompt (piped over stdin so long
+# prompts stay off argv). `--mode plan` keeps it read-only (no file edits).
+printf '%s' "$PROMPT" | "$GEMINI_BIN" \
+  --print \
+  --model "$GEMINI_MODEL_NAME" \
+  --mode plan

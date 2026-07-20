@@ -58,26 +58,26 @@ export interface CritiquePoint {
    */
   verifiable?: boolean;
   /**
-   * If Claude consciously kept the disputed decision in the revision, the
-   * rationale it gave for rejecting this concern. Surfaced in the UI so every
-   * high-severity concern has a recorded outcome (addressed OR explicitly
-   * rejected with a reason).
+   * If the lead reviser (Codex) consciously kept the disputed decision in the
+   * revision, the rationale it gave for rejecting this concern. Surfaced in
+   * the UI so every high-severity concern has a recorded outcome (addressed
+   * OR explicitly rejected with a reason).
    */
-  claudeRejection?: string;
+  leadRejection?: string;
   /** Which AI(s) raised this concern. Multiple if they both flagged the same thing. */
   sources?: ReviewerSource[];
 }
 
 export interface CollaborationTrail {
-  /** Was the full trio (Claude proposer + Codex + Gemini reviewers) available? */
+  /** Was the reviewer (Gemini) available alongside the Codex lead + revision? */
   bothAisAvailable: boolean;
-  /** Concerns the reviewers raised about Claude's initial proposal. */
+  /** Concerns the reviewer raised about the lead's (Codex) initial proposal. */
   critiquePoints: CritiquePoint[];
-  /** APY of the initial Claude proposal, before reviewer critique and Claude revision. */
+  /** APY of the initial Codex proposal, before reviewer critique and revision. */
   initialProjectedApy: number;
   /** APY of the final revised strategy. */
   finalProjectedApy: number;
-  /** Pool IDs Claude initially proposed but were dropped/replaced after critique. */
+  /** Pool IDs the lead initially proposed but were dropped/replaced after critique. */
   droppedPoolIds: string[];
   /** Pool IDs introduced in the revision that weren't in the initial. */
   addedPoolIds: string[];

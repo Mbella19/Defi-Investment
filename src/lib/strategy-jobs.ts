@@ -8,9 +8,9 @@ export type JobStage =
   | "fetching_data"
   | "filtering_pools"
   | "deep_analysis"
-  | "claude_proposer"
+  | "lead_proposer"
   | "reviewers"
-  | "claude_revision"
+  | "lead_revision"
   | "finalizing"
   | "done"
   | "error";
@@ -222,9 +222,9 @@ const STAGE_RANGE: Record<JobStage, [number, number]> = {
   fetching_data: [2, 8],
   filtering_pools: [8, 12],
   deep_analysis: [12, 50],
-  claude_proposer: [50, 68],
+  lead_proposer: [50, 68],
   reviewers: [68, 82],
-  claude_revision: [82, 96],
+  lead_revision: [82, 96],
   finalizing: [96, 99],
   done: [100, 100],
   error: [100, 100],
@@ -259,9 +259,9 @@ const PUBLIC_STAGE: Record<JobStage, string> = {
   fetching_data: "reading_markets",
   filtering_pools: "selecting_markets",
   deep_analysis: "reviewing_markets",
-  claude_proposer: "creating_proposal",
+  lead_proposer: "creating_proposal",
   reviewers: "checking_proposal",
-  claude_revision: "finalizing_proposal",
+  lead_revision: "finalizing_proposal",
   finalizing: "finalizing",
   done: "complete",
   error: "error",

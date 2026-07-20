@@ -12,7 +12,7 @@ import {
   getContractCreation,
   getNormalTxs,
 } from "./etherscan";
-import { tripleInvoke, tripleExtractJson, dedupeStrings } from "./dual-llm";
+import { ensembleInvoke, ensembleExtractJson, dedupeStrings } from "./dual-llm";
 import { boundCache } from "@/lib/cache-utils";
 
 const cache = new Map<string, { report: DeployerForensicsReport; expiresAt: number }>();
@@ -282,27 +282,20 @@ export async function analyzeDeployer(
   let dualAi: DeployerForensicsReport["dualAi"];
 
   const prompt = buildSynthesisPrompt(trace);
-  const raw = await tripleInvoke(prompt, { timeoutMs: 180_000 });
-  const parsed = tripleExtractJson<{
+  const raw = await ensembleInvoke(prompt, { timeoutMs: 180_000 });
+  const parsed = ensembleExtractJson<{
     summary: string;
     reasoning: string[];
     recommendations: string[];
   }>(raw);
 
-  const claudeSummary = parsed.claude ? String(parsed.claude.summary || "").trim() : "";
   const codexSummary = parsed.codex ? String(parsed.codex.summary || "").trim() : "";
   const geminiSummary = parsed.gemini ? String(parsed.gemini.summary || "").trim() : "";
-  const claudeReasoning = Array.isArray(parsed.claude?.reasoning)
-    ? parsed.claude!.reasoning.map(String).filter(Boolean)
-    : [];
   const codexReasoning = Array.isArray(parsed.codex?.reasoning)
     ? parsed.codex!.reasoning.map(String).filter(Boolean)
     : [];
   const geminiReasoning = Array.isArray(parsed.gemini?.reasoning)
     ? parsed.gemini!.reasoning.map(String).filter(Boolean)
-    : [];
-  const claudeRecs = Array.isArray(parsed.claude?.recommendations)
-    ? parsed.claude!.recommendations.map(String).filter(Boolean)
     : [];
   const codexRecs = Array.isArray(parsed.codex?.recommendations)
     ? parsed.codex!.recommendations.map(String).filter(Boolean)
@@ -311,16 +304,14 @@ export async function analyzeDeployer(
     ? parsed.gemini!.recommendations.map(String).filter(Boolean)
     : [];
 
-  if (claudeSummary || codexSummary || geminiSummary) {
-    // Prefer Claude as primary if available; surface all three in dualAi metadata.
-    summary = claudeSummary || codexSummary || geminiSummary;
-    reasoning = dedupeStrings([...claudeReasoning, ...codexReasoning, ...geminiReasoning]).slice(0, 12);
-    recommendations = dedupeStrings([...claudeRecs, ...codexRecs, ...geminiRecs]).slice(0, 10);
+  if (codexSummary || geminiSummary) {
+    // Prefer Codex (lead) as primary; surface both in dualAi metadata.
+    summary = codexSummary || geminiSummary;
+    reasoning = dedupeStrings([...codexReasoning, ...geminiReasoning]).slice(0, 12);
+    recommendations = dedupeStrings([...codexRecs, ...geminiRecs]).slice(0, 10);
     dualAi = {
-      claudeOk: parsed.claude !== null,
       codexOk: parsed.codex !== null,
       geminiOk: parsed.gemini !== null,
-      claudeSummary: claudeSummary || undefined,
       codexSummary: codexSummary || undefined,
       geminiSummary: geminiSummary || undefined,
       errors: parsed.errors,
@@ -333,7 +324,6 @@ export async function analyzeDeployer(
       ? ["Review each flagged signal manually before depositing capital."]
       : ["No automated concerns — still cross-check audits and TVL independently."];
     dualAi = {
-      claudeOk: false,
       codexOk: false,
       geminiOk: false,
       errors: parsed.errors,
