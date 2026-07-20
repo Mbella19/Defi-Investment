@@ -1,6 +1,6 @@
 import type { DefiLlamaPool } from "@/types/pool";
 import { fetchAllPools } from "./defillama";
-import { fetchBeefyVaultsEnriched, beefyToDefiLlamaPool, BEEFY_CHAIN_MAP } from "./beefy";
+import { fetchBeefyVaultsEnriched, beefyToDefiLlamaPool } from "./beefy";
 
 /**
  * Fetch pools from both DeFiLlama and Beefy, merge and deduplicate.

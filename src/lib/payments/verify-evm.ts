@@ -70,24 +70,18 @@ export async function verifyEvmTransaction(params: {
     };
   }
 
-  // ERC20 transfer — scan receipt logs for the matching Transfer event.
-  const expectedContract = pair.contract.toLowerCase();
-  const matching = receipt.logs.find(
-    (log) =>
-      log.address.toLowerCase() === expectedContract &&
-      log.topics[0]?.toLowerCase() === ERC20_TRANSFER_EVENT_TOPIC,
-  );
-  if (!matching) {
-    return { ok: false, reason: "No matching token transfer in receipt" };
+  // ERC20 transfer — scan ALL Transfer events on the expected token contract
+  // and pick the one that pays the deposit address. A tx routed through a
+  // router/aggregator can carry several transfers of the same token; matching
+  // only the first log rejected legitimate payments.
+  const matched = matchErc20Transfer(receipt.logs, pair.contract, expectedRecipient, expectedAmount);
+  if (!matched) {
+    return { ok: false, reason: "No transfer to the deposit address found in this transaction" };
   }
-  const decoded = decodeTransfer(matching.topics, matching.data);
-  if (!decoded) return { ok: false, reason: "Could not decode transfer log" };
-  if (decoded.to.toLowerCase() !== expectedRecipient.toLowerCase()) {
-    return { ok: false, reason: `Recipient mismatch (got ${decoded.to})` };
-  }
-  if (!compareAmount(decoded.value, expectedAmount)) {
+  if (!matched.amountMatches) {
     return { ok: false, reason: "Token amount mismatch with quote" };
   }
+  const decoded = matched.transfer;
   return {
     ok: true,
     observed: {
@@ -96,6 +90,42 @@ export async function verifyEvmTransaction(params: {
       amount: decoded.value,
     },
   };
+}
+
+export interface Erc20LogLike {
+  address: string;
+  topics: readonly Hex[];
+  data: Hex;
+}
+
+/**
+ * Find the ERC-20 Transfer event on `contract` that pays `recipient`.
+ * Returns the transfer plus whether its amount matches the quote — a
+ * recipient match with the wrong amount is surfaced so the caller can report
+ * "amount mismatch" instead of "no transfer found". Pure — unit-testable
+ * against fixture receipts.
+ */
+export function matchErc20Transfer(
+  logs: readonly Erc20LogLike[],
+  contract: string,
+  recipient: string,
+  expectedAmount: string,
+): { transfer: { from: string; to: string; value: string }; amountMatches: boolean } | null {
+  const wantContract = contract.toLowerCase();
+  const wantTo = recipient.toLowerCase();
+  let recipientMatch: { from: string; to: string; value: string } | null = null;
+  for (const logEntry of logs) {
+    if (logEntry.address.toLowerCase() !== wantContract) continue;
+    if (logEntry.topics[0]?.toLowerCase() !== ERC20_TRANSFER_EVENT_TOPIC) continue;
+    const decoded = decodeTransfer(logEntry.topics, logEntry.data);
+    if (!decoded) continue;
+    if (decoded.to.toLowerCase() !== wantTo) continue;
+    if (compareAmount(decoded.value, expectedAmount)) {
+      return { transfer: decoded, amountMatches: true };
+    }
+    recipientMatch = recipientMatch ?? decoded;
+  }
+  return recipientMatch ? { transfer: recipientMatch, amountMatches: false } : null;
 }
 
 const ERC20_TRANSFER_EVENT_TOPIC =

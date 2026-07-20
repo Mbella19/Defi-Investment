@@ -1,4 +1,24 @@
+import { fetchWithTimeout } from "@/lib/fetch-utils";
+
 export const ETHERSCAN_V2_BASE = "https://api.etherscan.io/v2/api";
+
+// Stable error codes for config-level failures. Callers match on these
+// EXACT strings to decide throw-vs-null — previously the thrown text and the
+// matcher regex drifted apart and invalid-key errors were silently swallowed
+// into null results.
+export const ETHERSCAN_ERR_NO_KEY = "ETHERSCAN_API_KEY_MISSING";
+export const ETHERSCAN_ERR_INVALID_KEY = "ETHERSCAN_API_KEY_INVALID";
+export const ETHERSCAN_ERR_RATE_LIMIT = "ETHERSCAN_RATE_LIMIT";
+
+const CONFIG_ERROR_RE = new RegExp(
+  `${ETHERSCAN_ERR_NO_KEY}|${ETHERSCAN_ERR_INVALID_KEY}|${ETHERSCAN_ERR_RATE_LIMIT}`,
+);
+
+/** True for errors that indicate operator misconfiguration or quota — these
+ *  must surface to the caller instead of degrading to a null result. */
+export function isEtherscanConfigError(err: unknown): boolean {
+  return err instanceof Error && CONFIG_ERROR_RE.test(err.message);
+}
 
 export const CHAIN_ID_TO_NAME: Record<number, string> = {
   1: "Ethereum",
@@ -41,7 +61,7 @@ function resolveApiKey(): string {
   const key = process.env.ETHERSCAN_API_KEY;
   if (!key) {
     throw new Error(
-      "ETHERSCAN_API_KEY is not set. Add it to .env.local — get a free key at https://etherscan.io/apis"
+      `${ETHERSCAN_ERR_NO_KEY}: ETHERSCAN_API_KEY is not set. Add it to .env.local — get a free key at https://etherscan.io/apis`
     );
   }
   return key;
@@ -65,10 +85,14 @@ async function call<T>(params: Record<string, string>, revalidateSeconds = 3600)
   const search = new URLSearchParams({ ...params, apikey });
   const url = `${ETHERSCAN_V2_BASE}?${search.toString()}`;
 
-  const res = await fetch(url, { next: { revalidate: revalidateSeconds } }).catch((err) => {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(scrubApiKey(`Block explorer fetch failed: ${msg}`));
-  });
+  // fetchWithTimeout (10s) per repo convention — a hung explorer connection
+  // otherwise blocks the forensics/audit route until Next's maxDuration.
+  const res = await fetchWithTimeout(url, { next: { revalidate: revalidateSeconds } }).catch(
+    (err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(scrubApiKey(`Block explorer fetch failed: ${msg}`));
+    },
+  );
   if (!res.ok) throw new Error(`Block explorer HTTP ${res.status}`);
   const json = (await res.json()) as EtherscanResponse<T>;
 
@@ -78,10 +102,10 @@ async function call<T>(params: Record<string, string>, revalidateSeconds = 3600)
       throw new Error("SOURCE_UNVERIFIED");
     }
     if (msg.toLowerCase().includes("rate limit")) {
-      throw new Error("Block explorer rate limit exceeded");
+      throw new Error(`${ETHERSCAN_ERR_RATE_LIMIT}: block explorer rate limit exceeded`);
     }
     if (msg.toLowerCase().includes("invalid api key")) {
-      throw new Error("Invalid block explorer API key");
+      throw new Error(`${ETHERSCAN_ERR_INVALID_KEY}: invalid block explorer API key`);
     }
   }
 
@@ -107,7 +131,7 @@ export async function getContractCreation(
     });
     return Array.isArray(result) && result.length > 0 ? result[0] : null;
   } catch (err) {
-    if (err instanceof Error && /ETHERSCAN_API_KEY|rate limit|Invalid Etherscan API key/i.test(err.message)) {
+    if (isEtherscanConfigError(err)) {
       throw err;
     }
     return null;
@@ -149,7 +173,7 @@ export async function getContractSource(
     if (!entry.SourceCode || entry.SourceCode.trim() === "") return null;
     return entry;
   } catch (err) {
-    if (err instanceof Error && /ETHERSCAN_API_KEY|rate limit|Invalid Etherscan API key/i.test(err.message)) {
+    if (isEtherscanConfigError(err)) {
       throw err;
     }
     return null;

@@ -1,4 +1,6 @@
 import { randomUUID } from "crypto";
+import { getDb } from "@/lib/db";
+import { log } from "@/lib/log";
 import type { InvestmentStrategy } from "@/types/strategy";
 
 export type JobStage =
@@ -29,6 +31,8 @@ export interface JobResult {
 
 export interface StrategyJob {
   id: string;
+  /** Lowercase wallet that started the job — job reads are scoped to it. */
+  wallet: string;
   status: "running" | "done" | "error";
   startedAt: number;
   finishedAt?: number;
@@ -40,7 +44,94 @@ export interface StrategyJob {
 const JOB_TTL_MS = 30 * 60 * 1000;
 const STUCK_TTL_MS = 60 * 60 * 1000;
 const PRUNE_INTERVAL_MS = 5 * 60 * 1000;
+const DB_RETENTION_DAYS = 7;
+const PERSISTED_EVENTS = 50;
 const jobs = new Map<string, StrategyJob>();
+
+/* ---------- SQLite write-through ----------
+ * The Map stays the hot path; the DB copy makes results survive restarts
+ * and closed tabs. Persistence is best-effort — a DB hiccup must never
+ * break the in-flight pipeline. */
+
+function persistJob(job: StrategyJob): void {
+  try {
+    getDb()
+      .prepare(
+        `INSERT INTO strategy_jobs (id, wallet_address, status, events_json, result_json, error, started_at, finished_at)
+         VALUES (@id, @wallet, @status, @events, @result, @error, @startedAt, @finishedAt)
+         ON CONFLICT(id) DO UPDATE SET
+           status = excluded.status,
+           events_json = excluded.events_json,
+           result_json = excluded.result_json,
+           error = excluded.error,
+           finished_at = excluded.finished_at`,
+      )
+      .run({
+        id: job.id,
+        wallet: job.wallet,
+        status: job.status,
+        events: JSON.stringify(job.events.slice(-PERSISTED_EVENTS)),
+        result: job.result ? JSON.stringify(job.result) : null,
+        error: job.error ?? null,
+        startedAt: job.startedAt,
+        finishedAt: job.finishedAt ?? null,
+      });
+  } catch (err) {
+    log.warn("strategy-jobs", "persist failed", {
+      jobId: job.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+interface JobRow {
+  id: string;
+  wallet_address: string;
+  status: string;
+  events_json: string;
+  result_json: string | null;
+  error: string | null;
+  started_at: number;
+  finished_at: number | null;
+}
+
+function rowToJob(row: JobRow): StrategyJob {
+  let events: JobEvent[] = [];
+  try {
+    const parsed = JSON.parse(row.events_json);
+    if (Array.isArray(parsed)) events = parsed as JobEvent[];
+  } catch {
+    /* keep empty */
+  }
+  let result: JobResult | undefined;
+  if (row.result_json) {
+    try {
+      result = JSON.parse(row.result_json) as JobResult;
+    } catch {
+      /* corrupt result — treat as absent */
+    }
+  }
+  const job: StrategyJob = {
+    id: row.id,
+    wallet: row.wallet_address,
+    status: row.status as StrategyJob["status"],
+    startedAt: row.started_at,
+    finishedAt: row.finished_at ?? undefined,
+    events,
+    result,
+    error: row.error ?? undefined,
+  };
+  // A "running" row that isn't in memory means the in-process promise died
+  // with the server — report it honestly instead of spinning forever.
+  if (job.status === "running") {
+    job.status = "error";
+    job.error = "Job was interrupted by a server restart — start a new run.";
+    job.finishedAt = Date.now();
+    job.events.push({ ts: Date.now(), stage: "error", message: job.error });
+    persistJob(job);
+  }
+  return job;
+}
 
 function pruneExpired() {
   const now = Date.now();
@@ -49,6 +140,13 @@ function pruneExpired() {
     const ref = job.finishedAt ?? job.startedAt;
     if (now - ref > cutoff) jobs.delete(id);
   }
+  try {
+    getDb()
+      .prepare("DELETE FROM strategy_jobs WHERE started_at < ?")
+      .run(now - DB_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  } catch {
+    /* best effort */
+  }
 }
 
 // Background sweep: clients that close their tab leave abandoned jobs
@@ -56,10 +154,11 @@ function pruneExpired() {
 const _pruneTimer = setInterval(pruneExpired, PRUNE_INTERVAL_MS);
 if (typeof _pruneTimer.unref === "function") _pruneTimer.unref();
 
-export function createJob(): StrategyJob {
+export function createJob(wallet: string): StrategyJob {
   pruneExpired();
   const job: StrategyJob = {
     id: randomUUID(),
+    wallet: wallet.toLowerCase(),
     status: "running",
     startedAt: Date.now(),
     events: [
@@ -67,12 +166,25 @@ export function createJob(): StrategyJob {
     ],
   };
   jobs.set(job.id, job);
+  persistJob(job);
   return job;
 }
 
 export function getJob(id: string): StrategyJob | undefined {
   pruneExpired();
-  return jobs.get(id);
+  const inMemory = jobs.get(id);
+  if (inMemory) return inMemory;
+  // Fall back to the durable copy (finished before a restart, or aged out of
+  // the in-memory TTL while the user kept the tab open).
+  try {
+    const row = getDb()
+      .prepare("SELECT * FROM strategy_jobs WHERE id = ?")
+      .get(id) as JobRow | undefined;
+    if (!row) return undefined;
+    return rowToJob(row);
+  } catch {
+    return undefined;
+  }
 }
 
 export function emitEvent(id: string, event: Omit<JobEvent, "ts">): void {
@@ -80,6 +192,7 @@ export function emitEvent(id: string, event: Omit<JobEvent, "ts">): void {
   if (!job || job.status !== "running") return;
   job.events.push({ ...event, ts: Date.now() });
   if (job.events.length > 200) job.events.splice(0, job.events.length - 200);
+  persistJob(job);
 }
 
 export function completeJob(id: string, result: JobResult): void {
@@ -89,6 +202,7 @@ export function completeJob(id: string, result: JobResult): void {
   job.finishedAt = Date.now();
   job.result = result;
   job.events.push({ ts: Date.now(), stage: "done", message: "Allocation ready" });
+  persistJob(job);
 }
 
 export function failJob(id: string, error: string): void {
@@ -98,6 +212,7 @@ export function failJob(id: string, error: string): void {
   job.finishedAt = Date.now();
   job.error = error;
   job.events.push({ ts: Date.now(), stage: "error", message: error });
+  persistJob(job);
 }
 
 // Each stage maps to a contiguous slice of the 0..100 progress bar.

@@ -45,6 +45,22 @@ npm run start
 
 Production mode rejects `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=demo` and hosted runtimes reject AI CLI mode. For a production-like local run, set a real WalletConnect project ID, `AI_MODE=api`, and provider API keys.
 
+## Deploying (single Node server)
+
+The app is designed for one long-lived Node process (VPS, Docker, bare metal) — SQLite persistence, in-process background jobs, and the 15-minute scheduler all assume it. Serverless platforms will break background work; don't deploy there without re-architecting.
+
+1. **Env checklist** (see `.env.example`): `SESSION_SECRET` (≥32 chars), `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`, `AI_MODE=api` + the three provider keys, `ETHERSCAN_API_KEY`, an RPC key (`ALCHEMY_API_KEY` or per-chain URLs), payment address overrides if not using the defaults, and optionally `RESEND_API_KEY`/`TELEGRAM_BOT_TOKEN` for alert channels.
+2. **Run it**:
+
+   ```bash
+   npm ci && npm run build
+   npm run start          # keep alive with systemd, pm2, or Docker restart policy
+   ```
+
+3. **Data**: everything lives in `sovereign.db` (WAL mode) next to the app — back that file up. Set `DATABASE_PATH` to relocate it (e.g., a mounted volume).
+4. **Background work**: the in-process scheduler starts on the first strategy-route hit and then runs monitoring, payment reconciliation, and expiry reminders every 15 minutes. Optionally point an external cron at `GET /api/cron/monitor` with `Authorization: Bearer $CRON_SECRET` as a backup trigger, and watch `GET /api/strategies/monitor` for `stale: true`.
+5. **Smoke test after deploy**: sign in, generate a Free strategy, and make one small real payment per chain you enable — payment verification is the one path unit tests can't fully exercise.
+
 ## Environment
 
 Minimum useful `.env.local`:

@@ -60,10 +60,13 @@ export function requireEnv(name: string): string {
   return v.trim();
 }
 
+const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
 /**
  * Resolve `*_BASE_URL` env vars for the AI providers. Validates that the
- * value parses as a URL and uses http/https — anything else (file:, data:,
- * javascript:, etc.) would be silently concatenated into a fetch otherwise.
+ * value parses as a URL and uses https — these URLs carry API keys, so a
+ * misconfigured http:// endpoint would send credentials in cleartext. Plain
+ * http is allowed only for localhost (local proxies / test doubles).
  * Strips trailing slash for consistent path concatenation.
  */
 export function resolveBaseUrl(envName: string, fallback: string): string {
@@ -75,6 +78,11 @@ export function resolveBaseUrl(envName: string, fallback: string): string {
     parsed = new URL(value);
   } catch {
     throw new Error(`${envName} is not a valid URL: ${JSON.stringify(value)}`);
+  }
+  if (parsed.protocol === "http:" && !LOCAL_HOSTNAMES.has(parsed.hostname.toLowerCase())) {
+    throw new Error(
+      `${envName} uses plain http for a non-local host — API keys would travel in cleartext. Use https.`,
+    );
   }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error(`${envName} must use http or https; got ${parsed.protocol}`);

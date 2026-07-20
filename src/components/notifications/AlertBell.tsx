@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useStrategyAlerts } from "@/hooks/useStrategyAlerts";
-import { Icons } from "@/components/sovereign";
+import { Icons } from "@/components/sovereign/Icons";
 
 const severityColor: Record<string, string> = {
   critical: "var(--danger)",

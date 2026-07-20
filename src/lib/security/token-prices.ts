@@ -8,6 +8,8 @@
  * by token amount in human units, NOT by raw on-chain value).
  */
 
+import { fetchWithTimeout } from "@/lib/fetch-utils";
+
 const PRICE_BASE = "https://coins.llama.fi/prices/current";
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -65,7 +67,7 @@ export async function fetchTokenUsdPrices(
     const batch = toFetch.slice(i, i + 100);
     try {
       const url = `${PRICE_BASE}/${batch.join(",")}`;
-      const res = await fetch(url, { next: { revalidate: 300 } });
+      const res = await fetchWithTimeout(url, { next: { revalidate: 300 } });
       if (!res.ok) continue;
       const json = (await res.json()) as { coins?: Record<string, { price?: number }> };
       const coins = json.coins ?? {};

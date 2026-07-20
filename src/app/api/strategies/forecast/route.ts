@@ -1,5 +1,7 @@
 import { forecastPoolApy } from "@/lib/apy-forecast";
 import { fetchAllPools } from "@/lib/defillama";
+import { requireWallet } from "@/lib/auth/guard";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 async function buildLivePoolMap(): Promise<Map<string, number>> {
   // The forecast's currentApy comes from the LAST DAILY BUCKET of the pool's
@@ -42,6 +44,12 @@ async function buildForecasts(ids: string[]) {
 }
 
 export async function GET(request: Request) {
+  // Up to 50 upstream chart fetches per call — authenticated + limited.
+  const auth = requireWallet(request);
+  if ("response" in auth) return auth.response;
+  const limited = enforceRateLimit(request, "forecast", { max: 30, windowMs: 60 * 60 * 1000 });
+  if (limited) return limited;
+
   const { searchParams } = new URL(request.url);
   const poolIds = searchParams.getAll("poolId");
   const single = searchParams.get("poolId");
@@ -64,6 +72,11 @@ export async function GET(request: Request) {
 const MAX_POOL_IDS = 50;
 
 export async function POST(request: Request) {
+  const auth = requireWallet(request);
+  if ("response" in auth) return auth.response;
+  const limited = enforceRateLimit(request, "forecast", { max: 30, windowMs: 60 * 60 * 1000 });
+  if (limited) return limited;
+
   try {
     const body = (await request.json()) as { poolIds?: string[] };
     const ids = Array.isArray(body.poolIds) ? body.poolIds.filter((s): s is string => typeof s === "string") : [];

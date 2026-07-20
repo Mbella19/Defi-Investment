@@ -12,12 +12,15 @@ Next.js 16.2.1 (App Router, Turbopack) · React 19.2 with the React Compiler ena
 npm run dev        # next dev (Turbopack)
 npm run build      # next build — runs full type-check
 npm run lint       # eslint (flat config in eslint.config.mjs)
+npm test           # vitest run — unit tests in test/ (payments, vetoes, SIWE, monitor…)
 npx tsc --noEmit   # standalone type-check (faster than build)
 ```
 
-There is no test runner configured. `next build` is the canonical "does it compile" gate — it type-checks and statically generates all pages.
+`next build` is the canonical "does it compile" gate — it type-checks and statically generates all pages. `npm test` covers the deterministic money-path logic (payment verifiers, proration, heuristic vetoes, SIWE parsing) — run it after touching any of those. Tests use a throwaway SQLite file (`DATABASE_PATH` set in `test/setup.ts`) and stub the `server-only` package via `vitest.config.ts`.
 
-The SQLite DB (`sovereign.db`) is created on first server route hit via `src/lib/db.ts`'s `getDb()`; deleting it is safe (it migrates on next boot). Two DDL paths coexist: `db.ts`'s `migrate()` creates the eager tables (`active_strategies`, `strategy_alerts`, `strategy_breach_state`, `subscriptions`, `pending_payments`, `strategy_generations`) on first connection, while `src/lib/security/exploit-monitor.ts`'s `ensureSchema()` creates `exploit_alerts` lazily on first read. New tables should follow one of those two patterns — don't introduce a third.
+**Deployment target is a single long-lived Node server** (VPS/Docker: `npm run build` + `next start`). SQLite, the in-process scheduler, and the in-memory nonce/rate-limit stores all assume one process. There is no vercel.json — serverless would break background jobs and per-instance state. An external cron hitting `GET /api/cron/monitor` (Bearer `CRON_SECRET`) is an optional belt-and-braces trigger; the in-process scheduler already runs the same sweep.
+
+The SQLite DB (`sovereign.db`) is created on first server route hit via `src/lib/db.ts`'s `getDb()`; deleting it is safe (it migrates on next boot). Two DDL paths coexist: `db.ts`'s `migrate()` creates the eager tables (`active_strategies`, `strategy_alerts`, `strategy_breach_state`, `subscriptions`, `pending_payments`, `strategy_generations`, `audit_runs`, `user_channels`, `channel_verifications`, `strategy_jobs`, `audit_jobs`, `audit_shares`, `protocol_analyses`, plus the `schema_migrations` gate table for one-shot ALTERs/repairs) on first connection, while `src/lib/security/exploit-monitor.ts`'s `ensureSchema()` creates `exploit_alerts` lazily on first read. New tables should follow one of those two patterns — don't introduce a third. Additive columns go through a `schema_migrations`-gated `ALTER TABLE` (see the `reminder_sent_at` migration in `db.ts`).
 
 ## Big-picture architecture
 
@@ -31,13 +34,13 @@ The SQLite DB (`sovereign.db`) is created on first server route hit via `src/lib
 
 Ground-truth facts (`src/lib/security/ground-truth.ts`) are gathered in parallel before stage 1: HEAD-checks each audit link, queries the local `exploit_alerts` table, detects TVL crashes (1d ≤ −40% or 7d ≤ −55%), and reads cached deployer/source-audit data. They're embedded verbatim in the scoring prompt and the synthesis prompt — the AIs are told they MUST engage with them.
 
-Results are cached in-process for 1 hour keyed by protocol slug.
+Results are cached three ways, all keyed by protocol slug: an in-process map (1h TTL), a durable `protocol_analyses` SQLite row (same 1h TTL semantics — survives restarts, reused across users; rows retained 30 days), and an in-flight promise map so concurrent requests for the same protocol share ONE triple-AI run instead of each paying for their own.
 
 ### Strategy generation (`src/lib/strategist.ts`)
 
 `generateStrategy(criteria, opts)` is a separate three-stage pipeline for portfolio construction. `opts.mode` (default `"council"`) controls the reviewer panel and is set by the API layer from the caller's plan tier (see "Plans, paywall, and capability gating" below):
 
-1. **Claude proposer** — fetches DeFiLlama pools + protocols, filters by APY/TVL/risk, runs `analyzeProtocol` on the top 30 protocols (in batches of 5), and asks Claude to compose an initial allocation strategy via `invokeClaudeCli` (local `claude` CLI subprocess). Always runs.
+1. **Claude proposer** — fetches DeFiLlama pools + protocols, filters by APY/TVL/risk (plus a long-horizon stability gate for low/medium risk), runs `analyzeProtocol` on the top 10 protocols by TVL with a concurrency cap of 4 (`mapWithConcurrency` — each protocol is 3 AI invocations, so unbounded parallelism exhausted the box), and asks Claude to compose an initial allocation strategy via `invokeClaudeCli` (local `claude` CLI subprocess). Always runs. The proposer's output is validated by `validateStrategyShape` (`src/lib/strategy-validate.ts`) before any fast-path branch can return it.
 2. **Reviewer panel** —
    - `mode === "solo"` (Free tier): skipped entirely; the architect's proposal is returned with a stub `CollaborationTrail`.
    - `mode === "dual"` (Pro tier): only Gemini reviews via `runReviewer`.
@@ -58,16 +61,17 @@ The per-stage trail is preserved on `InvestmentStrategy.collaboration` (`Collabo
 5. **AI explanation** — top-25 findings get `tripleInvoke`'d through Claude/Codex/Gemini for plain-English context. AIs cannot invent new findings — they only annotate what the tools already produced.
 6. **SCSVS mapping** — `audit/scsvs.ts` maps findings to OWASP SCSVS v12 categories.
 
-A full audit takes 5–10 minutes, so it runs as a background job (`audit/jobs.ts` — in-memory `Map` with TTL pruning, mirroring `strategy-jobs.ts`); the API exposes `start` + `status` endpoints and the client polls.
+A full audit takes 5–10 minutes, so it runs as a background job (`audit/jobs.ts` — in-memory `Map` hot path with SQLite write-through to `audit_jobs`, mirroring `strategy-jobs.ts`); the API exposes `start` + `status` endpoints (both `requireWallet`; status 404s for jobs the caller doesn't own) and the client polls. Finished reports can be shared publicly: `POST /api/security/audit/share` mints a token, `/report/[token]` renders the persisted report with no auth, and shared jobs are pinned past the normal 30-day `audit_jobs` retention.
 
 ### Plans, paywall, and capability gating (`src/lib/plans/`)
 
-Three subscription tiers — Free, Pro ($100/mo), Ultra ($200/mo) — with capabilities defined as a typed map in `src/lib/plans/access.ts` (`TIER_CAPS: Record<Tier, Capabilities>`). Every gated feature is a boolean (or list/number) on `Capabilities`, never an inline tier check, so adding a new gated feature means adding a key to one type.
+Three subscription tiers — Free, Pro ($49/mo), Ultra ($149/mo; prices live in `TIER_PRICE_USD`) — with capabilities defined as a typed map in `src/lib/plans/access.ts` (`TIER_CAPS: Record<Tier, Capabilities>`). Every gated feature is a boolean (or list/number) on `Capabilities`, never an inline tier check, so adding a new gated feature means adding a key to one type.
 
 - `resolveTier(wallet)` reads `subscriptions.expires_at` and returns `"free"|"pro"|"ultra"`. Expired rows fall back to free.
 - `isOwnerWallet(wallet)` reads the `OWNER_WALLETS` env var (comma-separated lowercase 0x addresses) and short-circuits to Ultra. Use this for the project owner / staff testing.
 - `requireCapability(wallet, capabilityKey)` is the **server-side gate** — returns `{ ok: true }` or `{ ok: false, response }` (a 402). Every paid-feature route calls it after `requireWallet()`.
-- `activateSubscription({ wallet, tier, ... })` upserts `subscriptions` with a 30-day expiry (extends from existing expiry if still in the future).
+- `activateSubscription({ wallet, tier, ... })` upserts `subscriptions` with a 30-day expiry. Same-tier renewals extend from the existing future expiry; tier CHANGES prorate unused time by price ratio (Pro→Ultra converts remaining days down, Ultra→Pro converts them up) so paid time is never lost or double-counted.
+- `src/lib/plans/reminders.ts` — `sendExpiryReminders()` runs in the 15-min scheduler sweep; subs expiring within 3 days get one notice per billing period via the user's verified channels (`reminder_sent_at` column suppresses repeats).
 
 Monthly strategy caps live in `src/lib/plans/usage.ts` — `strategy_generations` is appended-to on every job creation and counted against `TIER_CAPS[tier].monthlyStrategies` per calendar month (UTC).
 
@@ -84,20 +88,20 @@ Recipient addresses are loaded from env (`PAYMENT_ADDRESS_EVM` / `PAYMENT_ADDRES
 
 Checkout flow:
 
-1. `POST /api/payments/quote` (`src/lib/payments/quote.ts → createQuote`) prices the tier in the chosen token (USD-pinned for stables, live CoinGecko for ETH/BTC/SOL via `quoteAmount`), inserts a `pending_payments` row with a 30-min expiry, and returns the recipient + amount.
+1. `POST /api/payments/quote` (`src/lib/payments/quote.ts → createQuote`) prices the tier in the chosen token (USD-pinned for stables, live CoinGecko for ETH/BTC/SOL via `quoteAmount`), inserts a `pending_payments` row with a **per-chain expiry** (30 min default, 1h Tron, 4h Bitcoin — slow confirmations must not outlive the quote), and returns the recipient + amount. `GET /api/payments/quote?id=` is the authed, wallet-scoped lookup backing the checkout resume-after-reload flow.
 2. **EVM**: the checkout page (`src/app/(app)/plans/checkout/page.tsx`) uses wagmi's `useSendTransaction` (native) or `useWriteContract` (`erc20Abi.transfer`) to send. `useWaitForTransactionReceipt` watches confirmation and auto-submits the hash to verify.
 3. **Non-EVM**: address is hidden behind a "Reveal deposit address" button (collapsed by default); user pastes the tx hash from their external wallet manually.
-4. `POST /api/payments/verify` looks up the quote, dispatches to the appropriate verifier (`verify-evm.ts` / `verify-tron.ts` / `verify-solana.ts` / `verify-btc.ts`), confirms recipient + amount + sufficient confirmations, then calls `activateSubscription`.
+4. `POST /api/payments/verify` looks up the quote, dispatches to the appropriate verifier (`verify-evm.ts` / `verify-tron.ts` / `verify-solana.ts` / `verify-btc.ts`), confirms recipient + amount + sufficient confirmations, then atomically claims the hash and activates via `confirmQuoteAndActivate` (single SQLite transaction; clears any other non-confirmed row squatting on the hash). Guardrails: **EVM payments must come FROM the signed-in wallet** (`observed.from === quote.wallet` — the in-site wagmi flow guarantees it, and it kills tx-hash front-running); expired-but-paid quotes verify inside a **24h grace window** (`isWithinGrace`) since the price was locked when the user paid; retryable failures ("not yet mined", "need N confirmations") persist the tx hash on the quote so `src/lib/payments/reconciler.ts` finishes verification server-side on the 15-min sweep even if the tab closed.
 
-Per-chain verifiers live one-per-file under `src/lib/payments/verify-*.ts` and are dispatched by `verify.ts`. EVM uses viem against `getRpcUrl(chainId)`; Tron hits TronGrid; Solana hits the configured RPC; BTC hits mempool.space. Confirmations: 6 (Ethereum), 12 (BSC), finalized (Solana), 1 block (BTC). Amount comparison uses `compareAmount` in `pricing.ts` with ±0.5% tolerance.
+Per-chain verifiers live one-per-file under `src/lib/payments/verify-*.ts` and are dispatched by `verify.ts`. EVM uses viem against `getRpcUrl(chainId)` and matches the Transfer log **to the recipient** among all transfers in the receipt (`matchErc20Transfer` — router txs carry several); Tron hits TronGrid and normalizes base58 ↔ 41-hex address forms via `normalizeTronAddress` (bs58check) before comparing; Solana hits the configured RPC; BTC hits mempool.space. Confirmations: 6 (Ethereum), 12 (BSC), finalized (Solana), 1 block (BTC). Amount comparison uses `compareAmount` in `pricing.ts` with ±0.5% tolerance; raw-unit conversion is BigInt string math (`toRawUnits`), never float×10^decimals.
 
 Real-gas display in checkout: gas units come from `useEstimateGas` against `chainId: targetChainId` (runs even when wallet is on the wrong chain — wagmi routes through the configured transport for that chain), per-gas fee from `useEstimateFeesPerGas`, native USD price from `/api/payments/native-prices` (60s server cache, 30s browser cache). If the simulator reverts (no token balance), the fee row falls back to the deterministic typical units (21000 native, 65000 ERC20) and is **labeled "typical"** — never silently mocked.
 
 ### Background scheduler & job stores
 
-Two in-memory job stores back the long-running pipelines: `strategy-jobs.ts` for `generateStrategy` and `audit/jobs.ts` for `runMultiEngineAudit`. Both are `Map<id, Job>` with TTL pruning (a periodic `setInterval(...).unref()` sweep on top of the on-write checks) and append-only `events[]` arrays for progress streaming — clients poll `…/status` and render a live event log. New long-running pipelines should follow the same shape.
+Two job stores back the long-running pipelines: `strategy-jobs.ts` for `generateStrategy` and `audit/jobs.ts` for `runMultiEngineAudit`. Each keeps an in-memory `Map<id, Job>` as the hot path with **SQLite write-through** (`strategy_jobs` / `audit_jobs` tables) so results survive restarts and closed tabs; `getJob` falls back to the DB row, and a "running" row absent from memory is honestly converted to an error ("interrupted by a server restart"). Jobs carry the owning `wallet` and status routes 404 for anyone else. TTL pruning runs both in-memory (30–90 min) and in the DB (7 days for strategy jobs, 30 for audit jobs, share-pinned rows kept). Clients poll `…/status` and render a live event log. New long-running pipelines should follow the same shape.
 
-Alongside them, `monitor-scheduler.ts`'s `ensureSchedulerStarted()` is idempotently invoked from strategy API routes; on first call it spawns a 15-min `setInterval` that runs `monitorActiveStrategies()` to scan stored strategies and write new `strategy_alerts` rows. The scheduler lives inside the Next server process — for serverless deployments, `vercel.json` configures Vercel Cron to POST `/api/cron/monitor` every 15 min instead. That route accepts `Authorization: Bearer ${CRON_SECRET}` (required in prod, optional in dev) and runs one `monitorActiveStrategies()` sweep per invocation. GET on `/api/strategies/monitor` returns scheduler status with a `stale` flag if no scan has run in 30+ min.
+Alongside them, `monitor-scheduler.ts`'s `ensureSchedulerStarted()` is idempotently invoked from strategy API routes; on first call it spawns a 15-min `setInterval` whose sweep runs three independent stages: `monitorActiveStrategies()` (writes `strategy_alerts`), `reconcilePendingPayments()` (finishes verification of submitted-but-unconfirmed payments), and `sendExpiryReminders()`. The scheduler lives inside the Next server process — the deployment target is a single long-lived server, so this is the primary trigger. `GET /api/cron/monitor` (Bearer `CRON_SECRET`, required in prod) runs the same three stages once per hit for operators who want an external cron as backup. GET on `/api/strategies/monitor` returns scheduler status with a `stale` flag if no scan has run in 30+ min.
 
 ### Auth & per-route guards
 
@@ -106,7 +110,7 @@ SIWE (EIP-4361) is the only auth path. The flow:
 1. `GET /api/auth/nonce` → `src/lib/auth/nonce-store.ts` issues a single-use 10-min nonce.
 2. Client (`src/hooks/useSiweAuth.ts` → `SiweAuthProvider`) signs the EIP-4361 message with the connected wallet.
 3. `POST /api/auth/verify` → `src/lib/auth/siwe.ts` regex-parses the message, validates Domain/URI/Version/Chain ID/Issued At against the request Host (`expectedOrigin`), calls viem's `verifyMessage`, consumes the nonce, then `src/lib/auth/session.ts` mints an HMAC-signed `sov_session` cookie (24h TTL, `HttpOnly`, `SameSite=Lax`, `Secure` in prod). No JWT lib — just Node `crypto`.
-4. `POST /api/auth/logout` clears the cookie. `GET /api/auth/me` returns `{ wallet }` or null.
+4. `POST /api/auth/logout` clears the cookie. `GET /api/auth/me` returns `{ address }` (lowercase wallet) or `{ address: null }`.
 
 The client wiring lives in `SiweAuthProvider` (mounted inside `Web3Provider` so it sits inside `WagmiProvider`). It auto-prompts the SIWE message when a wallet first connects — `useActiveStrategies`, `useStrategyAlerts`, and `usePlan` consume `useSiweAuth()` and gate their fetches on `status === "authed"` so unauthenticated calls don't fire 401s.
 
@@ -116,15 +120,15 @@ Wallet-scoped routes use `requireWallet(request)` from `src/lib/auth/guard.ts`, 
 
 ### Cron / monitor scheduler
 
-`/api/cron/monitor` (GET, `CRON_SECRET` Bearer-gated) is the production scan entry point — Vercel Cron sends GETs, so the cron lives on its own path rather than sharing `/api/strategies/monitor` (whose GET is a status check). `/api/strategies/monitor` POST is the manual UI trigger and uses `requireWallet` + `requireCapability("realtimeAlerts")` — Free wallets get a 402. Both paths call into `monitorActiveStrategies(strategyId?, wallet?)` in `src/lib/strategy-monitor.ts` — passing `wallet` scopes the scan to that user, the cron path passes neither and scans every active strategy.
+`/api/cron/monitor` (GET, `CRON_SECRET` Bearer-gated) is the optional external-cron entry point (systemd timer / crontab / uptime pinger) — it lives on its own path rather than sharing `/api/strategies/monitor` (whose GET is a status check). `/api/strategies/monitor` POST is the manual UI trigger and uses `requireWallet` + `requireCapability("realtimeAlerts")` — Free wallets get a 402. Both paths call into `monitorActiveStrategies(strategyId?, wallet?)` in `src/lib/strategy-monitor.ts` — passing `wallet` scopes the scan to that user, the cron path passes neither and scans every active strategy (and additionally runs the payment reconciler + expiry reminders).
 
 ### Rate limiting
 
-`enforceRateLimit(request, endpoint, { max, windowMs })` from `src/lib/rate-limit.ts` is a fixed-window token bucket keyed by authenticated wallet (preferred) or IP. Returns `null` to pass, or a 429 `Response` with `Retry-After`. Per-endpoint caps live at the top of each route handler — current values: `strategy` 5/h, `audit` 3/h, `analyze` 20/h, `forensics` 20/h, `tools.*` 30/h, `payments.quote`/`payments.verify` 30/h. The store is in-process — for multi-instance deployments swap to Redis.
+`enforceRateLimit(request, endpoint, { max, windowMs })` from `src/lib/rate-limit.ts` is a fixed-window token bucket keyed by authenticated wallet (preferred) or IP. Returns `null` to pass, or a 429 `Response` with `Retry-After`. Per-endpoint caps live at the top of each route handler — current values: `strategy` 5/h, `audit` 3/h, `analyze` 20/h, `forensics` 20/h, `forecast` 30/h, `tools.*` 30/h, `payments.quote`/`payments.verify` 30/h, `audit.share` 30/h. Every AI- or upstream-heavy route ALSO requires a SIWE session (`requireWallet`) — `analyze`, `forensics`, and `forecast` used to be anonymous, which was a model-spend amplification vector. The store is in-process — fine for the single-server deployment.
 
 ### SSRF guard
 
-`safeFetch(url, init)` in `src/lib/security/ground-truth.ts` is the only outbound fetch path used for caller-influenced URLs (audit links, etc.). It enforces scheme allowlist (http/https), rejects literal private IPs (IPv4 RFC1918 + loopback/link-local; IPv6 ULA + loopback), DNS-resolves hostnames and re-checks every resolved address, and follows redirects manually (max 3) re-validating each hop. Use it instead of bare `fetch()` whenever the URL is user-supplied or comes from upstream API responses.
+`safeFetch(url, init)` in `src/lib/security/ground-truth.ts` is the outbound fetch path for caller-influenced URLs (audit links). It is module-private today — if a new module needs to fetch user-supplied/upstream-supplied URLs, export it from there rather than writing a new guard. It enforces scheme allowlist (http/https), rejects literal private/reserved IPs (RFC1918 + loopback/link-local + CGNAT 100.64/10 + TEST-NETs + benchmarking ranges; IPv6 ULA + loopback), DNS-resolves hostnames and re-checks every resolved address, and follows redirects manually (max 3) re-validating each hop.
 
 ### AI client layer
 
@@ -156,7 +160,10 @@ DeFiLlama (protocols, pools, TVL), CoinGecko (token market data + native gas-tok
 
 ## Conventions worth knowing
 
-- **Heuristic veto layer is non-negotiable.** When adding new safety rules, prefer extending `applyHeuristicVetoes` over tightening the AI prompt — heuristics are deterministic and survive AI hallucination.
+- **Heuristic veto layer is non-negotiable.** When adding new safety rules, prefer extending `applyHeuristicVetoes` over tightening the AI prompt — heuristics are deterministic and survive AI hallucination. It's exported and unit-tested (`test/vetoes.test.ts`) — keep it covered.
+- **Validate client-supplied strategies with `validateStrategyShape`** (`src/lib/strategy-validate.ts`) before they touch the DB. The monitor sweep also guards each strategy row in try/catch — one malformed row must degrade to a skip, never abort the sweep for every user.
+- **Use `mapWithConcurrency` from `src/lib/async-utils.ts`** for fan-outs to AI subprocesses or upstream APIs. Current caps: 4 concurrent protocol deep-analyses, 10 concurrent pool-history fetches. Don't add new unbounded `Promise.all` fan-outs.
+- **Use `log` from `src/lib/log.ts`** in new server code (JSON lines in production, pretty in dev) rather than bare `console.*`.
 - **Ground-truth before AI.** Any new safety signal that's verifiable from a free API or local DB should land in `gatherGroundTruth` and be formatted into the prompt, not asked of the AI.
 - **Partial AI failure must not abort the pipeline.** Both `tripleInvoke` and the strategy reviewer pair are designed for `Promise.allSettled` semantics. Mirror that pattern when adding new AI calls.
 - **Use the provided `extractJson` helper.** AI outputs frequently include prose around the JSON; ad-hoc `JSON.parse(text)` will break.

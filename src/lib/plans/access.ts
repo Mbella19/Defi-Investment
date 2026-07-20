@@ -80,6 +80,10 @@ export const TIER_PRICE_USD: Record<Tier, number> = {
  * Owner-wallet bypass list. Set OWNER_WALLETS in .env.local to a
  * comma-separated list of lowercase 0x addresses; those wallets always
  * resolve to the Ultra tier regardless of subscription state.
+ *
+ * BY DESIGN owners also skip the monthly usage caps (their tier resolves to
+ * Ultra and cap checks read the tier) — this is the staff/testing backdoor,
+ * not a subscription bug.
  */
 function ownerWallets(): string[] {
   const raw = process.env.OWNER_WALLETS ?? "";
@@ -153,9 +157,12 @@ export function getPlan(wallet: string | null | undefined): PlanSnapshot {
 }
 
 /**
- * Activate or extend a paid subscription. Pro/Ultra rows are upserted with
- * a 30-day expiry (or extended from the existing expiry if it's still in the
- * future). Caller is responsible for validating the on-chain payment first.
+ * Activate or extend a paid subscription. Pro/Ultra rows are upserted with a
+ * 30-day expiry. Same-tier renewals extend from the existing future expiry.
+ * Tier CHANGES prorate the unused time by price ratio — remaining Pro days
+ * become fewer Ultra days on upgrade, remaining Ultra days become more Pro
+ * days on downgrade — so nobody loses (or double-dips) paid time.
+ * Caller is responsible for validating the on-chain payment first.
  */
 export function activateSubscription(params: {
   wallet: string;
@@ -170,12 +177,24 @@ export function activateSubscription(params: {
   const db = getDb();
   const wallet = params.wallet.toLowerCase();
   const existing = db
-    .prepare("SELECT expires_at FROM subscriptions WHERE wallet_address = ?")
-    .get(wallet) as { expires_at: string } | undefined;
-  const baseTime =
-    existing && new Date(existing.expires_at).getTime() > Date.now()
-      ? new Date(existing.expires_at).getTime()
-      : Date.now();
+    .prepare("SELECT tier, expires_at FROM subscriptions WHERE wallet_address = ?")
+    .get(wallet) as { tier: string; expires_at: string } | undefined;
+  const now = Date.now();
+  let baseTime = now;
+  if (existing) {
+    const existingExpiry = new Date(existing.expires_at).getTime();
+    if (Number.isFinite(existingExpiry) && existingExpiry > now) {
+      if (existing.tier === params.tier) {
+        baseTime = existingExpiry;
+      } else {
+        const oldPrice = TIER_PRICE_USD[existing.tier as Tier] ?? 0;
+        const newPrice = TIER_PRICE_USD[params.tier];
+        const remainingMs = existingExpiry - now;
+        const creditedMs = newPrice > 0 ? remainingMs * (oldPrice / newPrice) : 0;
+        baseTime = now + creditedMs;
+      }
+    }
+  }
   const expiresAt = new Date(baseTime + days * 24 * 60 * 60 * 1000).toISOString();
   db.prepare(
     `INSERT INTO subscriptions (wallet_address, tier, activated_at, expires_at, payment_chain, payment_token, payment_amount, payment_tx_hash)

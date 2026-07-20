@@ -120,7 +120,9 @@ export default function CorrelationPage() {
     }
   }
 
-  const matrix = result?.matrix ?? [];
+  // Stable identity so the dependent useMemos below don't recompute on every
+  // render (the `?? []` literal was a fresh array each time).
+  const matrix = useMemo(() => result?.matrix ?? [], [result]);
   const orderedSelected = useMemo(() => {
     if (!result) return selected;
     const map = new Map(selected.map((p) => [p.poolId, p]));

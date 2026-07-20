@@ -1,4 +1,6 @@
 import { monitorActiveStrategies } from "@/lib/strategy-monitor";
+import { reconcilePendingPayments } from "@/lib/payments/reconciler";
+import { sendExpiryReminders } from "@/lib/plans/reminders";
 
 /**
  * Vercel Cron entry point. Vercel Cron sends `GET` requests with an
@@ -30,10 +32,21 @@ export async function GET(request: Request) {
   }
   try {
     const result = await monitorActiveStrategies();
+    const payments = await reconcilePendingPayments().catch((err) => {
+      console.error("[cron/monitor] payment reconcile failed:", err);
+      return { checked: 0, confirmed: 0 };
+    });
+    const reminders = await sendExpiryReminders().catch((err) => {
+      console.error("[cron/monitor] expiry reminders failed:", err);
+      return { candidates: 0, reminded: 0 };
+    });
     return Response.json({
       ok: true,
       scanned: result.scanned,
       newAlerts: result.newAlerts.length,
+      paymentsChecked: payments.checked,
+      paymentsConfirmed: payments.confirmed,
+      remindersSent: reminders.reminded,
     });
   } catch (error) {
     console.error("[cron/monitor] scan failed:", error);

@@ -12,8 +12,6 @@ interface SolanaTxResponse {
       err: unknown;
       preBalances?: number[];
       postBalances?: number[];
-      preTokenBalances?: Array<{ accountIndex: number; mint: string; uiTokenAmount: { amount: string } }>;
-      postTokenBalances?: Array<{ accountIndex: number; mint: string; uiTokenAmount: { amount: string } }>;
     };
     transaction?: {
       message?: {

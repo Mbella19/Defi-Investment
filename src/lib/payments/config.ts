@@ -114,6 +114,10 @@ export const PAYMENT_PAIRS: PairConfig[] = [
     enabled: true,
   },
   {
+    // NOTE: Circle discontinued native USDC on Tron (minting ended 2024;
+    // redemptions wound down through 2025). Kept available per product
+    // decision — liquidity still circulates — but USDT is the primary
+    // Tron rail and this pair may be removed if the market dries up.
     chain: "tron",
     token: "USDC",
     label: "USDC on Tron",

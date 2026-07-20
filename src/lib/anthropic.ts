@@ -21,10 +21,56 @@ import { invokeClaude, extractJson } from "./security/claude-client";
 import { gatherGroundTruth, formatGroundTruthForPrompt } from "./security/ground-truth";
 
 import { boundCache } from "./cache-utils";
+import { getDb } from "./db";
+import { log } from "./log";
 
 const analysisCache = new Map<string, { data: ProtocolAnalysis; expiresAt: number }>();
 const CACHE_TTL = 60 * 60 * 1000;
 const ANALYSIS_CACHE_MAX = 500;
+const PERSISTED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+// In-flight dedupe: concurrent calls for the same protocol (parallel
+// strategy generations, multiple users) share ONE triple-AI run instead of
+// each paying for their own.
+const inflightAnalyses = new Map<string, Promise<ProtocolAnalysis>>();
+
+/** Read-through against the durable copy — same TTL semantics as the memory cache. */
+function readPersistedAnalysis(
+  slug: string,
+): { data: ProtocolAnalysis; expiresAt: number } | null {
+  try {
+    const row = getDb()
+      .prepare("SELECT analysis_json, created_at FROM protocol_analyses WHERE slug = ?")
+      .get(slug) as { analysis_json: string; created_at: number } | undefined;
+    if (!row) return null;
+    const expiresAt = row.created_at + CACHE_TTL;
+    if (expiresAt <= Date.now()) return null;
+    return { data: JSON.parse(row.analysis_json) as ProtocolAnalysis, expiresAt };
+  } catch {
+    return null;
+  }
+}
+
+function persistAnalysis(slug: string, analysis: ProtocolAnalysis): void {
+  try {
+    const db = getDb();
+    db.prepare(
+      `INSERT INTO protocol_analyses (slug, analysis_json, created_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(slug) DO UPDATE SET
+         analysis_json = excluded.analysis_json,
+         created_at = excluded.created_at`,
+    ).run(slug, JSON.stringify(analysis), Date.now());
+    db.prepare("DELETE FROM protocol_analyses WHERE created_at < ?").run(
+      Date.now() - PERSISTED_RETENTION_MS,
+    );
+  } catch (err) {
+    log.warn("analysis", "persist failed", {
+      slug,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
 
 const SCORING_TIMEOUT_MS = 360_000;
 const SYNTHESIS_TIMEOUT_MS = 360_000;
@@ -205,7 +251,9 @@ const DEPLOYER_AVOID_SCORE_CEILING = 30;
 const SOURCE_AUDIT_DANGEROUS_CEILING = 30;
 const BROKEN_AUDIT_LINKS_FLOOR_CONFIDENCE: ProtocolVerdict = "low_confidence";
 
-function applyHeuristicVetoes(
+// Exported for unit tests — the veto layer is the deterministic safety net
+// and must stay covered.
+export function applyHeuristicVetoes(
   base: { legitimacyScore: number; overallVerdict: ProtocolVerdict },
   groundTruth: GroundTruthChecks
 ): { legitimacyScore: number; overallVerdict: ProtocolVerdict; vetoes: AppliedVeto[] } {
@@ -390,6 +438,27 @@ export async function analyzeProtocol(
     return cached.data;
   }
 
+  const persisted = readPersistedAnalysis(protocol.slug);
+  if (persisted) {
+    boundCache(analysisCache, ANALYSIS_CACHE_MAX);
+    analysisCache.set(protocol.slug, persisted);
+    return persisted.data;
+  }
+
+  const inflight = inflightAnalyses.get(protocol.slug);
+  if (inflight) return inflight;
+
+  const run = runProtocolAnalysis(protocol, pools).finally(() => {
+    inflightAnalyses.delete(protocol.slug);
+  });
+  inflightAnalyses.set(protocol.slug, run);
+  return run;
+}
+
+async function runProtocolAnalysis(
+  protocol: DefiLlamaProtocol,
+  pools: DefiLlamaPool[]
+): Promise<ProtocolAnalysis> {
   // Fetch all enrichment data + ground truth in parallel.
   let sentimentText = "";
   let marketData: TokenMarketData | null = null;
@@ -590,6 +659,7 @@ export async function analyzeProtocol(
     data: finalAnalysis,
     expiresAt: Date.now() + CACHE_TTL,
   });
+  persistAnalysis(protocol.slug, finalAnalysis);
 
   return finalAnalysis;
 }

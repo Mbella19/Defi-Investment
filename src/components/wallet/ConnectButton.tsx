@@ -73,6 +73,10 @@ export default function ConnectButton() {
                     type="button"
                   >
                     {chain.hasIcon && chain.iconUrl ? (
+                      // RainbowKit serves these as data:/blob: URIs of unknown
+                      // origin — next/image can't optimize them and would need
+                      // an open remotePatterns wildcard. A 14px raw img is fine.
+                      // eslint-disable-next-line @next/next/no-img-element
                       <img
                         alt={chain.name ?? "Chain"}
                         src={chain.iconUrl}

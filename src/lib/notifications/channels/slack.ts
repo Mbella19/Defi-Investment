@@ -61,6 +61,11 @@ export async function verifySlackWebhook(url: string): Promise<boolean> {
   });
 }
 
+/** Plain informational message (billing notices etc.) — not an alert. */
+export async function sendSlackText(url: string, text: string): Promise<boolean> {
+  return postSlack(url, { text });
+}
+
 export async function sendSlackAlert(
   url: string,
   alert: StrategyMonitorAlert,

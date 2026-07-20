@@ -80,7 +80,7 @@ export async function POST(request: Request) {
     }
   }
 
-  const job = createAuditJob(address, chainId);
+  const job = createAuditJob(auth.wallet, address, chainId);
   recordAuditRun(auth.wallet, job.id);
 
   // Fire and forget — orchestrator resolves long after the response ships.

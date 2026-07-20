@@ -13,7 +13,12 @@ const base = (p: IconProps) => ({
   strokeLinejoin: "round" as const,
 });
 
-const strip = ({ size: _s, stroke: _st, ...rest }: IconProps) => rest;
+const strip = (p: IconProps): Omit<IconProps, "size" | "stroke"> => {
+  const rest: Record<string, unknown> = { ...p };
+  delete rest.size;
+  delete rest.stroke;
+  return rest as Omit<IconProps, "size" | "stroke">;
+};
 
 export const Icons = {
   home: (p: IconProps) => (

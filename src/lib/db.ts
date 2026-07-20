@@ -167,6 +167,58 @@ function migrate(db: InstanceType<typeof Database>) {
       PRIMARY KEY (wallet_address, channel)
     );
 
+    -- Durable job state for the two long-running pipelines. The in-memory
+    -- Maps in strategy-jobs.ts / audit/jobs.ts stay the hot path; these rows
+    -- make results survive server restarts and closed tabs, and bind every
+    -- job to the wallet that started it (job status reads are wallet-scoped).
+    CREATE TABLE IF NOT EXISTS strategy_jobs (
+      id TEXT PRIMARY KEY,
+      wallet_address TEXT NOT NULL,
+      status TEXT NOT NULL,
+      events_json TEXT NOT NULL DEFAULT '[]',
+      result_json TEXT,
+      error TEXT,
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_jobs (
+      id TEXT PRIMARY KEY,
+      wallet_address TEXT NOT NULL,
+      contract_address TEXT NOT NULL,
+      chain_id INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      events_json TEXT NOT NULL DEFAULT '[]',
+      result_json TEXT,
+      error TEXT,
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_strategy_jobs_wallet ON strategy_jobs(wallet_address, started_at);
+    CREATE INDEX IF NOT EXISTS idx_audit_jobs_wallet ON audit_jobs(wallet_address, started_at);
+
+    -- Persisted protocol security analyses. The in-process cache in
+    -- anthropic.ts remains the hot path; this copy survives restarts and is
+    -- reused across users so the triple-AI ensemble doesn't re-run for the
+    -- same protocol within the TTL.
+    CREATE TABLE IF NOT EXISTS protocol_analyses (
+      slug TEXT PRIMARY KEY,
+      analysis_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    -- Public share tokens for finished audit reports. A share pins its
+    -- audit_jobs row (the prune skips shared jobs) so the public page keeps
+    -- rendering after the normal retention window.
+    CREATE TABLE IF NOT EXISTS audit_shares (
+      token TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      wallet_address TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_shares_job ON audit_shares(job_id);
+
     CREATE INDEX IF NOT EXISTS idx_pending_wallet ON pending_payments(wallet_address);
     CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_payments(status);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_tx ON pending_payments(tx_hash) WHERE tx_hash IS NOT NULL;
@@ -175,6 +227,17 @@ function migrate(db: InstanceType<typeof Database>) {
     CREATE INDEX IF NOT EXISTS idx_user_channels_wallet ON user_channels(wallet_address);
     CREATE INDEX IF NOT EXISTS idx_channel_verif_code ON channel_verifications(channel, code);
   `);
+
+  // Additive column for expiry reminders — gated behind schema_migrations
+  // because SQLite has no ALTER TABLE ... IF NOT EXISTS.
+  const REMINDER_COL = "add_subscriptions_reminder_sent_at_v1";
+  const reminderApplied = db
+    .prepare("SELECT 1 FROM schema_migrations WHERE name = ?")
+    .get(REMINDER_COL);
+  if (!reminderApplied) {
+    db.exec("ALTER TABLE subscriptions ADD COLUMN reminder_sent_at TEXT");
+    db.prepare("INSERT INTO schema_migrations (name) VALUES (?)").run(REMINDER_COL);
+  }
 
   // One-shot repair for malformed alert.pool_id values written before the
   // bugfix ("<strategyId>-<realPoolId>-<index>" instead of "<realPoolId>"),

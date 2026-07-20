@@ -112,8 +112,49 @@ function AuditConsole() {
   const [address, setAddress] = useState("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
   const [chainId, setChainId] = useState(1);
   const [job, setJob] = useState<JobView>({ status: "idle", progress: 0 });
+  const [share, setShare] = useState<{
+    busy: boolean;
+    path?: string;
+    error?: string;
+    copied?: boolean;
+  }>({ busy: false });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autostartedRef = useRef(false);
+
+  // A fresh run invalidates any previous share-link UI state.
+  useEffect(() => {
+    setShare({ busy: false });
+  }, [job.jobId]);
+
+  async function shareReport() {
+    if (!job.jobId) return;
+    setShare({ busy: true });
+    try {
+      const res = await fetch("/api/security/audit/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: job.jobId }),
+      });
+      const data = (await res.json()) as { path?: string; error?: string };
+      if (!res.ok || !data.path) {
+        throw new Error(data.error ?? `Share failed (${res.status})`);
+      }
+      const url = `${window.location.origin}${data.path}`;
+      let copied = false;
+      try {
+        await navigator.clipboard.writeText(url);
+        copied = true;
+      } catch {
+        /* clipboard unavailable — still show the link */
+      }
+      setShare({ busy: false, path: data.path, copied });
+    } catch (err) {
+      setShare({
+        busy: false,
+        error: err instanceof Error ? err.message : "Share failed",
+      });
+    }
+  }
 
   const auditCap = plan.capabilities.monthlyAudits;
   const auditsUsed = plan.usage.auditsThisMonth;
@@ -418,6 +459,43 @@ function AuditConsole() {
                 </div>
                 <h3 style={{ textTransform: "capitalize" }}>{r.verdict} verdict</h3>
                 <p>{r.executiveSummary}</p>
+                <div
+                  style={{
+                    marginTop: 12,
+                    display: "flex",
+                    gap: 10,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={shareReport}
+                    disabled={share.busy || job.status !== "done"}
+                  >
+                    {share.busy
+                      ? "Creating link…"
+                      : share.path
+                        ? "Copy share link again"
+                        : "Share report publicly"}
+                  </button>
+                  {share.path ? (
+                    <a
+                      href={share.path}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ fontSize: 12, color: "var(--mint, #5AE4D4)" }}
+                    >
+                      {share.copied ? "Link copied — " : ""}open public page →
+                    </a>
+                  ) : null}
+                  {share.error ? (
+                    <span className="severity-medium" style={{ fontSize: 12 }}>
+                      {share.error}
+                    </span>
+                  ) : null}
+                </div>
               </div>
 
               <div className="boost-panel">

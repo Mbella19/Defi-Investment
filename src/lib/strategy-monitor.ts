@@ -15,6 +15,7 @@ import { runMonitorScan } from "@/lib/monitor";
 import { sendDiscordAlertBatch, isDiscordWebhookConfigured } from "@/lib/discord-notifier";
 import { dispatchAlertBatch } from "@/lib/notifications/dispatcher";
 import { getPoolStability, type PoolStability } from "@/lib/pool-stability";
+import { mapWithConcurrency } from "@/lib/async-utils";
 import { getRpcUrl } from "@/lib/rpc";
 import { DEFAULT_ALERT_CONFIG } from "@/types/portfolio";
 import type { AlertEvent } from "@/types/portfolio";
@@ -232,12 +233,16 @@ export async function monitorActiveStrategies(
       // malformed strategy json — skip; runMonitorScan will also skip it
     }
   }
-  const stabilityResults = await Promise.allSettled(
-    [...uniquePoolIds].map(async (poolId) => [poolId, await getPoolStability(poolId)] as const),
+  // Capped fan-out — getPoolStability resolves null on failure, so no
+  // per-item error handling needed here.
+  const stabilityResults = await mapWithConcurrency(
+    [...uniquePoolIds],
+    10,
+    async (poolId) => [poolId, await getPoolStability(poolId)] as const,
   );
   const stabilityByPool = new Map<string, PoolStability | null>();
-  for (const r of stabilityResults) {
-    if (r.status === "fulfilled") stabilityByPool.set(r.value[0], r.value[1]);
+  for (const [poolId, stab] of stabilityResults) {
+    stabilityByPool.set(poolId, stab);
   }
 
   const dedupStmt = db.prepare(
@@ -310,9 +315,16 @@ export async function monitorActiveStrategies(
 
   for (const row of rows as Record<string, unknown>[]) {
     const sId = row.id as string;
+    // Everything per-strategy is guarded — one malformed row (bad JSON,
+    // missing allocations) must degrade to a skipped strategy, never abort
+    // the sweep for every other user.
+    try {
     const ownerWallet = (row.wallet_address as string | null | undefined)?.toLowerCase();
     if (ownerWallet) strategyToWallet.set(sId, ownerWallet);
     const strategy = JSON.parse(row.strategy_json as string) as InvestmentStrategy;
+    if (!Array.isArray(strategy?.allocations)) {
+      throw new Error("strategy_json has no allocations[]");
+    }
     const criteria = JSON.parse(row.criteria_json as string) as StrategyCriteria;
     const createdAt = row.created_at as string;
 
@@ -504,6 +516,12 @@ export async function monitorActiveStrategies(
           break;
         }
       }
+    }
+    } catch (err) {
+      console.warn(
+        `[strategy-monitor] skipping strategy ${sId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      continue;
     }
   }
 

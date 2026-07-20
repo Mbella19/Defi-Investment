@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -81,6 +81,44 @@ const TOKEN_BLURB: Record<string, string> = {
 
 const TOKEN_ORDER = ["ETH", "USDC", "USDT", "BTC", "SOL"] as const;
 
+// Verify polling cadence while a submitted tx waits for confirmations. The
+// server wants 6 (ETH) / 12 (BSC) confirmations but the wallet reports the
+// receipt at 1 — without this loop every mainnet payment stalled at
+// "pending" with no way to retry.
+const VERIFY_POLL_MS = 20_000;
+
+// Survives reloads mid-payment so we can resume verification of an
+// already-broadcast tx instead of silently minting a fresh quote.
+const PENDING_PAYMENT_KEY = "sov-pending-payment";
+
+interface StoredPendingPayment {
+  quoteId: string;
+  txHash: string;
+}
+
+function readStoredPending(): StoredPendingPayment | null {
+  try {
+    const raw = sessionStorage.getItem(PENDING_PAYMENT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<StoredPendingPayment>;
+    if (typeof parsed.quoteId === "string" && typeof parsed.txHash === "string") {
+      return { quoteId: parsed.quoteId, txHash: parsed.txHash };
+    }
+  } catch {
+    /* corrupt storage — treat as absent */
+  }
+  return null;
+}
+
+function writeStoredPending(entry: StoredPendingPayment | null): void {
+  try {
+    if (entry === null) sessionStorage.removeItem(PENDING_PAYMENT_KEY);
+    else sessionStorage.setItem(PENDING_PAYMENT_KEY, JSON.stringify(entry));
+  } catch {
+    /* storage unavailable — resume just won't work */
+  }
+}
+
 export default function CheckoutPage() {
   return (
     <Suspense fallback={null}>
@@ -108,6 +146,12 @@ function CheckoutInner() {
   const [verifyState, setVerifyState] = useState<VerifyResponse | null>(null);
   const [verifyBusy, setVerifyBusy] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
+  // The quote+tx currently being verified — drives the retry poll.
+  const [verifyTarget, setVerifyTarget] = useState<StoredPendingPayment | null>(null);
+  // A previously-broadcast payment recovered from sessionStorage after reload.
+  const [resume, setResume] = useState<{ quote: Quote; txHash: string } | null>(null);
+  const verifyBusyRef = useRef(false);
+  verifyBusyRef.current = verifyBusy;
 
   // Load supported payment pairs.
   useEffect(() => {
@@ -191,15 +235,16 @@ function CheckoutInner() {
     };
   }, [activePair, tier, isAuthed]);
 
-  async function submitVerify(txHash: string) {
-    if (!quote) return;
+  async function submitVerify(quoteId: string, txHash: string) {
     setVerifyBusy(true);
     setVerifyError(null);
+    setVerifyTarget({ quoteId, txHash });
+    writeStoredPending({ quoteId, txHash });
     try {
       const res = await fetch("/api/payments/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: quote.id, txHash }),
+        body: JSON.stringify({ id: quoteId, txHash }),
       });
       const data = (await res.json()) as VerifyResponse & { error?: string };
       if (!res.ok && !("status" in data && data.status === "pending")) {
@@ -207,15 +252,74 @@ function CheckoutInner() {
       }
       setVerifyState(data);
       if (data.ok && (data.status === "confirmed" || data.status === "already_confirmed")) {
+        writeStoredPending(null);
+        setVerifyTarget(null);
+        setResume(null);
         await plan.refetch();
         setTimeout(() => router.push("/plans?upgraded=" + tier), 2400);
       }
     } catch (err) {
       setVerifyError(err instanceof Error ? err.message : "Verify failed");
+      // Deterministic rejection (wrong sender, claimed tx) — stop polling.
+      setVerifyTarget(null);
     } finally {
       setVerifyBusy(false);
     }
   }
+
+  // Recover a broadcast-but-unverified payment after a reload. Without this,
+  // remounting auto-created a NEW quote and the already-sent tx had no path
+  // back to verification.
+  useEffect(() => {
+    if (!isAuthed) return;
+    const stored = readStoredPending();
+    if (!stored) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/payments/quote?id=${encodeURIComponent(stored.quoteId)}`, {
+          cache: "no-store",
+        });
+        if (!res.ok) {
+          writeStoredPending(null);
+          return;
+        }
+        const data = (await res.json()) as Quote & { resumable?: boolean };
+        if (cancelled) return;
+        if (data.status === "confirmed") {
+          writeStoredPending(null);
+          setVerifyState({ ok: true, status: "already_confirmed", tier: data.tier });
+          return;
+        }
+        if (data.resumable) {
+          setResume({ quote: data, txHash: stored.txHash });
+        } else {
+          writeStoredPending(null);
+        }
+      } catch {
+        /* leave storage in place; next mount retries */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthed]);
+
+  // Retry poll: the wallet reports a receipt at 1 confirmation but the
+  // server requires 6/12, so the first verify almost always lands "pending".
+  // Keep re-checking until the server confirms or the target is cleared.
+  useEffect(() => {
+    if (!verifyTarget) return;
+    if (verifyState?.ok) return;
+    const interval = setInterval(() => {
+      if (verifyBusyRef.current) return;
+      void submitVerify(verifyTarget.quoteId, verifyTarget.txHash);
+    }, VERIFY_POLL_MS);
+    return () => clearInterval(interval);
+    // submitVerify is recreated per render but only reads current state; the
+    // interval identity only needs to track the target + confirmation state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [verifyTarget, verifyState?.ok]);
 
   return (
     <div className="page">
@@ -242,6 +346,57 @@ function CheckoutInner() {
           { label: "wallet", value: isAuthed ? "connected" : "sign in", tone: isAuthed ? "ok" : "warn" },
         ]}
       />
+
+      {isAuthed && resume ? (
+        <div
+          className="checkout-status tone-info"
+          style={{ marginTop: 18, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}
+        >
+          <RefreshCw size={15} aria-hidden="true" />
+          <span>
+            Unverified payment found: {resume.quote.amountTokenDisplay} {resume.quote.token} for the{" "}
+            {TIER_LABEL[resume.quote.tier]} plan (tx{" "}
+            <code style={{ fontFamily: "var(--font-mono)" }}>{resume.txHash.slice(0, 10)}…</code>).
+            We keep checking it automatically.
+          </span>
+          <button
+            type="button"
+            className="ghost-button"
+            disabled={verifyBusy}
+            onClick={() => submitVerify(resume.quote.id, resume.txHash)}
+          >
+            {verifyBusy ? "Checking…" : "Check status now"}
+          </button>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => {
+              writeStoredPending(null);
+              setResume(null);
+              setVerifyTarget(null);
+            }}
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+      {isAuthed && resume && !activePair ? (
+        <div style={{ marginTop: 10 }}>
+          {verifyError ? <div className="checkout-status tone-danger">{verifyError}</div> : null}
+          {verifyState ? (
+            <VerifyStatusNote
+              state={verifyState}
+              tierLabel={TIER_LABEL[resume.quote.tier]}
+              busy={verifyBusy}
+              onRecheck={
+                verifyTarget
+                  ? () => submitVerify(verifyTarget.quoteId, verifyTarget.txHash)
+                  : undefined
+              }
+            />
+          ) : null}
+        </div>
+      ) : null}
 
       {!isAuthed ? (
         <div className="paywall-card" style={{ marginTop: 22 }}>
@@ -334,7 +489,7 @@ function CheckoutInner() {
               <PaymentExecutor
                 pair={activePair}
                 quote={quote}
-                onTxBroadcast={submitVerify}
+                onTxBroadcast={(txHash) => submitVerify(quote.id, txHash)}
                 verifyBusy={verifyBusy}
               />
             )}
@@ -342,28 +497,61 @@ function CheckoutInner() {
               <div className="checkout-status tone-danger">{verifyError}</div>
             ) : null}
             {verifyState ? (
-              <div
-                className={`checkout-status ${
-                  verifyState.ok && (verifyState.status === "confirmed" || verifyState.status === "already_confirmed")
-                    ? "tone-ok"
-                    : "tone-warn"
-                }`}
-              >
-                {verifyState.ok ? (
-                  <>
-                    <CheckCircle2 size={15} aria-hidden="true" /> Payment confirmed — {tier}{" "}
-                    plan active until {verifyState.expiresAt ? new Date(verifyState.expiresAt).toLocaleDateString() : "—"}.
-                    Redirecting…
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw size={15} aria-hidden="true" /> {verifyState.reason ?? "Still pending"} — try again in a minute.
-                  </>
-                )}
-              </div>
+              <VerifyStatusNote
+                state={verifyState}
+                tierLabel={tier}
+                busy={verifyBusy}
+                onRecheck={
+                  verifyTarget
+                    ? () => submitVerify(verifyTarget.quoteId, verifyTarget.txHash)
+                    : undefined
+                }
+              />
             ) : null}
           </section>
         </div>
+      )}
+    </div>
+  );
+}
+
+function VerifyStatusNote({
+  state,
+  tierLabel,
+  busy,
+  onRecheck,
+}: {
+  state: VerifyResponse;
+  tierLabel: string;
+  busy: boolean;
+  onRecheck?: () => void;
+}) {
+  const confirmed =
+    state.ok && (state.status === "confirmed" || state.status === "already_confirmed");
+  return (
+    <div className={`checkout-status ${confirmed ? "tone-ok" : "tone-warn"}`}>
+      {confirmed ? (
+        <>
+          <CheckCircle2 size={15} aria-hidden="true" /> Payment confirmed — {tierLabel} plan
+          active until{" "}
+          {state.expiresAt ? new Date(state.expiresAt).toLocaleDateString() : "—"}. Redirecting…
+        </>
+      ) : (
+        <>
+          <RefreshCw size={15} aria-hidden="true" /> {state.reason ?? "Still pending"} —
+          auto-checking every 20s.
+          {onRecheck ? (
+            <button
+              type="button"
+              className="ghost-button"
+              disabled={busy}
+              onClick={onRecheck}
+              style={{ marginLeft: 10 }}
+            >
+              {busy ? "Checking…" : "Check again now"}
+            </button>
+          ) : null}
+        </>
       )}
     </div>
   );
@@ -694,7 +882,9 @@ function EvmPaymentExecutor({ pair, quote, onTxBroadcast, verifyBusy }: PaymentE
       <small style={{ color: "var(--soft)", fontSize: 11, lineHeight: 1.4 }}>
         Gas is paid from your wallet to the network — not to Sovereign. The estimate above
         comes live from the {pair.chainLabel} RPC and refreshes every block; the wallet
-        confirmation will show the exact final amount.
+        confirmation will show the exact final amount. Activation requires{" "}
+        {pair.chainId === 1 ? 6 : 12} network confirmations (~
+        {pair.chainId === 1 ? "1–2 min" : "1 min"}) — we re-check automatically after you pay.
       </small>
 
       {txHash ? (

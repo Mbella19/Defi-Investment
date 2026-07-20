@@ -14,6 +14,7 @@ import {
   recordStrategyGeneration,
   strategyGenerationsThisMonth,
 } from "@/lib/plans/usage";
+import { isRiskAppetite } from "@/lib/strategy-validate";
 import type { StrategyCriteria } from "@/types/strategy";
 
 export const maxDuration = 800;
@@ -41,9 +42,33 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  if (!criteria.budget || criteria.budget <= 0 || criteria.budget > 10_000_000) {
+  // Strict types before the pipeline: a string budget survived the old
+  // truthiness check via coercion, and an unknown riskAppetite silently
+  // behaved as "high" downstream (skipping every stability gate).
+  if (
+    typeof criteria.budget !== "number" ||
+    !Number.isFinite(criteria.budget) ||
+    criteria.budget <= 0 ||
+    criteria.budget > 10_000_000
+  ) {
     return Response.json(
-      { error: "Budget must be between $1 and $10,000,000" },
+      { error: "Budget must be a number between $1 and $10,000,000" },
+      { status: 400 },
+    );
+  }
+  if (criteria.riskAppetite !== undefined && !isRiskAppetite(criteria.riskAppetite)) {
+    return Response.json(
+      { error: "riskAppetite must be low, medium, or high" },
+      { status: 400 },
+    );
+  }
+  if (
+    criteria.assetType !== undefined &&
+    criteria.assetType !== "all" &&
+    criteria.assetType !== "stablecoins"
+  ) {
+    return Response.json(
+      { error: "assetType must be 'all' or 'stablecoins'" },
       { status: 400 },
     );
   }
@@ -85,7 +110,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid APY range" }, { status: 400 });
   }
 
-  const job = createJob();
+  const job = createJob(auth.wallet);
   recordStrategyGeneration(auth.wallet, job.id);
 
   void generateStrategy(criteria, {
@@ -111,13 +136,16 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
+  const auth = requireWallet(request);
+  if ("response" in auth) return auth.response;
   const url = new URL(request.url);
   const id = url.searchParams.get("id");
   if (!id) {
     return Response.json({ error: "Missing job id" }, { status: 400 });
   }
   const job = getJob(id);
-  if (!job) {
+  // 404 (not 403) for someone else's job — don't leak existence.
+  if (!job || job.wallet !== auth.wallet.toLowerCase()) {
     return Response.json({ error: "Job not found or expired" }, { status: 404 });
   }
   return Response.json(publicView(job));

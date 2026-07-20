@@ -32,8 +32,6 @@ export async function POST(request: Request) {
     return Response.json({ error: result.error ?? "verification failed" }, { status: 401 });
   }
 
-  const headers = new Headers();
-  headers.set("Set-Cookie", sessionCookieHeader(result.address));
   return new Response(JSON.stringify({ address: result.address }), {
     status: 200,
     headers: {

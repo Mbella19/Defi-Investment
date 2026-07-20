@@ -43,9 +43,14 @@ npm run lint
 npx tsc --noEmit
 ```
 
-There is no automated test runner. For code changes, run `npm run lint` and
-`npm run build` before handing off unless the task is docs-only or the
-environment blocks the command.
+`npm test` runs the Vitest unit suite in `test/` (payment verifiers, tier
+proration, heuristic vetoes, SIWE parsing, monitor thresholds). For code
+changes, run `npm run lint`, `npm test`, and `npm run build` before handing
+off unless the task is docs-only or the environment blocks the command.
+
+Deployment target is a single long-lived Node server (`next start`); there is
+no vercel.json and serverless would break the SQLite + in-process job/scheduler
+design.
 
 ## Current User-Facing Routes
 
@@ -168,7 +173,11 @@ Pipeline:
 4. Claude proposes the allocation.
 5. Depending on plan capability, Gemini and/or Codex review it.
 6. Claude revises when reviewer concerns need a fix.
-7. The result is returned through an in-memory job store.
+7. The result flows through the job store: in-memory Map hot path with SQLite
+   write-through (`strategy_jobs`), so finished strategies survive restarts.
+   Job status reads are wallet-scoped. Protocol deep-analysis is capped at 4
+   concurrent protocols and analyses persist to `protocol_analyses` (1h reuse
+   TTL) with in-flight deduping.
 
 Modes:
 
@@ -249,15 +258,26 @@ Payment flow:
 
 1. `GET /api/payments/quote` returns enabled pairs and tier prices, but never
    recipient addresses.
-2. `POST /api/payments/quote` requires SIWE auth, creates a 30-minute
-   wallet-scoped quote, stores it in `pending_payments`, and returns recipient
-   plus amount for that quote.
+2. `POST /api/payments/quote` requires SIWE auth, creates a wallet-scoped
+   quote with a per-chain TTL (30 min default, 1h Tron, 4h Bitcoin), stores it
+   in `pending_payments`, and returns recipient plus amount for that quote.
+   `GET /api/payments/quote?id=` is the authed lookup used by the checkout
+   resume-after-reload flow.
 3. EVM payments are sent through wagmi; non-EVM payments use manual tx-hash
-   verification.
+   verification. The checkout polls verification every 20s until the server
+   confirms (EVM receipts show at 1 confirmation but the server wants 6/12).
 4. `POST /api/payments/verify` checks wallet ownership, quote status,
-   expiration, duplicate tx hashes, recipient, amount, and confirmations.
-5. Confirmed payments call `activateSubscription` and extend the subscription by
-   30 days.
+   expiration (with a 24h post-expiry grace window for already-paid quotes),
+   duplicate tx hashes, recipient, amount, and confirmations. EVM payments
+   must originate from the signed-in wallet. ERC-20 matching scans ALL
+   Transfer logs for the one paying the recipient; Tron addresses are
+   normalized between base58 and 41-hex before comparison.
+5. Confirmed payments run through `confirmQuoteAndActivate` — one SQLite
+   transaction that claims the hash and activates. Same-tier renewals extend
+   30 days from the current expiry; tier changes prorate remaining time by
+   price ratio. A background reconciler re-verifies pending quotes that carry
+   a tx hash every 15 minutes, and expiry reminders go out 3 days before a
+   plan lapses.
 
 Keep EVM contract and recipient addresses all-lowercase in config unless they
 are valid EIP-55 checksums. Do not render the EVM recipient as ordinary

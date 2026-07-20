@@ -96,6 +96,28 @@ export async function sendEmailVerificationCode(
   });
 }
 
+/** Plain informational email (billing notices etc.) — not an alert. */
+export async function sendEmailText(
+  to: string,
+  subject: string,
+  bodyText: string,
+): Promise<boolean> {
+  if (!isEmailConfigured()) return false;
+  const escape = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const html = `<!doctype html>
+<html><body style="margin:0;background:#0d1015;color:#e9edf2;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;">
+  <div style="max-width:520px;margin:0 auto;padding:32px 24px;">
+    <div style="padding:22px;background:#1a1d24;border-radius:10px;border:1px solid #2a313d;">
+      <div style="font-size:17px;font-weight:600;color:#fff;margin-bottom:12px;">${escape(subject)}</div>
+      <div style="font-size:13px;color:#c8d1dc;line-height:1.6;white-space:pre-line;">${escape(bodyText)}</div>
+    </div>
+    <div style="margin-top:18px;text-align:center;font-size:12px;color:#6c7280;">Sovereign</div>
+  </div>
+</body></html>`;
+  return postResend({ from: getFromAddress(), to, subject, html, text: bodyText });
+}
+
 export async function sendEmailAlert(
   to: string,
   alert: StrategyMonitorAlert,

@@ -17,14 +17,20 @@ const MAX_REDIRECTS = 3;
 function isPrivateIPv4(ip: string): boolean {
   const parts = ip.split(".").map(Number);
   if (parts.length !== 4 || parts.some((p) => Number.isNaN(p) || p < 0 || p > 255)) return true;
-  const [a, b] = parts;
+  const [a, b, c] = parts;
   if (a === 0) return true;
   if (a === 10) return true; // 10.0.0.0/8
+  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64/10 CGNAT
   if (a === 127) return true; // loopback
   if (a === 169 && b === 254) return true; // link-local
   if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12
+  if (a === 192 && b === 0 && c === 0) return true; // 192.0.0/24 IETF reserved
+  if (a === 192 && b === 0 && c === 2) return true; // 192.0.2/24 TEST-NET-1
   if (a === 192 && b === 168) return true; // 192.168/16
-  if (a >= 224) return true; // multicast/reserved
+  if (a === 198 && (b === 18 || b === 19)) return true; // 198.18/15 benchmarking
+  if (a === 198 && b === 51 && c === 100) return true; // TEST-NET-2
+  if (a === 203 && b === 0 && c === 113) return true; // TEST-NET-3
+  if (a >= 224) return true; // multicast/reserved/broadcast
   return false;
 }
 
@@ -249,7 +255,7 @@ export async function gatherGroundTruth(
   protocol: DefiLlamaProtocol
 ): Promise<GroundTruthChecks> {
   const auditLinks = protocol.audit_links || [];
-  const [linkCheck] = await Promise.all([verifyAuditLinks(auditLinks)]);
+  const linkCheck = await verifyAuditLinks(auditLinks);
   const recentExploitAlerts = queryRecentExploits(protocol.name, protocol.slug);
   const tvlCrash = detectTvlCrash(protocol);
   const onChain = readOnChainCaches(protocol);

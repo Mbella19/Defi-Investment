@@ -139,14 +139,6 @@ async function fetchHistoricalPrices(
   return out;
 }
 
-interface PricedOutflow {
-  ts: number;
-  hash: string;
-  symbol: string;
-  amount: number;
-  usd: number;
-}
-
 async function backtest(fx: ExploitFixture) {
   console.log(`\n=== Backtest: ${fx.name} ===`);
   console.log(`exploit TS:       ${new Date(fx.exploitTs * 1000).toISOString()}`);

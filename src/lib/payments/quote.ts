@@ -1,11 +1,31 @@
 import "server-only";
 import { randomUUID } from "crypto";
 import { getDb } from "@/lib/db";
-import type { Tier } from "@/lib/plans/access";
+import { activateSubscription, type Tier } from "@/lib/plans/access";
+import { log } from "@/lib/log";
 import { findPair } from "./config";
 import { compareAmount, quoteAmount } from "./pricing";
 
-const QUOTE_TTL_MS = 30 * 60 * 1000; // 30 min — long enough for users to copy/paste tx
+// Per-chain quote lifetime. The old flat 30 min regularly expired quotes for
+// users who had ALREADY PAID: a Bitcoin confirmation averages ~10 min but can
+// take an hour, and Tron users paste hashes from external wallets.
+const QUOTE_TTL_BY_CHAIN: Record<string, number> = {
+  bitcoin: 4 * 60 * 60 * 1000,
+  tron: 60 * 60 * 1000,
+};
+const DEFAULT_QUOTE_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * Verification grace after expiry. Expiry gates *creating* a payment; a user
+ * who paid the quoted amount before expiry must still be able to verify —
+ * the price was locked when they paid, so honoring it within a bounded
+ * window is correct.
+ */
+export const PAYMENT_GRACE_MS = 24 * 60 * 60 * 1000;
+
+function quoteTtlMs(chain: string): number {
+  return QUOTE_TTL_BY_CHAIN[chain] ?? DEFAULT_QUOTE_TTL_MS;
+}
 
 export interface PaymentQuote {
   id: string;
@@ -44,8 +64,9 @@ export async function createQuote(params: {
   const { amountToken, amountTokenDisplay, unitPriceUsd } = await quoteAmount(pair, params.amountUsd);
 
   const id = randomUUID();
-  const expiresAt = new Date(Date.now() + QUOTE_TTL_MS).toISOString();
+  const expiresAt = new Date(Date.now() + quoteTtlMs(pair.chain)).toISOString();
   const db = getDb();
+  pruneStaleQuotes(db);
   db.prepare(
     `INSERT INTO pending_payments (
        id, wallet_address, tier, chain, token, recipient_address,
@@ -108,6 +129,54 @@ export function getQuote(id: string): PaymentQuote | null {
   return rowToQuote(row);
 }
 
+/**
+ * Pending quotes that carry a tx hash — the user submitted a payment that
+ * wasn't final yet. These are the reconciler's work queue.
+ */
+export function listReconcilableQuotes(maxAgeHours = 48): PaymentQuote[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT * FROM pending_payments
+       WHERE status = 'pending' AND tx_hash IS NOT NULL
+         AND created_at >= datetime('now', ?)
+       ORDER BY created_at ASC
+       LIMIT 50`,
+    )
+    .all(`-${maxAgeHours} hours`) as QuoteRow[];
+  return rows.map(rowToQuote);
+}
+
+/** Wallet-scoped quote lookup for the checkout resume flow. */
+export function getQuoteForWallet(id: string, wallet: string): PaymentQuote | null {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT * FROM pending_payments WHERE id = ? AND wallet_address = ?")
+    .get(id, wallet.toLowerCase()) as QuoteRow | undefined;
+  if (!row) return null;
+  return rowToQuote(row);
+}
+
+/**
+ * GC abandoned quotes: pending/expired rows with no tx hash older than 7
+ * days are noise (the user never paid). Rows carrying a tx hash are kept —
+ * they're either confirmed (audit trail) or awaiting the reconciler.
+ */
+function pruneStaleQuotes(db: ReturnType<typeof getDb>): void {
+  try {
+    db.prepare(
+      `DELETE FROM pending_payments
+       WHERE status IN ('pending', 'expired', 'failed')
+         AND tx_hash IS NULL
+         AND created_at < datetime('now', '-7 days')`,
+    ).run();
+  } catch (err) {
+    log.warn("payments", "stale-quote prune failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 function rowToQuote(row: QuoteRow): PaymentQuote {
   return {
     id: row.id,
@@ -146,6 +215,11 @@ export function isExpired(quote: PaymentQuote): boolean {
   return new Date(quote.expiresAt).getTime() < Date.now();
 }
 
+/** Expired, but still inside the verification grace window (user may have paid). */
+export function isWithinGrace(quote: PaymentQuote): boolean {
+  return new Date(quote.expiresAt).getTime() + PAYMENT_GRACE_MS >= Date.now();
+}
+
 export function markQuoteStatus(
   id: string,
   status: PaymentQuote["status"],
@@ -171,6 +245,57 @@ export function txAlreadyClaimed(txHash: string): boolean {
     )
     .get(txHash) as { 1: number } | undefined;
   return row !== undefined;
+}
+
+export class TxAlreadyClaimedError extends Error {
+  constructor() {
+    super("Transaction already claimed by a confirmed payment");
+    this.name = "TxAlreadyClaimedError";
+  }
+}
+
+/**
+ * Atomically claim a verified tx hash for a quote and activate the
+ * subscription. Runs as ONE SQLite transaction so a concurrent verify of the
+ * same hash can't double-activate, and a crash between "mark confirmed" and
+ * "activate" can't strand a paid-but-inactive user.
+ *
+ * Any *other* non-confirmed row squatting on this hash (a stale pending
+ * attempt, or someone pre-storing a hash they didn't pay) is cleared first —
+ * the on-chain verification the caller just performed is the authority.
+ */
+export function confirmQuoteAndActivate(
+  quote: PaymentQuote,
+  txHash: string,
+): { expiresAt: string } {
+  if (quote.tier !== "pro" && quote.tier !== "ultra") {
+    throw new Error(`Cannot activate subscription for tier: ${quote.tier}`);
+  }
+  const tier = quote.tier;
+  const db = getDb();
+  const run = db.transaction((): { expiresAt: string } => {
+    const claimed = db
+      .prepare(
+        "SELECT 1 FROM pending_payments WHERE tx_hash = ? AND status = 'confirmed' AND id != ? LIMIT 1",
+      )
+      .get(txHash, quote.id);
+    if (claimed) throw new TxAlreadyClaimedError();
+    db.prepare(
+      "UPDATE pending_payments SET tx_hash = NULL WHERE tx_hash = ? AND id != ? AND status != 'confirmed'",
+    ).run(txHash, quote.id);
+    db.prepare(
+      "UPDATE pending_payments SET status = 'confirmed', tx_hash = ?, verified_at = datetime('now') WHERE id = ?",
+    ).run(txHash, quote.id);
+    return activateSubscription({
+      wallet: quote.wallet,
+      tier,
+      chain: quote.chain,
+      token: quote.token,
+      amount: quote.amountToken,
+      txHash,
+    });
+  });
+  return run();
 }
 
 export { compareAmount };

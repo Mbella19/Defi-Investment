@@ -1,13 +1,26 @@
 import { requireWallet } from "@/lib/auth/guard";
 import { TIER_PRICE_USD } from "@/lib/plans/access";
 import { findPair, PAYMENT_PAIRS } from "@/lib/payments/config";
-import { createQuote } from "@/lib/payments/quote";
+import { createQuote, getQuoteForWallet, isWithinGrace } from "@/lib/payments/quote";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
+  // With ?id= — wallet-scoped quote lookup for the checkout resume flow
+  // (page reload mid-payment must not silently mint a new quote).
+  const id = new URL(request.url).searchParams.get("id");
+  if (id) {
+    const auth = requireWallet(request);
+    if ("response" in auth) return auth.response;
+    const quote = getQuoteForWallet(id, auth.wallet);
+    if (!quote) {
+      return Response.json({ error: "Quote not found" }, { status: 404 });
+    }
+    return Response.json({ ...quote, resumable: quote.status === "pending" && isWithinGrace(quote) });
+  }
+
   // Public: list of supported pairs so the checkout UI can render the picker
   // even before a wallet is connected. We do NOT return the recipient address —
   // that is delivered as part of the per-quote POST response and stays in

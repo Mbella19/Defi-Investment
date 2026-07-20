@@ -34,10 +34,21 @@ function formatTokenAmount(amount: number, decimals: number): string {
   return fixed.replace(/\.?0+$/, "");
 }
 
-function toRawUnits(amount: number, decimals: number): string {
-  // Avoid floating-point drift: round the decimal-shifted result.
-  const shifted = amount * Math.pow(10, decimals);
-  return Math.round(shifted).toString();
+export function toRawUnits(amount: number, decimals: number): string {
+  // String-based decimal shift instead of `amount * 10**decimals`: float
+  // multiplication loses integer precision above 2^53 (any 18-decimal token)
+  // and Number.toString switches to exponential notation at 1e21, which
+  // BigInt() rejects. Precision capped at 12 fractional digits — far below
+  // anything the ±0.5% comparison tolerance could notice.
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new Error(`Cannot convert non-finite amount to raw units: ${amount}`);
+  }
+  const precision = Math.min(decimals, 12);
+  const fixed = amount.toFixed(precision);
+  const [whole, frac = ""] = fixed.split(".");
+  const fracPadded = frac.padEnd(decimals, "0").slice(0, decimals);
+  const raw = BigInt(whole) * BigInt(10) ** BigInt(decimals) + BigInt(fracPadded || "0");
+  return raw.toString();
 }
 
 export function compareAmount(observedRaw: string, expectedRaw: string): boolean {

@@ -2,10 +2,13 @@ import "server-only";
 import type { StrategyMonitorAlert } from "@/lib/strategy-monitor";
 import { listDeliverableChannels, type ChannelKind } from "@/lib/notifications/channels";
 import { getPlan } from "@/lib/plans/access";
-import { sendEmailAlert } from "@/lib/notifications/channels/email";
-import { sendTelegramAlert } from "@/lib/notifications/channels/telegram";
-import { sendSlackAlert } from "@/lib/notifications/channels/slack";
-import { sendUserDiscordAlertBatch } from "@/lib/notifications/channels/discord-user";
+import { sendEmailAlert, sendEmailText } from "@/lib/notifications/channels/email";
+import { sendTelegramAlert, sendTelegramMessage } from "@/lib/notifications/channels/telegram";
+import { sendSlackAlert, sendSlackText } from "@/lib/notifications/channels/slack";
+import {
+  sendUserDiscordAlertBatch,
+  sendUserDiscordText,
+} from "@/lib/notifications/channels/discord-user";
 
 export interface DispatchSummary {
   email: number;
@@ -79,6 +82,51 @@ export async function sendAlertsToUser(
   );
 
   return summary;
+}
+
+/**
+ * Send a plain informational message (billing notices, expiry reminders) to
+ * every verified+enabled channel the wallet's tier permits. Returns how many
+ * channel deliveries succeeded.
+ */
+export async function sendPlainMessageToUser(
+  wallet: string,
+  message: { title: string; body: string },
+): Promise<number> {
+  const channels = listDeliverableChannels(wallet);
+  if (channels.length === 0) return 0;
+
+  const plan = getPlan(wallet);
+  const allowed = new Set<ChannelKind>(
+    plan.capabilities.alertChannels.filter(
+      (c): c is ChannelKind =>
+        c === "email" || c === "telegram" || c === "slack" || c === "discord",
+    ),
+  );
+
+  let delivered = 0;
+  await Promise.allSettled(
+    channels.map(async (ch) => {
+      if (!allowed.has(ch.channel)) return;
+      let ok = false;
+      switch (ch.channel) {
+        case "email":
+          ok = await sendEmailText(ch.endpoint, message.title, message.body);
+          break;
+        case "telegram":
+          ok = await sendTelegramMessage(ch.endpoint, `<b>${message.title}</b>\n\n${message.body}`);
+          break;
+        case "slack":
+          ok = await sendSlackText(ch.endpoint, `*${message.title}*\n${message.body}`);
+          break;
+        case "discord":
+          ok = await sendUserDiscordText(ch.endpoint, message.title, message.body);
+          break;
+      }
+      if (ok) delivered += 1;
+    }),
+  );
+  return delivered;
 }
 
 /**

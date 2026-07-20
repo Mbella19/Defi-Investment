@@ -16,6 +16,8 @@ import { fetchAllEnrichedPools } from "./pool-aggregator";
 import { analyzeProtocol } from "./anthropic";
 import { formatCurrency } from "./formatters";
 import { getPoolStability, passesStabilityGate, type PoolStability } from "./pool-stability";
+import { validateStrategyShape } from "./strategy-validate";
+import { mapWithConcurrency } from "./async-utils";
 import { invokeCodex } from "./security/codex-client";
 import { invokeGemini } from "./security/gemini-client";
 import { extractJson, invokeClaude } from "./security/claude-client";
@@ -139,34 +141,35 @@ async function deepAnalyzeProtocols(
     poolsByProject.set(pool.project, existing);
   }
 
-  // Run all deep analyses fully in parallel. With 3 AI subprocesses per
-  // protocol this is heavy, but batching in serial chunks pushed total wall
-  // time past the browser's tolerance for a synchronous request. Each
-  // protocol's completion bumps the shared counter so progress streams in.
+  // Bounded concurrency: each protocol fans out to 3 max-effort AI
+  // subprocesses (plus a synthesis call), so fully-parallel over 10
+  // protocols meant ~30 simultaneous heavyweight model invocations — enough
+  // to exhaust a local box or blow through API rate limits. Four at a time
+  // keeps wall time acceptable (the strategy runs as a background job now)
+  // without the resource spike. Each completion bumps the shared counter so
+  // progress streams in.
   const total = summaries.length;
   let completed = 0;
   onProgress?.(0, total);
 
-  await Promise.allSettled(
-    summaries.map(async (summary) => {
-      const proto = protocolMap.get(summary.slug);
-      if (!proto) {
-        completed += 1;
-        onProgress?.(completed, total);
-        return;
-      }
-      const pools = poolsByProject.get(summary.slug) || [];
-      try {
-        const analysis = await analyzeProtocol(proto, pools);
-        summary.analysis = analysis;
-      } catch (err) {
-        console.error(`Deep analysis failed for ${summary.slug}:`, err);
-      } finally {
-        completed += 1;
-        onProgress?.(completed, total);
-      }
-    })
-  );
+  await mapWithConcurrency(summaries, 4, async (summary) => {
+    const proto = protocolMap.get(summary.slug);
+    if (!proto) {
+      completed += 1;
+      onProgress?.(completed, total);
+      return;
+    }
+    const pools = poolsByProject.get(summary.slug) || [];
+    try {
+      const analysis = await analyzeProtocol(proto, pools);
+      summary.analysis = analysis;
+    } catch (err) {
+      console.error(`Deep analysis failed for ${summary.slug}:`, err);
+    } finally {
+      completed += 1;
+      onProgress?.(completed, total);
+    }
+  });
 
   return summaries;
 }
@@ -690,35 +693,9 @@ interface RevisedStrategyShape extends InvestmentStrategy {
   rejections?: Array<{ concernIndex?: number; rationale?: string } | unknown>;
 }
 
-/**
- * Enforce that a parsed revision object has the shape we expect. Returns an
- * error message if malformed; undefined if valid. Used to gate whether we
- * accept the revision or fall back to the initial proposal.
- */
-function validateRevisedStrategy(
-  obj: unknown,
-  criteria: StrategyCriteria
-): string | undefined {
-  if (!obj || typeof obj !== "object") return "revision is not an object";
-  const r = obj as Partial<InvestmentStrategy> & Record<string, unknown>;
-  if (!Array.isArray(r.allocations)) return "revision missing allocations[]";
-  if (r.allocations.length < 2) return `revision has ${r.allocations.length} allocations (need >=2)`;
-  for (let i = 0; i < r.allocations.length; i++) {
-    const a = r.allocations[i] as Partial<StrategyAllocation> | undefined;
-    if (!a || typeof a !== "object") return `allocation ${i} not an object`;
-    if (typeof a.poolId !== "string" || a.poolId.length === 0) return `allocation ${i} missing poolId`;
-    if (typeof a.allocationAmount !== "number" || !Number.isFinite(a.allocationAmount) || a.allocationAmount <= 0)
-      return `allocation ${i} has invalid allocationAmount`;
-    if (typeof a.apy !== "number" || !Number.isFinite(a.apy)) return `allocation ${i} has invalid apy`;
-  }
-  // Budget tolerance: ±1% OR $50, whichever is larger
-  const sum = r.allocations.reduce((acc: number, a) => acc + (a.allocationAmount ?? 0), 0);
-  const tolerance = Math.max(50, criteria.budget * 0.01);
-  if (Math.abs(sum - criteria.budget) > tolerance) {
-    return `allocations sum to $${sum.toFixed(0)} but budget is $${criteria.budget} (off by $${(sum - criteria.budget).toFixed(0)})`;
-  }
-  return undefined;
-}
+// Shape validation lives in strategy-validate.ts — shared with the
+// activation API route so client-supplied strategies meet the same bar as
+// AI revisions.
 
 /**
  * Recompute projected APY as the allocation-weighted average from the
@@ -821,9 +798,12 @@ export async function generateStrategy(
       stage: "filtering_pools",
       message: `Fetching multi-year APY history for top ${candidates.length} candidate pools to enforce long-term stability…`,
     });
-    const stabilityResults = await Promise.all(
-      candidates.map(async (p) => ({ poolId: p.pool, stab: await getPoolStability(p.pool) })),
-    );
+    // Capped fan-out — 200 simultaneous chart fetches got throttled by
+    // DeFiLlama; 10 at a time completes in a few seconds against warm caches.
+    const stabilityResults = await mapWithConcurrency(candidates, 10, async (p) => ({
+      poolId: p.pool,
+      stab: await getPoolStability(p.pool),
+    }));
     for (const { poolId, stab } of stabilityResults) {
       stabilityByPool.set(poolId, stab);
     }
@@ -885,7 +865,7 @@ export async function generateStrategy(
   // Validate the lead architect's proposal *before* it can flow down any
   // fast-path branch (both reviewers unavailable / both approve no concerns).
   // Without this, a malformed initial strategy reaches the DB.
-  const initialValidationError = validateRevisedStrategy(initialStrategy, criteria);
+  const initialValidationError = validateStrategyShape(initialStrategy, criteria);
   if (initialValidationError) {
     throw new Error(
       `Initial strategy failed validation and cannot be saved: ${initialValidationError}`,
@@ -1035,7 +1015,7 @@ export async function generateStrategy(
     );
     const revisedOutput = await invokeClaudeCli(revisionPrompt, 600_000);
     const parsedRevised = parseStrategyResponse(revisedOutput) as RevisedStrategyShape;
-    const validationError = validateRevisedStrategy(parsedRevised, criteria);
+    const validationError = validateStrategyShape(parsedRevised, criteria);
     if (validationError) {
       throw new Error(`revision validation failed: ${validationError}`);
     }

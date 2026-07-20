@@ -54,6 +54,24 @@ export async function verifyDiscordWebhook(url: string): Promise<boolean> {
   ]);
 }
 
+/** Plain informational embed (billing notices etc.) — not an alert. */
+export async function sendUserDiscordText(
+  url: string,
+  title: string,
+  description: string,
+): Promise<boolean> {
+  return postDiscord(url, [
+    {
+      title: title.slice(0, 256),
+      description: description.slice(0, 2000),
+      color: 0x60a5fa,
+      timestamp: new Date().toISOString(),
+      fields: [],
+      footer: { text: "Sovereign" },
+    },
+  ]);
+}
+
 export async function sendUserDiscordAlert(
   url: string,
   alert: StrategyMonitorAlert,

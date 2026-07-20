@@ -1,4 +1,7 @@
 import { monitorActiveStrategies } from "@/lib/strategy-monitor";
+import { reconcilePendingPayments } from "@/lib/payments/reconciler";
+import { sendExpiryReminders } from "@/lib/plans/reminders";
+import { log } from "@/lib/log";
 
 const SCAN_INTERVAL_MS = 15 * 60 * 1000;
 const INITIAL_DELAY_MS = 30 * 1000;
@@ -31,6 +34,28 @@ function runScan(): Promise<void> {
       console.error("[monitor-scheduler] scan failed:", message);
     } finally {
       inflight = null;
+    }
+
+    // Payment reconciliation rides the same 15-min sweep. Isolated from the
+    // monitor scan so a DeFiLlama outage can't stall payment activation.
+    try {
+      const rec = await reconcilePendingPayments();
+      if (rec.confirmed > 0) {
+        log.info("monitor-scheduler", "reconciler confirmed payments", rec);
+      }
+    } catch (error) {
+      log.warn("monitor-scheduler", "payment reconcile failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // Subscription expiry reminders — also isolated.
+    try {
+      await sendExpiryReminders();
+    } catch (error) {
+      log.warn("monitor-scheduler", "expiry reminders failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   })();
   return inflight;
