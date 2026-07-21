@@ -35,28 +35,6 @@ export const CHAIN_NAME_TO_ID: Record<string, number> = Object.fromEntries(
   Object.entries(CHAIN_ID_TO_NAME).map(([id, name]) => [name, Number(id)])
 );
 
-// Known high-risk / label addresses — lowercased.
-export const KNOWN_ADDRESSES: Record<string, { label: string; risk: "tornado" | "cex" | "mixer" | "bridge" }> = {
-  "0x722122df12d4e14e13ac3b6895a86e84145b6967": { label: "Tornado Cash: Router", risk: "tornado" },
-  "0x910cbd523d972eb0a6f4cae4618ad62622b39dbf": { label: "Tornado Cash: 10 ETH", risk: "tornado" },
-  "0xa160cdab225685da1d56aa342ad8841c3b53f291": { label: "Tornado Cash: 100 ETH", risk: "tornado" },
-  "0xd90e2f925da726b50c4ed8d0fb90ad053324f31b": { label: "Tornado Cash: 1 ETH", risk: "tornado" },
-  "0x12d66f87a04a9e220743712ce6d9bb1b5616b8fc": { label: "Tornado Cash: 0.1 ETH", risk: "tornado" },
-  "0x8589427373d6d84e98730d7795d8f6f8731fda16": { label: "Tornado Cash Router", risk: "tornado" },
-  "0x28c6c06298d514db089934071355e5743bf21d60": { label: "Binance: Hot Wallet 14", risk: "cex" },
-  "0x21a31ee1afc51d94c2efccaa2092ad1028285549": { label: "Binance: Hot Wallet 15", risk: "cex" },
-  "0xdfd5293d8e347dfe59e90efd55b2956a1343963d": { label: "Binance: Hot Wallet 16", risk: "cex" },
-  "0x56eddb7aa87536c09ccc2793473599fd21a8b17f": { label: "Binance: Hot Wallet 17", risk: "cex" },
-  "0xf977814e90da44bfa03b6295a0616a897441acec": { label: "Binance: Hot Wallet 20", risk: "cex" },
-  "0x5a52e96bacdabb82fd05763e25335261b270efcb": { label: "Binance: Hot Wallet 22", risk: "cex" },
-  "0xa910f92acdaf488fa6ef02174fb86208ad7722ba": { label: "Binance: Hot Wallet 21", risk: "cex" },
-  "0x46340b20830761efd32832a74d7169b29feb9758": { label: "Crypto.com: Hot Wallet", risk: "cex" },
-  "0xa7efae728d2936e78bda97dc267687568dd593f3": { label: "OKX Hot Wallet", risk: "cex" },
-  "0x3cd751e6b0078be393132286c442345e5dc49699": { label: "Coinbase: Hot Wallet", risk: "cex" },
-  "0xb5d85cbf7cb3ee0d56b3bb207d5fc4b82f43f511": { label: "Coinbase: Hot Wallet 2", risk: "cex" },
-  "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": { label: "USDC Contract", risk: "bridge" },
-};
-
 function resolveApiKey(): string {
   const key = process.env.ETHERSCAN_API_KEY;
   if (!key) {
@@ -80,14 +58,16 @@ function scrubApiKey(text: string): string {
   return text.replace(/([?&])apikey=[^&\s]*/gi, "$1apikey=REDACTED");
 }
 
-async function call<T>(params: Record<string, string>, revalidateSeconds = 3600): Promise<T> {
+async function call<T>(params: Record<string, string>): Promise<T> {
   const apikey = resolveApiKey();
   const search = new URLSearchParams({ ...params, apikey });
   const url = `${ETHERSCAN_V2_BASE}?${search.toString()}`;
 
   // fetchWithTimeout (10s) per repo convention — a hung explorer connection
-  // otherwise blocks the forensics/audit route until Next's maxDuration.
-  const res = await fetchWithTimeout(url, { next: { revalidate: revalidateSeconds } }).catch(
+  // otherwise blocks the contract-review workflow until Next's maxDuration.
+  // Do not put credential-bearing request URLs into Next's persistent fetch
+  // cache metadata. Higher-level audit storage retains safe derived results.
+  const res = await fetchWithTimeout(url, { cache: "no-store" }).catch(
     (err) => {
       const msg = err instanceof Error ? err.message : String(err);
       throw new Error(scrubApiKey(`Block explorer fetch failed: ${msg}`));
@@ -159,15 +139,12 @@ export async function getContractSource(
   address: string
 ): Promise<ContractSource | null> {
   try {
-    const result = await call<ContractSource[]>(
-      {
-        chainid: String(chainId),
-        module: "contract",
-        action: "getsourcecode",
-        address: address.toLowerCase(),
-      },
-      86400
-    );
+    const result = await call<ContractSource[]>({
+      chainid: String(chainId),
+      module: "contract",
+      action: "getsourcecode",
+      address: address.toLowerCase(),
+    });
     if (!Array.isArray(result) || result.length === 0) return null;
     const entry = result[0];
     if (!entry.SourceCode || entry.SourceCode.trim() === "") return null;
@@ -177,47 +154,6 @@ export async function getContractSource(
       throw err;
     }
     return null;
-  }
-}
-
-export interface EtherscanTx {
-  blockNumber: string;
-  timeStamp: string;
-  hash: string;
-  nonce: string;
-  from: string;
-  to: string;
-  value: string;
-  gas: string;
-  gasPrice: string;
-  isError: string;
-  contractAddress: string;
-  functionName?: string;
-}
-
-export async function getNormalTxs(
-  chainId: number,
-  address: string,
-  opts: { startblock?: number; endblock?: number; page?: number; offset?: number; sort?: "asc" | "desc" } = {}
-): Promise<EtherscanTx[]> {
-  try {
-    const result = await call<EtherscanTx[]>(
-      {
-        chainid: String(chainId),
-        module: "account",
-        action: "txlist",
-        address: address.toLowerCase(),
-        startblock: String(opts.startblock ?? 0),
-        endblock: String(opts.endblock ?? 99999999),
-        page: String(opts.page ?? 1),
-        offset: String(opts.offset ?? 100),
-        sort: opts.sort ?? "asc",
-      },
-      1800
-    );
-    return Array.isArray(result) ? result : [];
-  } catch {
-    return [];
   }
 }
 
@@ -236,33 +172,25 @@ export interface EtherscanTokenTx {
 
 /**
  * ERC-20 token transfers for an address. Used by the drain-detection heuristic
- * since real DeFi exploits move tokens (USDC/USDT/wBTC/etc.), not native ETH —
- * `getNormalTxs` only sees `tx.value` which is zero for token-only transfers.
+ * since real DeFi exploits commonly move ERC-20 assets rather than native ETH.
  */
 export async function getTokenTxs(
   chainId: number,
   address: string,
   opts: { startblock?: number; endblock?: number; page?: number; offset?: number; sort?: "asc" | "desc" } = {}
 ): Promise<EtherscanTokenTx[]> {
-  try {
-    const result = await call<EtherscanTokenTx[]>(
-      {
-        chainid: String(chainId),
-        module: "account",
-        action: "tokentx",
-        address: address.toLowerCase(),
-        startblock: String(opts.startblock ?? 0),
-        endblock: String(opts.endblock ?? 99999999),
-        page: String(opts.page ?? 1),
-        offset: String(opts.offset ?? 1000),
-        sort: opts.sort ?? "desc",
-      },
-      900
-    );
-    return Array.isArray(result) ? result : [];
-  } catch {
-    return [];
-  }
+  const result = await call<EtherscanTokenTx[]>({
+    chainid: String(chainId),
+    module: "account",
+    action: "tokentx",
+    address: address.toLowerCase(),
+    startblock: String(opts.startblock ?? 0),
+    endblock: String(opts.endblock ?? 99999999),
+    page: String(opts.page ?? 1),
+    offset: String(opts.offset ?? 1000),
+    sort: opts.sort ?? "desc",
+  });
+  return Array.isArray(result) ? result : [];
 }
 
 /**

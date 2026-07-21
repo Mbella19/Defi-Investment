@@ -21,17 +21,17 @@ function normalize(value: string | undefined): AiMode | undefined {
  *   2. Global AI_MODE
  *   3. Default to "cli" (local dev parity)
  *
- * On hosted deploys, "cli" is rejected because serverless runtimes don't
- * have the local `codex` / `agy` (Gemini) binaries — calling AI routes
- * would fail with cryptic spawn ENOENT after the first request. We detect
- * "hosted" via VERCEL=1 (Vercel sets it) rather than NODE_ENV=production,
- * because `next start` locally also sets NODE_ENV=production but the local
- * CLI binaries are still available there. Set FORCE_AI_API_MODE=1 to
- * trigger the same check on other hosting platforms.
+ * Production rejects CLI mode. Besides binaries being absent on most hosts,
+ * local agent CLIs have access to their credential/config home and are not an
+ * appropriate boundary for attacker-influenced protocol text. CLI mode is a
+ * development convenience only; production must use the tool-free HTTPS API
+ * path. FORCE_AI_API_MODE provides the same guard in custom non-production
+ * staging environments.
  */
 function isHostedRuntime(): boolean {
   return (
     process.env.VERCEL === "1" ||
+    process.env.NODE_ENV === "production" ||
     process.env.FORCE_AI_API_MODE === "1" ||
     !!process.env.AWS_LAMBDA_FUNCTION_NAME
   );
@@ -44,8 +44,7 @@ export function getAiMode(provider: AiProvider): AiMode {
     "cli";
   if (mode === "cli" && isHostedRuntime()) {
     throw new Error(
-      `${provider} is in CLI mode on a hosted runtime — set AI_MODE=api (or ${PER_PROVIDER_ENV[provider]}=api) and provide the matching API key. ` +
-        "Local CLI binaries aren't available on serverless runtimes.",
+      `${provider} is in CLI mode in a production runtime — set AI_MODE=api (or ${PER_PROVIDER_ENV[provider]}=api) and provide the matching API key.`,
     );
   }
   return mode;
@@ -85,6 +84,9 @@ export function resolveBaseUrl(envName: string, fallback: string): string {
   }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error(`${envName} must use http or https; got ${parsed.protocol}`);
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error(`${envName} must not contain credentials, a query, or a fragment`);
   }
   return value.replace(/\/$/, "");
 }

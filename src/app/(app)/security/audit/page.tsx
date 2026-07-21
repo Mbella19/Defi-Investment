@@ -14,6 +14,7 @@ import {
 import { CommandStrip, MetricTile } from "@/components/site/ui";
 import { usePlan } from "@/hooks/usePlan";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
+import { apiFetch } from "@/lib/api-client";
 import type { AuditReport } from "@/types/audit";
 
 const CHAINS: Array<{ id: number; name: string }> = [
@@ -117,6 +118,7 @@ function AuditConsole() {
     path?: string;
     error?: string;
     copied?: boolean;
+    expiresAt?: string;
   }>({ busy: false });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autostartedRef = useRef(false);
@@ -128,14 +130,30 @@ function AuditConsole() {
 
   async function shareReport() {
     if (!job.jobId) return;
+    if (share.path) {
+      try {
+        await navigator.clipboard.writeText(`${window.location.origin}${share.path}`);
+        setShare((current) => ({ ...current, copied: true, error: undefined }));
+      } catch {
+        setShare((current) => ({ ...current, copied: false }));
+      }
+      return;
+    }
     setShare({ busy: true });
     try {
-      const res = await fetch("/api/security/audit/share", {
+      const res = await apiFetch("/api/security/audit/share", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": crypto.randomUUID(),
+        },
         body: JSON.stringify({ jobId: job.jobId }),
       });
-      const data = (await res.json()) as { path?: string; error?: string };
+      const data = (await res.json()) as {
+        path?: string;
+        expiresAt?: string;
+        error?: string;
+      };
       if (!res.ok || !data.path) {
         throw new Error(data.error ?? `Share failed (${res.status})`);
       }
@@ -147,12 +165,33 @@ function AuditConsole() {
       } catch {
         /* clipboard unavailable — still show the link */
       }
-      setShare({ busy: false, path: data.path, copied });
+      setShare({ busy: false, path: data.path, copied, expiresAt: data.expiresAt });
     } catch (err) {
       setShare({
         busy: false,
         error: err instanceof Error ? err.message : "Share failed",
       });
+    }
+  }
+
+  async function revokeShare() {
+    if (!job.jobId || !share.path) return;
+    setShare((current) => ({ ...current, busy: true, error: undefined }));
+    try {
+      const res = await apiFetch("/api/security/audit/share", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: job.jobId }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? `Revoke failed (${res.status})`);
+      setShare({ busy: false });
+    } catch (error) {
+      setShare((current) => ({
+        ...current,
+        busy: false,
+        error: error instanceof Error ? error.message : "Revoke failed",
+      }));
     }
   }
 
@@ -206,9 +245,8 @@ function AuditConsole() {
     // Wallet shown in topbar → user thinks they're "signed in"; we shouldn't
     // make them click a separate sign-in button before the actual action.
     if (authStatus !== "authed") {
-      try {
-        await signIn();
-      } catch {
+      const auth = await signIn();
+      if (!auth.ok) {
         setJob({
           status: "error",
           progress: 0,
@@ -223,7 +261,7 @@ function AuditConsole() {
     }
     setJob({ status: "running", progress: 1, message: "Starting review…" });
     try {
-      const res = await fetch("/api/security/audit/start", {
+      const res = await apiFetch("/api/security/audit/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ address: targetAddress, chain: targetChain }),
@@ -302,6 +340,7 @@ function AuditConsole() {
   const findingsCount = r?.findings.length ?? 0;
   const coverageCount = r?.toolResults.filter((t) => t.available).length ?? 0;
   const coverageTotal = r?.toolResults.length ?? 6;
+  const cleanCoverage = r?.coverage?.sufficientForCleanVerdict ?? false;
 
   return (
     <div className="page">
@@ -323,7 +362,11 @@ function AuditConsole() {
         items={[
           { label: "source", value: validAddress ? "target valid" : "invalid", tone: validAddress ? "ok" : "danger" },
           { label: "engines", value: job.status === "running" ? "running" : job.status === "done" ? "complete" : "queued", tone: job.status === "running" ? "warn" : job.status === "done" ? "ok" : "info" },
-          { label: "coverage", value: r ? `${coverageCount}/${coverageTotal}` : "pending", tone: r ? "ok" : "warn" },
+          {
+            label: "coverage",
+            value: r ? (cleanCoverage ? "sufficient" : "limited") : "pending",
+            tone: r && cleanCoverage ? "ok" : "warn",
+          },
         ]}
       />
 
@@ -481,14 +524,29 @@ function AuditConsole() {
                         : "Share report publicly"}
                   </button>
                   {share.path ? (
-                    <a
-                      href={share.path}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ fontSize: 12, color: "var(--mint, #5AE4D4)" }}
-                    >
-                      {share.copied ? "Link copied — " : ""}open public page →
-                    </a>
+                    <>
+                      <a
+                        href={share.path}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ fontSize: 12, color: "var(--mint, #5AE4D4)" }}
+                      >
+                        {share.copied ? "Link copied — " : ""}open public page →
+                      </a>
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={revokeShare}
+                        disabled={share.busy}
+                      >
+                        Revoke link
+                      </button>
+                      {share.expiresAt ? (
+                        <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                          Expires {new Date(share.expiresAt).toLocaleDateString()}
+                        </span>
+                      ) : null}
+                    </>
                   ) : null}
                   {share.error ? (
                     <span className="severity-medium" style={{ fontSize: 12 }}>
@@ -541,8 +599,12 @@ function AuditConsole() {
               <div className="findings">
                 {r.findings.length === 0 ? (
                   <div className="finding">
-                    <strong>No material findings</strong>
-                    <span>The review surfaced no high-confidence findings.</span>
+                    <strong>No findings surfaced within available coverage</strong>
+                    <span>
+                      {cleanCoverage
+                        ? "The configured analyzers and live-state checks completed without surfacing a finding. This is not a security guarantee."
+                        : "Coverage was incomplete. Absence of a finding must be treated as unknown, not as evidence that the contract is safe."}
+                    </span>
                   </div>
                 ) : (
                   r.findings.map((finding) => (
@@ -592,10 +654,16 @@ function AuditConsole() {
               const Icon = tool.available ? ShieldCheck : Siren;
               const tone = tool.available ? "#6ee7b7" : "#fbbf24";
               return (
-                <div key={`coverage-${tool.tool}`} className="coverage-card">
+                <div
+                  key={`coverage-${tool.tool}-${tool.scope?.kind ?? "general"}-${tool.scope?.address ?? "default"}`}
+                  className="coverage-card"
+                >
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <Icon size={18} color={tone} />
-                    <span className="coverage-name">{ENGINE_LABEL[tool.tool] ?? tool.tool}</span>
+                    <span className="coverage-name">
+                      {ENGINE_LABEL[tool.tool] ?? tool.tool}
+                      {tool.scope?.kind === "implementation" ? " · implementation" : ""}
+                    </span>
                   </div>
                   <div className="coverage-status">
                     {r

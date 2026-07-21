@@ -89,22 +89,22 @@ export function formatBalance(n: number): string {
 }
 
 /**
- * Map an arbitrary "safety + APY" pair onto the prototype's three risk bands.
+ * Map a lightweight market-screen score + APY onto three discovery bands.
  * Conservative covers the deep-blue stable lending shelves, Balanced covers
  * mid-yield credit / LSTs, Asymmetric covers everything riskier.
  */
-export function riskBandFor({ safety, apy }: { safety: number; apy: number }): RiskBand {
-  if (safety >= 80 && apy <= 10) return "Conservative";
-  if (safety >= 60 && apy <= 25) return "Balanced";
+export function riskBandFor({ screenScore, apy }: { screenScore: number; apy: number }): RiskBand {
+  if (screenScore >= 80 && apy <= 10) return "Conservative";
+  if (screenScore >= 60 && apy <= 25) return "Balanced";
   return "Asymmetric";
 }
 
 /**
- * Quick proxy for "how safe is this pool?" used by the Discover view. Same
- * shape as the existing safetyScore in the legacy DiscoverPage so behaviour
- * is unchanged when we feed real DefiLlama pools through it.
+ * Lightweight discovery score based only on observable liquidity, yield,
+ * recent yield stability, asset type, and category. It is deliberately not
+ * presented as a contract/protocol security rating; deep analysis owns that.
  */
-export function safetyScore(pool: {
+export function marketScreenScore(pool: {
   tvlUsd: number;
   apy: number;
   apyPct30D: number | null;

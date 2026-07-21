@@ -1,6 +1,7 @@
 import "server-only";
 import type { StrategyMonitorAlert } from "@/lib/strategy-monitor";
 import { alertPlainText, alertTitle } from "@/lib/notifications/templates";
+import { log } from "@/lib/log";
 
 const TIMEOUT_MS = 8_000;
 
@@ -51,6 +52,7 @@ async function postTelegram<T = unknown>(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
       signal: controller.signal,
+      redirect: "error",
     });
     const data = (await res.json().catch(() => ({}))) as {
       ok: boolean;
@@ -112,9 +114,9 @@ interface TelegramUpdate {
 
 /**
  * Poll the Bot API for recent updates. Telegram returns updates since the
- * last acknowledged offset; we ack by passing the largest seen update_id+1
- * back on the next call. Stored in-memory — for multi-instance deployments
- * use webhooks instead.
+ * last acknowledged offset. The route acknowledges only after every matching
+ * token has been persisted, so a transient SQLite failure cannot discard the
+ * one Telegram update needed to complete setup.
  */
 let updateOffset = 0;
 
@@ -125,14 +127,18 @@ export async function pollTelegramUpdates(): Promise<TelegramUpdate[]> {
     allowed_updates: ["message"],
   });
   if (!out.ok) {
-    console.warn("[telegram] poll failed:", out.reason);
+    log.warn("telegram", "poll failed", { reason: out.reason });
     return [];
   }
-  const updates = out.result ?? [];
-  for (const u of updates) {
-    if (u.update_id >= updateOffset) updateOffset = u.update_id + 1;
+  return out.result ?? [];
+}
+
+export function acknowledgeTelegramUpdates(
+  updates: ReadonlyArray<{ update_id: number }>,
+): void {
+  for (const update of updates) {
+    if (update.update_id >= updateOffset) updateOffset = update.update_id + 1;
   }
-  return updates;
 }
 
 /**

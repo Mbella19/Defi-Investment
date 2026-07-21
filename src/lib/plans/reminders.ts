@@ -27,9 +27,9 @@ export async function sendExpiryReminders(): Promise<{ candidates: number; remin
       .prepare(
         `SELECT wallet_address, tier, expires_at FROM subscriptions
          WHERE tier IN ('pro', 'ultra')
-           AND expires_at > datetime('now')
-           AND expires_at <= datetime('now', '+${REMIND_WINDOW_DAYS} days')
-           AND (reminder_sent_at IS NULL OR reminder_sent_at < datetime('now', '-7 days'))`,
+           AND datetime(expires_at) > datetime('now')
+           AND datetime(expires_at) <= datetime('now', '+${REMIND_WINDOW_DAYS} days')
+           AND (reminder_sent_at IS NULL OR datetime(reminder_sent_at) < datetime('now', '-7 days'))`,
       )
       .all() as ExpiringRow[];
   } catch (err) {

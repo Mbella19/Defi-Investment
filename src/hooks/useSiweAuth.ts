@@ -12,6 +12,8 @@ import {
 } from "react";
 import { useAccount, useChainId, useDisconnect, useSignMessage } from "wagmi";
 import { usePathname } from "next/navigation";
+import { apiFetch } from "@/lib/api-client";
+import { useWalletModal } from "@/components/wallet/WalletModalProvider";
 
 export type SiweAuthStatus =
   | "idle" // no wallet connected
@@ -21,6 +23,10 @@ export type SiweAuthStatus =
   | "authed" // session cookie matches connected wallet
   | "error"; // last sign-in attempt failed
 
+export type SignInResult =
+  | { ok: true; wallet: string }
+  | { ok: false; code: "WALLET_REQUIRED" | "SIGNATURE_REJECTED" | "AUTH_FAILED"; error: string };
+
 interface SiweAuthValue {
   status: SiweAuthStatus;
   /** Lower-case 0x-address that the server has accepted, or null. */
@@ -28,7 +34,7 @@ interface SiweAuthValue {
   /** Last error message from a failed sign-in (cleared on retry). */
   error: string | null;
   /** Trigger the SIWE flow against the currently connected wallet. */
-  signIn: () => Promise<void>;
+  signIn: () => Promise<SignInResult>;
   /** Clear the server session (and also disconnect the wagmi connection). */
   signOut: () => Promise<void>;
   /**
@@ -74,86 +80,23 @@ export function SiweAuthProvider({ children }: { children: ReactNode }) {
   const chainId = useChainId();
   const { signMessageAsync } = useSignMessage();
   const { disconnect } = useDisconnect();
+  const { openConnectModal } = useWalletModal();
   const pathname = usePathname();
 
   const [status, setStatus] = useState<SiweAuthStatus>("checking");
   const [authedWallet, setAuthedWallet] = useState<string | null>(null);
+  const [sessionAuthMethod, setSessionAuthMethod] = useState<"siwe" | "dev" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Latest connected address ref so async callbacks see the current wallet.
-  const addressRef = useRef<string | undefined>(undefined);
-  addressRef.current = address;
+  const revokingRef = useRef(false);
 
-  const probeSession = useCallback(async (): Promise<void> => {
-    try {
-      const res = await fetch("/api/auth/me", { cache: "no-store" });
-      if (res.ok) {
-        const data = (await res.json()) as { address?: string | null };
-        if (data.address) {
-          setAuthedWallet(data.address.toLowerCase());
-          setError(null);
-          setStatus("authed");
-          return;
-        }
-      }
-    } catch {
-      /* fall through */
-    }
-    setAuthedWallet(null);
-    setStatus(addressRef.current ? "needs-signature" : "idle");
-  }, []);
-
-  // Probe existing session on mount (Set-Cookie may have survived a refresh).
-  useEffect(() => {
-    void probeSession();
-  }, [probeSession]);
-
-  // Reconcile session against the connected wallet whenever either changes.
-  useEffect(() => {
-    if (status === "checking" || status === "signing") return;
-    if (!isConnected || !address) {
-      // Wallet disconnected — clear local view of the session. The server
-      // cookie is fine to leave; /api/auth/me will report null after logout.
-      if (status !== "idle") {
-        setStatus("idle");
-        setAuthedWallet(null);
-        setError(null);
-      }
-      return;
-    }
-    const lower = address.toLowerCase();
-    if (authedWallet && authedWallet === lower) {
-      if (status !== "authed") setStatus("authed");
-      return;
-    }
-    if (status !== "needs-signature" && status !== "error") {
-      setStatus("needs-signature");
-    }
-  }, [isConnected, address, authedWallet, status]);
-
-  // Auto-prompt the SIWE flow once per wallet connection. We DON'T auto-retry
-  // on error — let the user click the manual sign-in button after dismissing.
-  // Suppressed on /dev/* routes — the dev-login page exists specifically to
-  // bypass hardware signing, so a competing auto-prompt would defeat its purpose.
-  const lastAutoSignedRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (status !== "needs-signature") return;
-    if (!address) return;
-    if (pathname?.startsWith("/dev/")) return;
-    const lower = address.toLowerCase();
-    if (lastAutoSignedRef.current === lower) return;
-    lastAutoSignedRef.current = lower;
-    void signIn();
-  // signIn is stable enough; we intentionally don't depend on it to avoid
-  // re-firing when its identity changes.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, address, pathname]);
-
-  const signIn = useCallback(async () => {
+  const signIn = useCallback(async (): Promise<SignInResult> => {
     if (!address || !isConnected) {
-      setError("Connect a wallet first");
-      setStatus("error");
-      return;
+      const message = "Connect a wallet first";
+      setError(message);
+      setStatus("idle");
+      openConnectModal();
+      return { ok: false, code: "WALLET_REQUIRED", error: message };
     }
     setStatus("signing");
     setError(null);
@@ -182,22 +125,138 @@ export function SiweAuthProvider({ children }: { children: ReactNode }) {
         throw new Error(err.error ?? `verify ${verifyRes.status}`);
       }
       const data = (await verifyRes.json()) as { address: string };
-      setAuthedWallet(data.address.toLowerCase());
+      const wallet = data.address.toLowerCase();
+      setAuthedWallet(wallet);
+      setSessionAuthMethod("siwe");
       setStatus("authed");
+      return { ok: true, wallet };
     } catch (err) {
       const message = err instanceof Error ? err.message : "sign-in failed";
       setError(message);
       setStatus("error");
+      const rejected = /rejected|denied|cancel/i.test(message);
+      return {
+        ok: false,
+        code: rejected ? "SIGNATURE_REJECTED" : "AUTH_FAILED",
+        error: message,
+      };
     }
-  }, [address, isConnected, chainId, signMessageAsync]);
+  }, [address, isConnected, chainId, openConnectModal, signMessageAsync]);
+
+  const probeSession = useCallback(async (): Promise<void> => {
+    try {
+      const res = await fetch("/api/auth/me", { cache: "no-store" });
+      if (res.ok) {
+        const data = (await res.json()) as {
+          address?: string | null;
+          authMethod?: "siwe" | "dev" | null;
+        };
+        if (data.address) {
+          setAuthedWallet(data.address.toLowerCase());
+          setSessionAuthMethod(data.authMethod === "dev" ? "dev" : "siwe");
+          setError(null);
+          setStatus("authed");
+          return;
+        }
+      }
+    } catch {
+      /* fall through */
+    }
+    setAuthedWallet(null);
+    setSessionAuthMethod(null);
+    setStatus(address ? "needs-signature" : "idle");
+  }, [address]);
+
+  // Probe existing session on mount (Set-Cookie may have survived a refresh).
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) void probeSession();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [probeSession]);
+
+  // Reconcile session against the connected wallet whenever either changes.
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled || status === "checking" || status === "signing") return;
+      // The explicitly credentialed localhost owner bypass exists so staff can
+      // work without connecting a hardware wallet. It remains server-scoped
+      // and is still blocked in production/Vercel.
+      if (sessionAuthMethod === "dev" && authedWallet) {
+        if (status !== "authed") setStatus("authed");
+        return;
+      }
+      if (!isConnected || !address) {
+        if (status !== "idle") {
+          if (authedWallet && !revokingRef.current) {
+            revokingRef.current = true;
+            void apiFetch("/api/auth/logout", { method: "POST" }).finally(() => {
+              revokingRef.current = false;
+            });
+          }
+          setStatus("idle");
+          setAuthedWallet(null);
+          setSessionAuthMethod(null);
+          setError(null);
+        }
+        return;
+      }
+      const lower = address.toLowerCase();
+      if (authedWallet && authedWallet === lower) {
+        if (status !== "authed") setStatus("authed");
+        return;
+      }
+      if (authedWallet && authedWallet !== lower && !revokingRef.current) {
+        revokingRef.current = true;
+        void apiFetch("/api/auth/logout", { method: "POST" }).finally(() => {
+          revokingRef.current = false;
+        });
+        setAuthedWallet(null);
+        setSessionAuthMethod(null);
+      }
+      if (status !== "needs-signature" && status !== "error") {
+        setStatus("needs-signature");
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, address, authedWallet, sessionAuthMethod, status]);
+
+  // Auto-prompt the SIWE flow once per wallet connection. We DON'T auto-retry
+  // on error — let the user click the manual sign-in button after dismissing.
+  // Suppressed on /dev/* routes — the dev-login page exists specifically to
+  // bypass hardware signing, so a competing auto-prompt would defeat its purpose.
+  const lastAutoSignedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (status !== "needs-signature") return;
+    if (!address) return;
+    if (pathname?.startsWith("/dev/")) return;
+    const lower = address.toLowerCase();
+    if (lastAutoSignedRef.current === lower) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled || lastAutoSignedRef.current === lower) return;
+      lastAutoSignedRef.current = lower;
+      void signIn();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [status, address, pathname, signIn]);
 
   const signOut = useCallback(async () => {
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      await apiFetch("/api/auth/logout", { method: "POST" });
     } catch {
       /* server cookie clear is best-effort */
     }
     setAuthedWallet(null);
+    setSessionAuthMethod(null);
     setStatus("idle");
     setError(null);
     disconnect();

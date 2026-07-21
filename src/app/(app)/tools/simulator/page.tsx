@@ -27,6 +27,7 @@ import {
 import type { LivePool } from "@/app/api/yields/live/route";
 import { usePlan } from "@/hooks/usePlan";
 import { Paywall } from "@/components/site/Paywall";
+import { apiFetch } from "@/lib/api-client";
 
 type Scenario = "baseline" | "depeg" | "tvl_crash" | "market_drawdown";
 
@@ -71,7 +72,7 @@ const HORIZONS = [
 ];
 
 const SCENARIOS: Array<{ key: Scenario; label: string; blurb: string }> = [
-  { key: "baseline", label: "Baseline", blurb: "Forward-replay recent APY behavior." },
+  { key: "baseline", label: "Baseline", blurb: "Block-bootstrap recent APY behavior." },
   { key: "depeg", label: "Stable depeg", blurb: "5% one-time stablecoin haircut." },
   { key: "tvl_crash", label: "Liquidity drop", blurb: "TVL crash → APY collapses 80%." },
   { key: "market_drawdown", label: "Market drawdown", blurb: "Non-stable principal -25% at day 30." },
@@ -177,7 +178,7 @@ export default function SimulatorPage() {
     setErr(null);
     setResult(null);
     try {
-      const res = await fetch("/api/tools/simulate", {
+      const res = await apiFetch("/api/tools/simulate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -223,9 +224,9 @@ export default function SimulatorPage() {
           <p className="eyebrow">Tools / Simulator</p>
           <h1>See your allocation under fire — before the market gets to it.</h1>
           <p>
-            Forward-replay any allocation against four real-world stress regimes —
-            baseline, stablecoin depeg, TVL crash, and market drawdown — using each
-            protocol&apos;s actual historical yield data. Find the holes before capital does.
+            Model any allocation against four stress regimes using a deterministic
+            seven-day block bootstrap of each pool&apos;s actual APY history. This is a
+            scenario estimate, not a return forecast.
           </p>
         </div>
       </div>
@@ -242,7 +243,7 @@ export default function SimulatorPage() {
       {!plan.isLoading && !plan.capabilities.toolSimulator ? (
         <Paywall
           title="Scenario simulator unlocks on Pro"
-          body="Forward-replay your allocation against baseline, stablecoin depeg, TVL crash, and market drawdown using each protocol's real historical yield data. Available on Pro and Ultra."
+          body="Stress-test your allocation against baseline, stablecoin depeg, TVL crash, and market drawdown using each protocol's historical yield data. Available on Pro and Ultra."
           requiredTier="pro"
           currentTier={plan.tier}
           feature="Simulator"
@@ -251,7 +252,7 @@ export default function SimulatorPage() {
 
       <div className="metric-grid" style={{ marginBottom: 18 }}>
         <MetricTile
-          label="Projected end"
+          label="Scenario end"
           value={result ? formatMoney(result.endUsd) : "—"}
           icon={TrendingUp}
           tone="#6ee7b7"
@@ -286,7 +287,7 @@ export default function SimulatorPage() {
         <div className="tool-stack">
           <div className="projection-chart">
             {seriesPath ? (
-              <svg viewBox={`0 0 ${seriesPath.w} ${seriesPath.h}`} role="img" aria-label="Simulation projection">
+              <svg viewBox={`0 0 ${seriesPath.w} ${seriesPath.h}`} role="img" aria-label="Scenario estimate">
                 <path
                   d={seriesPath.base}
                   fill="none"
@@ -304,7 +305,7 @@ export default function SimulatorPage() {
               </svg>
             ) : (
               <span style={{ color: "var(--muted)", fontSize: 13 }}>
-                Run a simulation to render the projected vs. baseline curves.
+                Run a simulation to render the stressed vs. baseline scenario curves.
               </span>
             )}
           </div>
@@ -313,7 +314,7 @@ export default function SimulatorPage() {
             <div className="strategy-card">
               <h3>Allocation breakdown</h3>
               <p>
-                Max drawdown <strong>{formatPct(result.maxDrawdownPct * 100)}</strong> · baseline end{" "}
+                Max drawdown <strong>{formatPct(result.maxDrawdownPct)}</strong> · baseline end{" "}
                 <strong>{formatMoney(result.baselineEndUsd)}</strong>.
               </p>
               <div className="allocation-list">
@@ -346,7 +347,7 @@ export default function SimulatorPage() {
             <EmptyState
               icon={Gauge}
               title="No simulation yet"
-              body="Adjust principal, horizon, and shock scenario, then press Run simulation. We replay each pool's APY history forward."
+              body="Adjust principal, horizon, and shock scenario, then press Run simulation. The engine block-bootstraps historical APY observations; results are estimates, not forecasts."
             />
           )}
         </div>

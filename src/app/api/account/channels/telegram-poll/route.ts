@@ -4,9 +4,11 @@ import {
   clearVerification,
   findVerificationByCode,
   getVerification,
+  listUserChannels,
   upsertChannel,
 } from "@/lib/notifications/channels";
 import {
+  acknowledgeTelegramUpdates,
   isTelegramConfigured,
   parseStartArgument,
   pollTelegramUpdates,
@@ -26,7 +28,7 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(request: Request) {
   const limited = enforceRateLimit(request, "channels.telegram-poll", {
-    max: 60,
+    max: 200,
     windowMs: 60 * 60 * 1000,
   });
   if (limited) return limited;
@@ -58,17 +60,21 @@ export async function POST(request: Request) {
       verified: true,
     });
     clearVerification(pending.walletAddress, "telegram");
-    void sendTelegramMessage(
+    await sendTelegramMessage(
       String(chatId),
       "✅ <b>Sovereign connected.</b>\n\nThis chat will now receive alerts on your active positions — APY collapse, TVL drains, contract pauses, exploit signals.",
-    );
+    ).catch(() => false);
   }
+  acknowledgeTelegramUpdates(updates);
 
   // Then check whether THIS user's verification has resolved (either by this
   // poll or a prior one). If so, the row is gone and the channel is upserted.
   const stillPending = getVerification(auth.wallet, "telegram");
+  const connected = listUserChannels(auth.wallet).some(
+    (channel) => channel.channel === "telegram" && channel.verified,
+  );
   return Response.json({
-    connected: stillPending === null,
+    connected,
     pending: stillPending !== null,
   });
 }

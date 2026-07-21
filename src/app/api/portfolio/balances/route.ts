@@ -3,6 +3,7 @@ import { fetchTokenPrices } from "@/lib/coingecko";
 import { calculatePortfolio } from "@/lib/wallet/portfolio-calculator";
 import { requireWallet } from "@/lib/auth/guard";
 import { requireCapability } from "@/lib/plans/access";
+import { log } from "@/lib/log";
 
 export async function POST(request: Request) {
   try {
@@ -10,13 +11,10 @@ export async function POST(request: Request) {
     if ("response" in auth) return auth.response;
     const cap = requireCapability(auth.wallet, "toolPortfolioLens");
     if (!cap.ok) return cap.response;
-    const { address } = await request.json();
-
-    if (!address || typeof address !== "string" || !/^0x[a-fA-F0-9]{40}$/.test(address)) {
-      return Response.json({ error: "Invalid Ethereum address" }, { status: 400 });
-    }
-
-    const normalizedAddress = address as `0x${string}`;
+    // Wallet-scoped data is always derived from the verified SIWE session.
+    // A caller-supplied address would let an authenticated user query and
+    // associate arbitrary wallets with their account activity.
+    const normalizedAddress = auth.wallet as `0x${string}`;
 
     // Fetch balances first, then look up prices for ONLY the tokens this
     // wallet actually holds. Previously we paid for every supported token's
@@ -36,8 +34,7 @@ export async function POST(request: Request) {
 
     return Response.json(portfolio);
   } catch (error) {
-    console.error("Portfolio fetch failed:", error);
-    const message = error instanceof Error ? error.message : "Failed to fetch portfolio";
-    return Response.json({ error: message }, { status: 500 });
+    log.error("portfolio", "balance fetch failed", { error });
+    return Response.json({ error: "Failed to fetch portfolio" }, { status: 502 });
   }
 }

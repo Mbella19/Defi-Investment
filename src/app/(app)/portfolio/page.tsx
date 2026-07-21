@@ -1,14 +1,12 @@
 "use client";
 
 import { useMemo } from "react";
-import { ConnectButton as RainbowConnectButton } from "@rainbow-me/rainbowkit";
 import { Eye, LockKeyhole, RefreshCw, WalletCards } from "lucide-react";
 import {
   ChainBadge,
   CommandStrip,
   EmptyState,
   MetricTile,
-  MiniLine,
 } from "@/components/site/ui";
 import { PoolIcon } from "@/components/site/PoolIcon";
 import {
@@ -22,6 +20,7 @@ import {
 import { usePortfolio } from "@/hooks/usePortfolio";
 import { usePlan } from "@/hooks/usePlan";
 import { Paywall } from "@/components/site/Paywall";
+import { WalletButton } from "@/components/site/WalletButton";
 
 export default function PortfolioPage() {
   const { isConnected, address, portfolio, isLoading, error, refetch } = usePortfolio();
@@ -43,21 +42,6 @@ export default function PortfolioPage() {
     if (denom === 0) return null;
     return (weighted / denom) * 100;
   }, [portfolio]);
-
-  const sparkPoints = useMemo(() => {
-    if (!total) return [0, 0, 0, 0, 0, 0];
-    // Synthetic 6-point trend so the right-rail mini chart has a shape even
-    // before we wire historic balance snapshots. Anchored on the live total.
-    const drift = weightedChange != null ? weightedChange / 100 : 0;
-    return [
-      total * (1 - drift * 0.9),
-      total * (1 - drift * 0.6),
-      total * (1 - drift * 0.4),
-      total * (1 - drift * 0.2),
-      total * (1 - drift * 0.05),
-      total,
-    ];
-  }, [total, weightedChange]);
 
   const shortAddress = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "Portfolio";
 
@@ -104,7 +88,7 @@ export default function PortfolioPage() {
           body="Connect a wallet to read live balances. Sovereign reads on-chain state directly — it never custodies funds, requests approvals, or signs transactions."
           action={
             <div style={{ marginTop: 16 }}>
-              <RainbowConnectButton />
+              <WalletButton />
             </div>
           }
         />
@@ -213,11 +197,12 @@ export default function PortfolioPage() {
                   })
                 )}
               </div>
-              <div style={{ marginTop: 24 }}>
-                <MiniLine points={sparkPoints} accent="#60a5fa" />
-              </div>
               <div style={{ marginTop: 12 }} className="ticker">
-                <span>{formatUsd(total)} total · read-only</span>
+                <span>
+                  {formatUsd(total)} total · {weightedChange == null
+                    ? "24h price drift unavailable"
+                    : `${formatPct(weightedChange, true)} price-weighted 24h drift`} · read-only
+                </span>
               </div>
             </aside>
           </div>

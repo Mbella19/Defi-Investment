@@ -1,6 +1,6 @@
-import { getDefaultConfig } from "@rainbow-me/rainbowkit";
 import { mainnet, arbitrum, optimism, polygon, base, bsc, avalanche } from "wagmi/chains";
-import { http } from "wagmi";
+import { createConfig, http, injected } from "wagmi";
+import { walletConnect } from "wagmi/connectors";
 import { getRpcUrl } from "@/lib/rpc";
 
 export const SUPPORTED_CHAINS = [mainnet, arbitrum, optimism, polygon, base, bsc, avalanche] as const;
@@ -21,9 +21,16 @@ if (
 }
 const projectId = RAW_PROJECT_ID || "demo";
 
-export const config = getDefaultConfig({
-  appName: "Sovereign Investment Group",
-  projectId,
+const connectors = [
+  injected({ shimDisconnect: true }),
+  ...(projectId !== "demo"
+    ? [walletConnect({ projectId, showQrModal: true })]
+    : []),
+];
+
+export const config = createConfig({
+  ssr: true,
+  connectors,
   chains: [mainnet, arbitrum, optimism, polygon, base, bsc, avalanche],
   transports: {
     [mainnet.id]: http(getRpcUrl(mainnet.id)),

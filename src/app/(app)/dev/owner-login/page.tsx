@@ -13,6 +13,7 @@ export default function OwnerLoginPage() {
   const plan = usePlan();
   const { status: authStatus, refresh: refreshAuth } = useSiweAuth();
   const [wallet, setWallet] = useState("");
+  const [devSecret, setDevSecret] = useState("");
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
@@ -22,14 +23,9 @@ export default function OwnerLoginPage() {
     let cancelled = false;
     fetch("/api/auth/dev-login", { cache: "no-store" })
       .then((r) => r.json())
-      .then((d: { enabled?: boolean; owners?: string[] }) => {
+      .then((d: { enabled?: boolean }) => {
         if (cancelled) return;
         setEnabled(d.enabled === true);
-        // Auto-fill the first owner wallet so the Sign-in button is
-        // immediately enabled. The user can override by typing.
-        if (d.owners && d.owners.length > 0) {
-          setWallet(d.owners[0]);
-        }
       })
       .catch(() => {
         if (!cancelled) setEnabled(false);
@@ -46,7 +42,7 @@ export default function OwnerLoginPage() {
       const res = await fetch("/api/auth/dev-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wallet: wallet.trim() }),
+        body: JSON.stringify({ wallet: wallet.trim(), secret: devSecret }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         ok?: boolean;
@@ -123,6 +119,7 @@ export default function OwnerLoginPage() {
             <ul style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.7, marginTop: 8 }}>
               <li><code>VERCEL</code> is not set to <code>1</code> (i.e. you&apos;re not on a real prod deploy)</li>
               <li><code>ENABLE_DEV_LOGIN=true</code> is in <code>.env.local</code></li>
+              <li><code>DEV_LOGIN_SECRET</code> contains at least 32 characters</li>
             </ul>
             <p style={{ color: "var(--soft)", fontSize: 12, marginTop: 12 }}>
               Restart the server after editing <code>.env.local</code> for changes to take effect.
@@ -154,11 +151,23 @@ export default function OwnerLoginPage() {
                 onChange={(e) => setWallet(e.target.value)}
                 style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: 13 }}
               />
+            </div>
+            <div className="alerts-form-row" style={{ marginTop: 10 }}>
+              <input
+                className="address-input"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="DEV_LOGIN_SECRET"
+                value={devSecret}
+                onChange={(e) => setDevSecret(e.target.value)}
+                style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: 13 }}
+              />
               <button
                 type="button"
                 className="primary-button"
                 onClick={login}
-                disabled={busy || wallet.trim().length < 42}
+                disabled={busy || wallet.trim().length < 42 || devSecret.length < 32}
               >
                 {busy ? (
                   <Loader2 size={14} className="spinning" aria-hidden="true" />
@@ -174,10 +183,9 @@ export default function OwnerLoginPage() {
               </div>
             ) : null}
             <p style={{ color: "var(--soft)", fontSize: 11, marginTop: 16 }}>
-              Hard guards: refuses on Vercel, requires <code>ENABLE_DEV_LOGIN=true</code>,
-              wallet must be in <code>OWNER_WALLETS</code>, and <code>SESSION_SECRET</code>{" "}
-              must be set. There is no path for an external user to grant themselves a
-              session via this endpoint.
+              Hard guards: refuses production/Vercel, requires <code>ENABLE_DEV_LOGIN=true</code>,
+              a strong <code>DEV_LOGIN_SECRET</code>, an allowlisted <code>OWNER_WALLETS</code>{" "}
+              entry, and <code>SESSION_SECRET</code>.
             </p>
           </div>
         )}

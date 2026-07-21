@@ -1,42 +1,40 @@
 "use client";
 
-import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { WalletCards } from "lucide-react";
+import { useAccount } from "wagmi";
+import { useWalletModal } from "@/components/wallet/WalletModalProvider";
+import { SUPPORTED_CHAINS } from "@/lib/wallet/config";
 
 /**
- * Prototype's "Connect Wallet" pill, but wired to RainbowKit. When connected
- * the pill flips to the truncated address, clicking opens the account modal
- * (which is also where the user disconnects).
+ * The top-nav wallet control. Account and network actions stay in the local
+ * wallet dialog so the application does not depend on a third-party UI kit.
  */
 export function WalletButton() {
+  const { address, chainId, isConnected, status } = useAccount();
+  const { openAccountModal, openChainModal, openConnectModal } = useWalletModal();
+  const mounted = status !== "reconnecting";
+  const unsupported = isConnected && !SUPPORTED_CHAINS.some((chain) => chain.id === chainId);
+  const label = !isConnected || !address
+    ? "Connect Wallet"
+    : unsupported
+      ? "Wrong Network"
+      : `${address.slice(0, 6)}…${address.slice(-4)}`;
+  const handleClick = !isConnected
+    ? openConnectModal
+    : unsupported
+      ? openChainModal
+      : openAccountModal;
+
   return (
-    <ConnectButton.Custom>
-      {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted }) => {
-        const ready = mounted;
-        const connected = ready && account && chain;
-        const handle = !connected
-          ? openConnectModal
-          : chain.unsupported
-            ? openChainModal
-            : openAccountModal;
-        const label = !connected
-          ? "Connect Wallet"
-          : chain.unsupported
-            ? "Wrong Network"
-            : account.displayName;
-        return (
-          <button
-            type="button"
-            className="wallet-button"
-            onClick={handle}
-            aria-label={label}
-            style={!ready ? { opacity: 0, pointerEvents: "none" } : undefined}
-          >
-            <WalletCards size={17} aria-hidden="true" />
-            {label}
-          </button>
-        );
-      }}
-    </ConnectButton.Custom>
+    <button
+      type="button"
+      className="wallet-button"
+      onClick={handleClick}
+      aria-label={label}
+      style={!mounted ? { opacity: 0, pointerEvents: "none" } : undefined}
+    >
+      <WalletCards size={17} aria-hidden="true" />
+      {label}
+    </button>
   );
 }

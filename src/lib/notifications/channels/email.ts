@@ -1,6 +1,7 @@
 import "server-only";
 import type { StrategyMonitorAlert } from "@/lib/strategy-monitor";
 import { alertHtml, alertTitle } from "@/lib/notifications/templates";
+import { log } from "@/lib/log";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 const SEND_TIMEOUT_MS = 8_000;
@@ -44,16 +45,15 @@ async function postResend(body: ResendBody): Promise<boolean> {
       },
       body: JSON.stringify(body),
       signal: controller.signal,
+      redirect: "error",
     });
     if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      console.warn("[email] resend send failed", res.status, text.slice(0, 200));
+      log.warn("email", "provider rejected delivery", { status: res.status });
       return false;
     }
     return true;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn("[email] resend post failed:", msg);
+    log.warn("email", "provider delivery failed", { error: err });
     return false;
   } finally {
     clearTimeout(timeout);

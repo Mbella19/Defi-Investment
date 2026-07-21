@@ -37,6 +37,9 @@ function stability(stdDev6m: number): PoolStability {
   return {
     poolId: "pool-1",
     monthsOfHistory: 24,
+    observations6m: 183,
+    observations12m: 365,
+    observations24m: 730,
     apyMean6m: 10,
     apyStdDev6m: stdDev6m,
     apyMean12m: 10,
@@ -89,6 +92,24 @@ describe("runMonitorScan", () => {
     const drain = alerts.filter((a) => a.type === "tvl_drain");
     expect(drain).toHaveLength(1);
     expect(drain[0].severity).toBe("critical");
+  });
+
+  it("does not turn missing APY data into a false 100% collapse", () => {
+    const alerts = runMonitorScan(
+      [position()],
+      [pool({ apy: null })],
+      DEFAULT_ALERT_CONFIG,
+    );
+    expect(alerts.filter((alert) => alert.type === "apy_drop")).toHaveLength(0);
+  });
+
+  it("does not turn invalid TVL data into a false 100% drain", () => {
+    const alerts = runMonitorScan(
+      [position()],
+      [pool({ tvlUsd: Number.NaN })],
+      DEFAULT_ALERT_CONFIG,
+    );
+    expect(alerts.filter((alert) => alert.type === "tvl_drain")).toHaveLength(0);
   });
 
   it("skips TVL alerts for small entry pools", () => {

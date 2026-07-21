@@ -1,7 +1,13 @@
 import { getDb } from "@/lib/db";
 import { requireWallet } from "@/lib/auth/guard";
+import { log } from "@/lib/log";
 import type { ActiveStrategy } from "@/types/active-strategy";
 import type { InvestmentStrategy, StrategyCriteria } from "@/types/strategy";
+import { jsonBodyErrorResponse, readJsonBody } from "@/lib/request-body";
+
+function validId(id: string): boolean {
+  return /^[A-Za-z0-9_-]{8,128}$/.test(id);
+}
 
 export async function GET(
   request: Request,
@@ -11,6 +17,7 @@ export async function GET(
     const auth = requireWallet(request);
     if ("response" in auth) return auth.response;
     const { id } = await params;
+    if (!validId(id)) return Response.json({ error: "Strategy not found" }, { status: 404 });
     const db = getDb();
 
     // Scope by wallet — return 404 (not 403) for someone else's strategy so
@@ -28,6 +35,7 @@ export async function GET(
 
     const strategy: ActiveStrategy = {
       id: row.id as string,
+      sourceJobId: (row.source_job_id as string | null) ?? undefined,
       walletAddress: row.wallet_address as string | null,
       strategy: JSON.parse(row.strategy_json as string) as InvestmentStrategy,
       criteria: JSON.parse(row.criteria_json as string) as StrategyCriteria,
@@ -41,7 +49,7 @@ export async function GET(
 
     return Response.json({ strategy });
   } catch (error) {
-    console.error("Failed to get strategy:", error);
+    log.error("strategies", "failed to get strategy", { error });
     return Response.json({ error: "Failed to get strategy" }, { status: 500 });
   }
 }
@@ -54,10 +62,22 @@ export async function PATCH(
     const auth = requireWallet(request);
     if ("response" in auth) return auth.response;
     const { id } = await params;
-    const body = await request.json();
-    const { status } = body as { status: "active" | "paused" | "archived" };
+    if (!validId(id)) return Response.json({ error: "Strategy not found" }, { status: 404 });
+    let body: unknown;
+    try {
+      body = await readJsonBody(request);
+    } catch (error) {
+      return jsonBodyErrorResponse(error);
+    }
+    const status =
+      body && typeof body === "object" && !Array.isArray(body)
+        ? (body as { status?: unknown }).status
+        : undefined;
 
-    if (!["active", "paused", "archived"].includes(status)) {
+    if (
+      typeof status !== "string" ||
+      !["active", "paused", "archived"].includes(status)
+    ) {
       return Response.json({ error: "Invalid status" }, { status: 400 });
     }
 
@@ -72,7 +92,7 @@ export async function PATCH(
 
     return Response.json({ id, status, message: `Strategy ${status}` });
   } catch (error) {
-    console.error("Failed to update strategy:", error);
+    log.error("strategies", "failed to update strategy", { error });
     return Response.json({ error: "Failed to update strategy" }, { status: 500 });
   }
 }
@@ -85,6 +105,7 @@ export async function DELETE(
     const auth = requireWallet(request);
     if ("response" in auth) return auth.response;
     const { id } = await params;
+    if (!validId(id)) return Response.json({ error: "Strategy not found" }, { status: 404 });
     const db = getDb();
 
     const result = db
@@ -96,7 +117,7 @@ export async function DELETE(
 
     return Response.json({ message: "Strategy deleted" });
   } catch (error) {
-    console.error("Failed to delete strategy:", error);
+    log.error("strategies", "failed to delete strategy", { error });
     return Response.json({ error: "Failed to delete strategy" }, { status: 500 });
   }
 }

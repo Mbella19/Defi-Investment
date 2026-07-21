@@ -1,6 +1,7 @@
 import "server-only";
 import type { StrategyMonitorAlert } from "@/lib/strategy-monitor";
 import { alertDiscordEmbed } from "@/lib/notifications/templates";
+import { log } from "@/lib/log";
 
 const TIMEOUT_MS = 6_000;
 const MAX_EMBEDS_PER_REQUEST = 10;
@@ -21,18 +22,21 @@ async function postDiscord(
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: "Sovereign", embeds }),
+      body: JSON.stringify({
+        username: "Sovereign",
+        embeds,
+        allowed_mentions: { parse: [] },
+      }),
       signal: controller.signal,
+      redirect: "error",
     });
     if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      console.warn("[discord] user webhook failed", res.status, txt.slice(0, 200));
+      log.warn("discord", "user webhook rejected delivery", { status: res.status });
       return false;
     }
     return true;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn("[discord] user webhook post failed:", msg);
+    log.warn("discord", "user webhook delivery failed", { error: err });
     return false;
   } finally {
     clearTimeout(timeout);

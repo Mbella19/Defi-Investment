@@ -13,7 +13,7 @@ const toolCards = [
     title: "Scenario simulator",
     href: "/tools/simulator",
     icon: Sparkles,
-    body: "Forward-replay any allocation against four real-world stress regimes — baseline, stablecoin depeg, TVL crash, and market drawdown — using each protocol's own historical yield data. Find out how your portfolio behaves before the market makes you find out.",
+    body: "Stress-test any allocation against baseline, stablecoin depeg, TVL crash, and market drawdown scenarios using a deterministic block bootstrap of each protocol's historical yield data.",
     metric: "4 regimes",
   },
   {

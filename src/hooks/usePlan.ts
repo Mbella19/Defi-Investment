@@ -83,7 +83,13 @@ export function usePlan(): PlanState {
   }, []);
 
   useEffect(() => {
-    void fetchPlan();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) void fetchPlan();
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [fetchPlan, authStatus]);
 
   return { ...state, refetch: fetchPlan };

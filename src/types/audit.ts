@@ -1,5 +1,5 @@
 // Multi-engine audit pipeline types. Distinct from src/types/security.ts so
-// the existing source-audit / forensics paths keep working unchanged.
+// the audit pipeline can share consistent contracts across its stages.
 
 export type AuditSeverity = "critical" | "high" | "medium" | "low" | "info";
 
@@ -59,6 +59,8 @@ export interface ToolFinding {
 
 export interface ToolRunResult {
   tool: ToolName;
+  /** Contract surface this result analyzed (proxy shell or implementation). */
+  scope?: { address: string; kind: "target" | "implementation" };
   available: boolean;
   unavailableReason?: string;
   durationMs: number;
@@ -236,6 +238,14 @@ export interface AuditReport {
   admin: AdminInfo;
 
   toolResults: ToolRunResult[];
+  coverage: {
+    targetSourceAvailable: boolean;
+    implementationRequired: boolean;
+    implementationSourceAvailable: boolean;
+    staticAnalyzersAvailable: ToolName[];
+    onchainAvailable: boolean;
+    sufficientForCleanVerdict: boolean;
+  };
   scsvs: ScsvsReport;
   findings: ConsensusFinding[];
 

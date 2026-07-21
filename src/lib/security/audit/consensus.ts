@@ -68,7 +68,24 @@ function bucketKey(f: ToolFinding): string {
   const file = f.filePath ? normalizePath(f.filePath) : "";
   const lineBucket = f.startLine !== undefined ? Math.floor(f.startLine / LINE_BUCKET_SIZE) : "";
   const fnOrContract = (f.function ?? f.contract ?? "").toLowerCase();
-  return `${f.category}::${file}::${lineBucket}::${fnOrContract}`;
+  // Location-less findings used to collapse solely by category, which could
+  // turn unrelated warnings into fake cross-tool consensus. Keep a semantic
+  // fingerprint whenever there is no precise source location.
+  const semantic = !file && lineBucket === ""
+    ? normalizeSemanticKey(f.rawDetectorId ?? f.title)
+    : "";
+  return `${f.category}::${file}::${lineBucket}::${fnOrContract}::${semantic}`;
+}
+
+function normalizeSemanticKey(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((token) => !["the", "a", "an", "in", "of", "and", "contract"].includes(token))
+    .slice(0, 6)
+    .join("-");
 }
 
 function normalizePath(p: string): string {
@@ -141,9 +158,13 @@ function escalateConfidence(base: AuditConfidence, tools: ToolName[]): AuditConf
   // "confirmed". The on-chain interrogator findings are pre-graded
   // "high"/"confirmed" because they read live state, not source.
   const nondegenerate = tools.filter((t) => t !== "ai_explainer");
-  if (nondegenerate.length >= 3) return "confirmed";
-  if (nondegenerate.length === 2 && CONFIDENCE_RANK[base] >= CONFIDENCE_RANK.medium) return "confirmed";
-  if (nondegenerate.length === 2) return "high";
+  if (base === "confirmed") return "confirmed";
+  // Agreement between automated analyzers raises confidence, but it is not
+  // formal proof. Reserve "confirmed" for findings backed by direct state or
+  // another source that explicitly supplied that confidence.
+  if (nondegenerate.length >= 2 && CONFIDENCE_RANK[base] < CONFIDENCE_RANK.high) {
+    return CONFIDENCE_RANK[base] >= CONFIDENCE_RANK.medium ? "high" : "medium";
+  }
   return base;
 }
 
@@ -193,7 +214,10 @@ const CONFIDENCE_MULTIPLIER: Record<AuditConfidence, number> = {
  * Critical confirmed findings dominate; low-confidence info findings barely
  * register. Hard floors: any confirmed critical → 90+; any confirmed high → 65+.
  */
-export function aggregateRisk(findings: ConsensusFinding[]): RiskAggregate {
+export function aggregateRisk(
+  findings: ConsensusFinding[],
+  options: { allowClean?: boolean } = {},
+): RiskAggregate {
   const counts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   let raw = 0;
 
@@ -220,6 +244,11 @@ export function aggregateRisk(findings: ConsensusFinding[]): RiskAggregate {
   else if (score >= 55) verdict = "dangerous";
   else if (score >= 25) verdict = "review";
   else verdict = "clean";
+
+  if (options.allowClean === false && verdict === "clean") {
+    score = Math.max(score, 25);
+    verdict = "review";
+  }
 
   return { riskScore: score, verdict, counts };
 }

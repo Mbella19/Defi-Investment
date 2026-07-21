@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { StrategyAlert } from "@/types/active-strategy";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
+import { apiFetch } from "@/lib/api-client";
 
 const POLL_INTERVAL = 60_000; // 60 seconds
 
@@ -62,7 +63,7 @@ export function useStrategyAlerts() {
 
   const markRead = useCallback(
     async (alertIds: string[]) => {
-      await fetch("/api/strategies/alerts", {
+      await apiFetch("/api/strategies/alerts", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ alertIds }),
@@ -73,7 +74,7 @@ export function useStrategyAlerts() {
   );
 
   const markAllRead = useCallback(async () => {
-    await fetch("/api/strategies/alerts", {
+    await apiFetch("/api/strategies/alerts", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ markAllRead: true }),

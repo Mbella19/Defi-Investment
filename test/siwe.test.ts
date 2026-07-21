@@ -65,6 +65,21 @@ describe("verifySiweMessage", () => {
     expect(out.ok).toBe(false);
   });
 
+  it("does not consume a nonce when cryptographic verification fails", async () => {
+    const account = privateKeyToAccount(generatePrivateKey());
+    const wrongSigner = privateKeyToAccount(generatePrivateKey());
+    const nonce = "test-nonce-not-burned";
+    rememberNonce(nonce);
+    const message = buildMessage({ address: account.address, nonce });
+    const wrongSignature = await wrongSigner.signMessage({ message });
+    expect((await verifySiweMessage({ message, signature: wrongSignature, expectedOrigin: DOMAIN })).ok)
+      .toBe(false);
+
+    const correctSignature = await account.signMessage({ message });
+    expect((await verifySiweMessage({ message, signature: correctSignature, expectedOrigin: DOMAIN })).ok)
+      .toBe(true);
+  });
+
   it("rejects a domain that doesn't match the expected origin", async () => {
     const account = privateKeyToAccount(generatePrivateKey());
     const nonce = "test-nonce-domain";
@@ -74,6 +89,36 @@ describe("verifySiweMessage", () => {
     const out = await verifySiweMessage({ message, signature, expectedOrigin: DOMAIN });
     expect(out.ok).toBe(false);
     expect(out.error).toMatch(/domain/i);
+  });
+
+  it("binds the URI scheme as well as the host", async () => {
+    const account = privateKeyToAccount(generatePrivateKey());
+    const nonce = "test-nonce-scheme";
+    rememberNonce(nonce);
+    const message = buildMessage({ address: account.address, nonce, uri: `http://${DOMAIN}` });
+    const signature = await account.signMessage({ message });
+    const out = await verifySiweMessage({
+      message,
+      signature,
+      expectedOrigin: `https://${DOMAIN}`,
+    });
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/URI origin/i);
+  });
+
+  it("rejects credentials embedded in the SIWE URI", async () => {
+    const account = privateKeyToAccount(generatePrivateKey());
+    const nonce = "test-nonce-uri-credentials";
+    rememberNonce(nonce);
+    const message = buildMessage({
+      address: account.address,
+      nonce,
+      uri: `https://user:password@${DOMAIN}`,
+    });
+    const signature = await account.signMessage({ message });
+    const out = await verifySiweMessage({ message, signature, expectedOrigin: DOMAIN });
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/credentials/i);
   });
 
   it("rejects when Domain and URI disagree even without an expectedOrigin", async () => {

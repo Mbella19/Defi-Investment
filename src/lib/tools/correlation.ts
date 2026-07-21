@@ -44,10 +44,17 @@ function pearson(a: number[], b: number[]): number {
  * Day-over-day diffs. Drops the first row since there's no prior day to diff
  * against. Equivalent to `Δapy_t = apy_t - apy_{t-1}`.
  */
-function diffs(series: number[]): number[] {
+function diffs(series: number[], dates?: string[]): number[] {
   if (series.length < 2) return [];
   const out: number[] = new Array(series.length - 1);
-  for (let i = 1; i < series.length; i++) out[i - 1] = series[i] - series[i - 1];
+  for (let i = 1; i < series.length; i++) {
+    let elapsedDays = 1;
+    if (dates?.[i] && dates[i - 1]) {
+      const elapsed = (Date.parse(`${dates[i]}T00:00:00Z`) - Date.parse(`${dates[i - 1]}T00:00:00Z`)) / 86_400_000;
+      if (Number.isFinite(elapsed) && elapsed > 0) elapsedDays = elapsed;
+    }
+    out[i - 1] = (series[i] - series[i - 1]) / elapsedDays;
+  }
   return out;
 }
 
@@ -55,14 +62,14 @@ function diffs(series: number[]): number[] {
  * Build the full NxN correlation matrix from an aligned APY matrix
  * (rows = days, cols = pools). Diagonal is 1.0. Symmetric.
  */
-export function correlationMatrix(matrix: number[][]): number[][] {
+export function correlationMatrix(matrix: number[][], dates?: string[]): number[][] {
   if (matrix.length === 0) return [];
   const numCols = matrix[0].length;
   const cols: number[][] = [];
   for (let c = 0; c < numCols; c++) {
     const series: number[] = new Array(matrix.length);
     for (let r = 0; r < matrix.length; r++) series[r] = matrix[r][c];
-    cols.push(diffs(series));
+    cols.push(diffs(series, dates));
   }
 
   const grid: number[][] = [];

@@ -1,5 +1,6 @@
 import { getAuditJob, publicAuditView } from "@/lib/security/audit/jobs";
 import { requireWallet } from "@/lib/auth/guard";
+import { kickAuditWorker } from "@/lib/security/audit/worker";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,9 +9,10 @@ export const fetchCache = "force-no-store";
 export async function GET(request: Request) {
   const auth = requireWallet(request);
   if ("response" in auth) return auth.response;
+  kickAuditWorker();
   const url = new URL(request.url);
   const id = url.searchParams.get("id");
-  if (!id) {
+  if (!id || !/^[A-Za-z0-9_-]{8,128}$/.test(id)) {
     return Response.json({ error: "Missing job id" }, { status: 400 });
   }
   const job = getAuditJob(id);

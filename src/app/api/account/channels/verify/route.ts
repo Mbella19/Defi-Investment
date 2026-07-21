@@ -1,7 +1,9 @@
 import { requireWallet } from "@/lib/auth/guard";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { jsonBodyErrorResponse, readJsonBody } from "@/lib/request-body";
 import {
   consumeVerification,
+  redactChannelEndpoint,
   upsertChannel,
   type ChannelKind,
 } from "@/lib/notifications/channels";
@@ -25,12 +27,16 @@ export async function POST(request: Request) {
   const auth = requireWallet(request);
   if ("response" in auth) return auth.response;
 
-  let body: VerifyBody;
+  let parsed: unknown;
   try {
-    body = (await request.json()) as VerifyBody;
-  } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    parsed = await readJsonBody(request);
+  } catch (error) {
+    return jsonBodyErrorResponse(error);
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return Response.json({ error: "JSON body must be an object" }, { status: 400 });
+  }
+  const body = parsed as VerifyBody;
 
   const channel = body.channel as ChannelKind | undefined;
   const code = body.code?.trim() ?? "";
@@ -62,7 +68,7 @@ export async function POST(request: Request) {
   return Response.json({
     ok: true,
     channel,
-    endpoint: out.endpoint,
+    endpoint: redactChannelEndpoint(channel, out.endpoint),
     message: "Channel verified — alerts will arrive here.",
   });
 }

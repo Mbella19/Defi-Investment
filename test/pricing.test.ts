@@ -20,13 +20,17 @@ describe("toRawUnits", () => {
     expect(toRawUnits(5000, 18)).toBe("5000000000000000000000");
   });
 
-  it("caps fractional precision at 12 digits", () => {
-    expect(toRawUnits(0.1234567890123456, 18)).toBe("123456789012000000");
+  it("preserves representable precision and rounds fractional raw units up", () => {
+    expect(toRawUnits(0.1234567890123456, 18)).toBe("123456789012345600");
+    expect(toRawUnits(1.0000004, 6)).toBe("1000001");
+    expect(toRawUnits(0.0000001, 6)).toBe("1");
   });
 
   it("rejects non-finite amounts", () => {
     expect(() => toRawUnits(Number.NaN, 18)).toThrow();
     expect(() => toRawUnits(Infinity, 6)).toThrow();
+    expect(() => toRawUnits(1, -1)).toThrow();
+    expect(() => toRawUnits(1, 1.5)).toThrow();
   });
 });
 
@@ -35,18 +39,19 @@ describe("compareAmount", () => {
     expect(compareAmount("1000000", "1000000")).toBe(true);
   });
 
-  it("accepts within ±0.5%", () => {
+  it("accepts overpayment but never underpayment", () => {
     expect(compareAmount("1004000", "1000000")).toBe(true);
-    expect(compareAmount("996000", "1000000")).toBe(true);
+    expect(compareAmount("996000", "1000000")).toBe(false);
   });
 
-  it("rejects beyond ±0.5%", () => {
-    expect(compareAmount("1006000", "1000000")).toBe(false);
+  it("rejects any amount below the locked quote", () => {
+    expect(compareAmount("1006000", "1000000")).toBe(true);
     expect(compareAmount("990000", "1000000")).toBe(false);
   });
 
   it("rejects malformed inputs", () => {
     expect(compareAmount("abc", "1000000")).toBe(false);
     expect(compareAmount("1.5", "1000000")).toBe(false);
+    expect(compareAmount("0", "0")).toBe(false);
   });
 });

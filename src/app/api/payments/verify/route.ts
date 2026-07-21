@@ -2,7 +2,8 @@ import { requireWallet } from "@/lib/auth/guard";
 import { findPair } from "@/lib/payments/config";
 import {
   confirmQuoteAndActivate,
-  getQuote,
+  canonicalizeEvmTxHash,
+  getQuoteForWallet,
   isExpired,
   isWithinGrace,
   markQuoteStatus,
@@ -12,67 +13,65 @@ import {
 import { verifyTransaction } from "@/lib/payments/verify";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { log } from "@/lib/log";
+import { getPlan } from "@/lib/plans/access";
+import { jsonBodyErrorResponse, readJsonBody } from "@/lib/request-body";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-/**
- * Failure reasons that can resolve on their own as the chain advances
- * (unmined, under-confirmed, transient upstream error). For these we persist
- * the tx hash on the quote so the background reconciler can finish the
- * verification server-side even if the user closes the tab. Deterministic
- * failures (wrong recipient, wrong amount, reverted) are never persisted.
- */
-function isRetryableReason(reason: string): boolean {
-  return /not yet (mined|confirmed|finalized)|need .*confirmation|lookup failed|rpc failed|transaction not found/i.test(
-    reason,
-  );
-}
-
 export async function POST(request: Request) {
-  const limited = enforceRateLimit(request, "payments.verify", { max: 30, windowMs: 60 * 60 * 1000 });
+  // Checkout polls while confirmations accrue. Keep this consistent with the
+  // 30-second client cadence while still bounding RPC work per wallet.
+  const limited = enforceRateLimit(request, "payments.verify", { max: 150, windowMs: 60 * 60 * 1000 });
   if (limited) return limited;
   const auth = requireWallet(request);
   if ("response" in auth) return auth.response;
 
-  let body: { id?: unknown; txHash?: unknown };
+  let parsed: unknown;
   try {
-    body = await request.json();
-  } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    parsed = await readJsonBody(request);
+  } catch (error) {
+    return jsonBodyErrorResponse(error);
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return Response.json({ error: "JSON body must be an object" }, { status: 400 });
+  }
+  const body = parsed as { id?: unknown; txHash?: unknown };
   const id = typeof body.id === "string" ? body.id : null;
-  const txHash =
-    typeof body.txHash === "string" ? body.txHash.trim() : null;
-  if (!id || !txHash) {
-    return Response.json({ error: "id and txHash are required" }, { status: 400 });
+  const txHash = typeof body.txHash === "string"
+    ? canonicalizeEvmTxHash(body.txHash)
+    : null;
+  if (!id || !/^[A-Za-z0-9_-]{8,128}$/.test(id) || !txHash) {
+    return Response.json({ error: "A quote id and valid EVM transaction hash are required" }, { status: 400 });
   }
 
-  const quote = getQuote(id);
+  const quote = getQuoteForWallet(id, auth.wallet);
   if (!quote) {
     return Response.json({ error: "Quote not found or expired" }, { status: 404 });
-  }
-  if (quote.wallet !== auth.wallet.toLowerCase()) {
-    return Response.json({ error: "Quote belongs to a different wallet" }, { status: 403 });
   }
   if (quote.status === "confirmed") {
     return Response.json({
       ok: true,
       status: "already_confirmed",
-      tier: quote.tier,
+      tier: getPlan(auth.wallet).tier,
       txHash: quote.txHash,
     });
   }
-  // Expiry gates creating a payment, not verifying one. A user who paid the
-  // quoted amount before expiry must still be able to claim it — slow BTC
-  // confirmations regularly outlive the quote window. Only reject beyond the
-  // grace period.
+  // A payment mined before expiry can still be claimed during the bounded
+  // verification grace period. The verifier independently rejects any
+  // transaction mined outside the quote's original price-lock window.
   if (isExpired(quote) && !isWithinGrace(quote)) {
-    markQuoteStatus(quote.id, "expired");
+    markQuoteStatus(quote, "expired");
     return Response.json({ error: "Quote expired — request a new one" }, { status: 410 });
   }
-  if (txAlreadyClaimed(txHash)) {
+  if (quote.status !== "pending") {
+    return Response.json({ error: `Quote is ${quote.status}` }, { status: 409 });
+  }
+  if (quote.chainId === null) {
+    return Response.json({ error: "Only EVM payment quotes are supported" }, { status: 410 });
+  }
+  if (txAlreadyClaimed(quote.chainId, txHash)) {
     return Response.json({ error: "This transaction has already been claimed" }, { status: 409 });
   }
 
@@ -80,46 +79,47 @@ export async function POST(request: Request) {
   if (!pair) {
     return Response.json({ error: "Unsupported chain/token in quote" }, { status: 500 });
   }
+  const expectedContract = pair.contract?.toLowerCase() ?? null;
+  if (
+    pair.chainId !== quote.chainId ||
+    expectedContract !== (quote.tokenContract?.toLowerCase() ?? null)
+  ) {
+    return Response.json(
+      { error: "Payment configuration changed after this quote was created; request a new quote" },
+      { status: 410 },
+    );
+  }
 
   const result = await verifyTransaction({
     pair,
     txHash,
     expectedRecipient: quote.recipientAddress,
     expectedAmount: quote.amountToken,
+    expectedSender: quote.wallet,
+    notBefore: quote.createdAt,
+    notAfter: quote.expiresAt,
   });
 
   if (!result.ok) {
-    // Remember the hash for retryable failures so the reconciler can finish
-    // the job server-side. Best-effort: a unique-index conflict here means
-    // another quote already carries this hash — skip silently, the eventual
-    // confirm path clears squatters.
-    if (isRetryableReason(result.reason)) {
+    // Remember retryable hashes so the reconciler can finish server-side if
+    // the browser closes while confirmations are still accumulating.
+    if (result.retryable) {
       try {
-        markQuoteStatus(quote.id, "pending", txHash);
+        markQuoteStatus(quote, "pending", txHash);
       } catch (err) {
         log.warn("payments", "could not persist pending tx hash", {
           quoteId: quote.id,
           error: err instanceof Error ? err.message : String(err),
         });
       }
+      return Response.json(
+        { ok: false, status: "pending", reason: result.reason, txHash },
+        { status: 202, headers: { "Cache-Control": "private, no-store" } },
+      );
     }
     return Response.json(
-      { ok: false, status: "pending", reason: result.reason, txHash },
-      { status: 200 },
-    );
-  }
-
-  // Anti front-running: the in-site EVM flow always pays from the signed-in
-  // wallet, so a sender mismatch means someone is claiming a transaction
-  // they didn't send. Non-EVM flows pay from external wallets and stay
-  // unbound by design.
-  if (pair.chainId !== null && result.observed.from !== quote.wallet) {
-    return Response.json(
-      {
-        error:
-          "This payment was sent from a different wallet than the one you signed in with. Sign in with the paying wallet and try again.",
-      },
-      { status: 400 },
+      { error: result.reason, code: "PAYMENT_REJECTED" },
+      { status: 400, headers: { "Cache-Control": "private, no-store" } },
     );
   }
 
@@ -128,7 +128,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const sub = confirmQuoteAndActivate(quote, txHash);
+    const sub = confirmQuoteAndActivate(quote, txHash, result.observed);
     log.info("payments", "payment confirmed", {
       quoteId: quote.id,
       wallet: quote.wallet,
@@ -139,7 +139,7 @@ export async function POST(request: Request) {
     return Response.json({
       ok: true,
       status: "confirmed",
-      tier: quote.tier,
+      tier: sub.tier,
       expiresAt: sub.expiresAt,
       observed: result.observed,
     });

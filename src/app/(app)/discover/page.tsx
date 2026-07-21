@@ -15,8 +15,8 @@ import {
   chainOrder,
   formatPct,
   formatUsd,
+  marketScreenScore,
   riskBandFor,
-  safetyScore,
   type ChainId,
   type MarketCategory,
   type RiskBand,
@@ -36,14 +36,14 @@ interface MarketView {
   tvl: number;
   apy: number;
   apy7d: number | null;
-  safety: number;
+  screenScore: number;
   capacity: number;
   poolId: string;
   rawCategory: string;
 }
 
 function toMarketView(pool: LivePool): MarketView {
-  const safety = safetyScore({
+  const screenScore = marketScreenScore({
     tvlUsd: pool.tvlUsd,
     apy: pool.apy,
     apyPct30D: pool.apyPct30D,
@@ -64,7 +64,7 @@ function toMarketView(pool: LivePool): MarketView {
     tvl: pool.tvlUsd,
     apy: pool.apy,
     apy7d: pool.apyPct7D,
-    safety,
+    screenScore,
     capacity,
     poolId: pool.poolId,
     rawCategory: pool.category,
@@ -92,15 +92,15 @@ export default function DiscoverPage() {
         matchesQuery &&
         (chain === "All" || m.chain === chain) &&
         (category === "All" || m.category === category) &&
-        (risk === "All" || riskBandFor({ safety: m.safety, apy: m.apy }) === risk)
+        (risk === "All" || riskBandFor({ screenScore: m.screenScore, apy: m.apy }) === risk)
       );
     });
   }, [allViews, query, chain, category, risk]);
 
   const totalTvl = filtered.reduce((sum, m) => sum + m.tvl, 0);
   const avgApy = filtered.length > 0 ? filtered.reduce((sum, m) => sum + m.apy, 0) / filtered.length : 0;
-  const avgSafety = filtered.length > 0
-    ? filtered.reduce((sum, m) => sum + m.safety, 0) / filtered.length
+  const avgScreenScore = filtered.length > 0
+    ? filtered.reduce((sum, m) => sum + m.screenScore, 0) / filtered.length
     : 0;
 
   const visibleChains = chainOrder.filter((id) => allViews.some((m) => m.chain === id));
@@ -114,7 +114,8 @@ export default function DiscoverPage() {
           <p>
             Thousands of yield opportunities, filtered down to the ones worth your time.
             Sortable by chain, asset class, depth, and stability — every line carries a
-            risk band so you know what you&apos;re looking at before you click in.
+            market-screen band so you know what you&apos;re looking at before you click in.
+            These bands are liquidity/yield heuristics, not smart-contract security verdicts.
           </p>
         </div>
       </div>
@@ -144,7 +145,7 @@ export default function DiscoverPage() {
         <MetricTile label="Visible markets" value={String(filtered.length)} icon={Filter} tone="#60a5fa" />
         <MetricTile label="Screened TVL" value={formatUsd(totalTvl)} icon={Sparkles} tone="#6ee7b7" />
         <MetricTile label="Average APY" value={formatPct(avgApy)} icon={SlidersHorizontal} tone="#fbbf24" />
-        <MetricTile label="Safety mean" value={avgSafety > 0 ? avgSafety.toFixed(0) : "—"} icon={Search} tone="#fb7185" />
+        <MetricTile label="Market screen mean" value={avgScreenScore > 0 ? avgScreenScore.toFixed(0) : "—"} icon={Search} tone="#fb7185" />
       </div>
 
       <div className="page-tools">
@@ -226,7 +227,7 @@ export default function DiscoverPage() {
                 tvl: market.tvl,
                 apy: market.apy,
                 apy7d: market.apy7d,
-                safety: market.safety,
+                screenScore: market.screenScore,
                 href: `https://defillama.com/yields/pool/${market.poolId}`,
               }}
             />
@@ -241,7 +242,7 @@ export default function DiscoverPage() {
               <div className="allocation-card" key={`spotlight-${market.id}`}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                   <ChainBadge chain={market.chain} />
-                  <RiskPill risk={riskBandFor({ safety: market.safety, apy: market.apy })} />
+                  <RiskPill risk={riskBandFor({ screenScore: market.screenScore, apy: market.apy })} />
                 </div>
                 <h3>{market.protocol}</h3>
                 <p>

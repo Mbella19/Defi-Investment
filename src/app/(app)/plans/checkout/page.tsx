@@ -7,7 +7,6 @@ import {
   ArrowLeft,
   CheckCircle2,
   CreditCard,
-  ExternalLink,
   Loader2,
   RefreshCw,
   ShieldCheck,
@@ -29,6 +28,7 @@ import { encodeFunctionData, erc20Abi, formatUnits, type Hex } from "viem";
 import { CommandStrip } from "@/components/site/ui";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { usePlan } from "@/hooks/usePlan";
+import { apiFetch } from "@/lib/api-client";
 
 interface SupportedPair {
   chain: string;
@@ -36,7 +36,7 @@ interface SupportedPair {
   label: string;
   chainLabel: string;
   decimals: number;
-  chainId: number | null;
+  chainId: number;
   isEvm: boolean;
   contract: string | null;
   enabled: boolean;
@@ -75,17 +75,18 @@ const TOKEN_BLURB: Record<string, string> = {
   ETH: "Native Ether — fastest direct settlement on Ethereum",
   USDC: "USD-pegged stablecoin — choose your network below",
   USDT: "Tether USD — choose your network below",
-  BTC: "Native bitcoin — confirms in roughly 10 minutes",
-  SOL: "Native Solana — finalises in seconds",
 };
 
-const TOKEN_ORDER = ["ETH", "USDC", "USDT", "BTC", "SOL"] as const;
+const TOKEN_ORDER = ["ETH", "USDC", "USDT"] as const;
 
 // Verify polling cadence while a submitted tx waits for confirmations. The
 // server wants 6 (ETH) / 12 (BSC) confirmations but the wallet reports the
 // receipt at 1 — without this loop every mainnet payment stalled at
 // "pending" with no way to retry.
-const VERIFY_POLL_MS = 20_000;
+const VERIFY_POLL_MS = 30_000;
+// Do not invite a payment that may sit in a mempool past the immutable quote
+// window. Refresh before expiry while no transaction hash is in flight.
+const PAYMENT_SAFETY_BUFFER_MS = 2 * 60_000;
 
 // Survives reloads mid-payment so we can resume verification of an
 // already-broadcast tx instead of silently minting a fresh quote.
@@ -141,6 +142,7 @@ function CheckoutInner() {
   const [pickedToken, setPickedToken] = useState<string | null>(null);
   const [pickedChain, setPickedChain] = useState<string | null>(null);
   const [quote, setQuote] = useState<Quote | null>(null);
+  const [quoteVersion, setQuoteVersion] = useState(0);
   const [quoteBusy, setQuoteBusy] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [verifyState, setVerifyState] = useState<VerifyResponse | null>(null);
@@ -151,7 +153,6 @@ function CheckoutInner() {
   // A previously-broadcast payment recovered from sessionStorage after reload.
   const [resume, setResume] = useState<{ quote: Quote; txHash: string } | null>(null);
   const verifyBusyRef = useRef(false);
-  verifyBusyRef.current = verifyBusy;
 
   // Load supported payment pairs.
   useEffect(() => {
@@ -188,14 +189,6 @@ function CheckoutInner() {
     return pairs.filter((p) => p.token === pickedToken);
   }, [pairs, pickedToken]);
 
-  // Auto-pick the only network when a single-network token is chosen.
-  useEffect(() => {
-    if (!pickedToken) return;
-    if (networksForToken.length === 1) {
-      setPickedChain(networksForToken[0].chain);
-    }
-  }, [pickedToken, networksForToken]);
-
   const activePair = useMemo(() => {
     if (!pairs || !pickedChain || !pickedToken) return null;
     return pairs.find((p) => p.chain === pickedChain && p.token === pickedToken) ?? null;
@@ -205,49 +198,74 @@ function CheckoutInner() {
   useEffect(() => {
     if (!activePair || !isAuthed) return;
     let cancelled = false;
-    setQuoteBusy(true);
-    setQuoteError(null);
-    setQuote(null);
-    setVerifyState(null);
-    (async () => {
-      try {
-        const res = await fetch("/api/payments/quote", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tier, chain: activePair.chain, token: activePair.token }),
-        });
-        if (!res.ok) {
-          const err = (await res.json().catch(() => ({}))) as { error?: string };
-          throw new Error(err.error ?? `Quote ${res.status}`);
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setQuoteBusy(true);
+      setQuoteError(null);
+      setQuote(null);
+      setVerifyState(null);
+      void (async () => {
+        try {
+          const res = await apiFetch("/api/payments/quote", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tier, chain: activePair.chain, token: activePair.token }),
+          });
+          if (!res.ok) {
+            const err = (await res.json().catch(() => ({}))) as { error?: string };
+            throw new Error(err.error ?? `Quote ${res.status}`);
+          }
+          const data = (await res.json()) as Quote;
+          if (!cancelled) setQuote(data);
+        } catch (err) {
+          if (!cancelled) {
+            setQuoteError(err instanceof Error ? err.message : "Quote failed");
+          }
+        } finally {
+          if (!cancelled) setQuoteBusy(false);
         }
-        const data = (await res.json()) as Quote;
-        if (!cancelled) setQuote(data);
-      } catch (err) {
-        if (!cancelled) {
-          setQuoteError(err instanceof Error ? err.message : "Quote failed");
-        }
-      } finally {
-        if (!cancelled) setQuoteBusy(false);
-      }
-    })();
+      })();
+    });
     return () => {
       cancelled = true;
     };
-  }, [activePair, tier, isAuthed]);
+  }, [activePair, tier, isAuthed, quoteVersion]);
+
+  // Never leave a payable stale-price quote on screen. If no transaction is
+  // in flight, refresh it immediately after its server-issued expiry.
+  useEffect(() => {
+    if (!quote || verifyTarget) return;
+    const delay = Math.max(
+      0,
+      Date.parse(quote.expiresAt) - Date.now() - PAYMENT_SAFETY_BUFFER_MS,
+    );
+    const timeout = window.setTimeout(() => setQuoteVersion((value) => value + 1), delay);
+    return () => window.clearTimeout(timeout);
+  }, [quote, verifyTarget]);
 
   async function submitVerify(quoteId: string, txHash: string) {
+    if (verifyBusyRef.current) return;
+    verifyBusyRef.current = true;
     setVerifyBusy(true);
     setVerifyError(null);
     setVerifyTarget({ quoteId, txHash });
     writeStoredPending({ quoteId, txHash });
     try {
-      const res = await fetch("/api/payments/verify", {
+      const res = await apiFetch("/api/payments/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: quoteId, txHash }),
       });
       const data = (await res.json()) as VerifyResponse & { error?: string };
       if (!res.ok && !("status" in data && data.status === "pending")) {
+        if ([400, 404, 409, 410].includes(res.status)) {
+          writeStoredPending(null);
+          setVerifyTarget(null);
+        } else if (res.status === 401 || res.status === 403) {
+          // Preserve sessionStorage so re-authentication can resume the paid
+          // transaction, but stop a futile unauthenticated polling loop.
+          setVerifyTarget(null);
+        }
         throw new Error(data.error ?? `Verify ${res.status}`);
       }
       setVerifyState(data);
@@ -260,16 +278,16 @@ function CheckoutInner() {
       }
     } catch (err) {
       setVerifyError(err instanceof Error ? err.message : "Verify failed");
-      // Deterministic rejection (wrong sender, claimed tx) — stop polling.
-      setVerifyTarget(null);
+      // Retryable network/server errors keep verifyTarget active so the
+      // polling loop self-heals without requiring a page reload.
     } finally {
+      verifyBusyRef.current = false;
       setVerifyBusy(false);
     }
   }
 
   // Recover a broadcast-but-unverified payment after a reload. Without this,
   // remounting auto-created a NEW quote and the already-sent tx had no path
-  // back to verification.
   useEffect(() => {
     if (!isAuthed) return;
     const stored = readStoredPending();
@@ -412,7 +430,7 @@ function CheckoutInner() {
           <button
             type="button"
             className="primary-button"
-            onClick={() => signIn().catch(() => {})}
+            onClick={() => void signIn()}
           >
             Sign in with wallet
           </button>
@@ -434,8 +452,11 @@ function CheckoutInner() {
                       type="button"
                       className={`checkout-pair ${active ? "is-active" : ""}`}
                       onClick={() => {
+                        const matchingNetworks = pairs.filter((p) => p.token === token);
                         setPickedToken(token);
-                        setPickedChain(null);
+                        setPickedChain(
+                          matchingNetworks.length === 1 ? matchingNetworks[0].chain : null,
+                        );
                       }}
                     >
                       <strong>{token}</strong>
@@ -460,7 +481,7 @@ function CheckoutInner() {
                         onClick={() => setPickedChain(p.chain)}
                       >
                         <strong>{p.chainLabel}</strong>
-                        <span>{p.isEvm ? "Pay direct from wallet" : "External wallet"}</span>
+                        <span>Pay direct from your signed-in wallet</span>
                       </button>
                     );
                   })}
@@ -539,7 +560,7 @@ function VerifyStatusNote({
       ) : (
         <>
           <RefreshCw size={15} aria-hidden="true" /> {state.reason ?? "Still pending"} —
-          auto-checking every 20s.
+          auto-checking every 30s.
           {onRecheck ? (
             <button
               type="button"
@@ -565,10 +586,15 @@ interface PaymentExecutorProps {
 }
 
 function PaymentExecutor({ pair, quote, onTxBroadcast, verifyBusy }: PaymentExecutorProps) {
-  if (pair.isEvm && pair.chainId !== null) {
-    return <EvmPaymentExecutor pair={pair} quote={quote} onTxBroadcast={onTxBroadcast} verifyBusy={verifyBusy} />;
-  }
-  return <ManualPaymentExecutor pair={pair} quote={quote} onTxBroadcast={onTxBroadcast} verifyBusy={verifyBusy} />;
+  return (
+    <EvmPaymentExecutor
+      key={quote.id}
+      pair={pair}
+      quote={quote}
+      onTxBroadcast={onTxBroadcast}
+      verifyBusy={verifyBusy}
+    />
+  );
 }
 
 function EvmPaymentExecutor({ pair, quote, onTxBroadcast, verifyBusy }: PaymentExecutorProps) {
@@ -603,8 +629,11 @@ function EvmPaymentExecutor({ pair, quote, onTxBroadcast, verifyBusy }: PaymentE
     chainId: pair.chainId ?? undefined,
   });
 
-  const targetChainId = pair.chainId!;
+  const targetChainId = pair.chainId;
   const onWrongChain = isConnected && currentChainId !== targetChainId;
+  const walletMatchesQuote = Boolean(
+    address && address.toLowerCase() === quote.wallet.toLowerCase(),
+  );
 
   // Encode the actual call we'll send so the gas estimate matches the real tx.
   const txEstimate = useMemo(() => {
@@ -740,20 +769,34 @@ function EvmPaymentExecutor({ pair, quote, onTxBroadcast, verifyBusy }: PaymentE
   const gasFeeUsd: number | null =
     gasFeeNative !== null && nativePrice ? gasFeeNative * nativePrice.usd : null;
 
-  // When the receipt is confirmed, automatically submit it for server-side verification.
-  const [submitted, setSubmitted] = useState<string | null>(null);
+  // Persist and submit as soon as the wallet returns a broadcast hash. The
+  // server reports a retryable pending state until the receipt has enough
+  // confirmations, and a page refresh cannot lose the in-flight payment.
+  const submittedRef = useRef<string | null>(null);
+  const [quoteExpired, setQuoteExpired] = useState(
+    () => Date.parse(quote.expiresAt) - PAYMENT_SAFETY_BUFFER_MS <= Date.now(),
+  );
   useEffect(() => {
-    if (receiptOk && txHash && submitted !== txHash) {
-      setSubmitted(txHash);
+    const delay = Math.max(
+      0,
+      Date.parse(quote.expiresAt) - Date.now() - PAYMENT_SAFETY_BUFFER_MS,
+    );
+    const timeout = window.setTimeout(() => setQuoteExpired(true), delay);
+    return () => window.clearTimeout(timeout);
+  }, [quote.expiresAt]);
+  useEffect(() => {
+    if (txHash && submittedRef.current !== txHash) {
+      submittedRef.current = txHash;
       void onTxBroadcast(txHash);
     }
-  }, [receiptOk, txHash, submitted, onTxBroadcast]);
+  }, [txHash, onTxBroadcast]);
 
   const broadcastErr = sendError?.message ?? writeError?.message ?? null;
 
   async function pay() {
     resetSend();
     resetWrite();
+    if (!walletMatchesQuote) return;
     if (onWrongChain) {
       try {
         await switchChainAsync({ chainId: targetChainId });
@@ -785,6 +828,8 @@ function EvmPaymentExecutor({ pair, quote, onTxBroadcast, verifyBusy }: PaymentE
 
   const buttonLabel = (() => {
     if (!isConnected) return "Wallet not connected";
+    if (!walletMatchesQuote) return "Reconnect the signed-in wallet";
+    if (quoteExpired) return "Refreshing expired quote…";
     if (switchPending) return "Switch chain in wallet…";
     if (onWrongChain) return `Switch to ${pair.chainLabel}`;
     if (balanceKnown && !hasBalance) return `Insufficient ${quote.token} balance`;
@@ -796,6 +841,8 @@ function EvmPaymentExecutor({ pair, quote, onTxBroadcast, verifyBusy }: PaymentE
 
   const disabled =
     !isConnected ||
+    !walletMatchesQuote ||
+    quoteExpired ||
     switchPending ||
     sendPending ||
     writePending ||
@@ -868,6 +915,14 @@ function EvmPaymentExecutor({ pair, quote, onTxBroadcast, verifyBusy }: PaymentE
         </div>
       ) : null}
 
+      {isConnected && !walletMatchesQuote ? (
+        <div className="checkout-status tone-danger">
+          The connected wallet does not match the wallet that created this quote. Reconnect the
+          signed-in wallet before paying; a transfer from another address cannot activate this
+          subscription.
+        </div>
+      ) : null}
+
       <button
         type="button"
         className="primary-button"
@@ -899,100 +954,6 @@ function EvmPaymentExecutor({ pair, quote, onTxBroadcast, verifyBusy }: PaymentE
       {broadcastErr ? (
         <div className="checkout-status tone-danger">{shortenWalletError(broadcastErr)}</div>
       ) : null}
-    </div>
-  );
-}
-
-function ManualPaymentExecutor({ pair, quote, onTxBroadcast, verifyBusy }: PaymentExecutorProps) {
-  const [revealAddr, setRevealAddr] = useState(false);
-  const [txHash, setTxHash] = useState("");
-
-  return (
-    <div className="checkout-quote">
-      <div>
-        <span className="pay-amount">
-          {quote.amountTokenDisplay} {quote.token}
-        </span>
-        <div style={{ color: "var(--muted)", fontSize: 13 }}>
-          ≈ ${quote.amountUsd.toFixed(2)} · live rate ${quote.unitPriceUsd.toFixed(4)} /{" "}
-          {quote.token}
-        </div>
-      </div>
-
-      <div>
-        <div className="checkout-row">
-          <span>Network</span>
-          <span>{pair.chainLabel}</span>
-        </div>
-        <div className="checkout-row">
-          <span>Token</span>
-          <span>{quote.token}</span>
-        </div>
-        <div className="checkout-row">
-          <span>Quote expires</span>
-          <span>{new Date(quote.expiresAt).toLocaleTimeString()}</span>
-        </div>
-      </div>
-
-      <div className="checkout-status tone-info">
-        {pair.chainLabel} doesn&apos;t support direct in-site send. Open your{" "}
-        {pair.chainLabel} wallet, send the exact amount above, then paste the transaction
-        hash below.
-      </div>
-
-      {!revealAddr ? (
-        <button
-          type="button"
-          className="ghost-button"
-          onClick={() => setRevealAddr(true)}
-        >
-          <ExternalLink size={15} aria-hidden="true" /> Reveal deposit address
-        </button>
-      ) : (
-        <RevealedAddress address={quote.recipientAddress} />
-      )}
-
-      <div className="filter-row" style={{ alignItems: "stretch", gap: 10 }}>
-        <input
-          className="number-input"
-          type="text"
-          placeholder="Paste your transaction hash"
-          value={txHash}
-          onChange={(e) => setTxHash(e.target.value)}
-          style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: 13 }}
-        />
-        <button
-          type="button"
-          className="primary-button"
-          disabled={verifyBusy || txHash.trim().length < 8}
-          onClick={() => onTxBroadcast(txHash.trim())}
-        >
-          <CreditCard size={16} aria-hidden="true" />
-          {verifyBusy ? "Verifying…" : "Verify payment"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function RevealedAddress({ address }: { address: string }) {
-  const [copied, setCopied] = useState(false);
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(address);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    } catch {
-      /* ignore */
-    }
-  }
-  return (
-    <div className="checkout-address">
-      <span style={{ color: "var(--soft)" }}>Address:</span>
-      <code style={{ flex: 1 }}>{address}</code>
-      <button type="button" onClick={copy}>
-        {copied ? "Copied" : "Copy"}
-      </button>
     </div>
   );
 }

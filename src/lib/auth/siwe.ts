@@ -39,8 +39,8 @@ export interface VerifySiweInput {
   signature: string;
   /**
    * Required in production. Both the EIP-4361 Domain (first line) and the
-   * Origin of the URI field must match this exactly. Pass `request.headers.get("host")`
-   * or `process.env.NEXT_PUBLIC_APP_HOST`. Without this the message is
+   * full origin of the URI field must match this exactly. Pass the canonical
+   * app origin (for example `https://app.example.com`). Without this the message is
    * replayable across deployments that share the SESSION_SECRET.
    */
   expectedOrigin?: string;
@@ -54,9 +54,9 @@ export interface VerifySiweResult {
   error?: string;
 }
 
-function originOf(uri: string): string | null {
+function parsedUri(uri: string): URL | null {
   try {
-    return new URL(uri).host;
+    return new URL(uri);
   } catch {
     return null;
   }
@@ -81,21 +81,31 @@ export async function verifySiweMessage(input: VerifySiweInput): Promise<VerifyS
 
   const uriMatch = message.match(URI_RE);
   if (!uriMatch) return { ok: false, error: "message missing URI field" };
-  const uriHost = originOf(uriMatch[1]);
-  if (!uriHost) return { ok: false, error: "URI field is not a valid URL" };
+  const uri = parsedUri(uriMatch[1]);
+  if (!uri) return { ok: false, error: "URI field is not a valid URL" };
+  if (uri.username || uri.password) {
+    return { ok: false, error: "URI field must not contain credentials" };
+  }
 
   if (expectedOrigin) {
-    // Domain may include a port (matches Host header); URI host always does.
-    if (domain !== expectedOrigin) {
-      return { ok: false, error: `Domain ${domain} does not match expected origin ${expectedOrigin}` };
+    let expected: URL;
+    try {
+      expected = new URL(expectedOrigin.includes("://") ? expectedOrigin : `https://${expectedOrigin}`);
+    } catch {
+      return { ok: false, error: "expected origin is invalid" };
     }
-    if (uriHost !== expectedOrigin) {
-      return { ok: false, error: `URI host ${uriHost} does not match expected origin ${expectedOrigin}` };
+    // The EIP-4361 Domain is host[:port], while URI is a full origin. Bind
+    // both host and scheme so an HTTP message cannot replay against HTTPS.
+    if (domain !== expected.host) {
+      return { ok: false, error: `Domain ${domain} does not match expected host ${expected.host}` };
+    }
+    if (uri.origin !== expected.origin) {
+      return { ok: false, error: `URI origin ${uri.origin} does not match expected origin ${expected.origin}` };
     }
   } else {
     // Even without an expectedOrigin, Domain ↔ URI must agree internally.
-    if (domain !== uriHost) {
-      return { ok: false, error: `Domain ${domain} does not match URI host ${uriHost}` };
+    if (domain !== uri.host) {
+      return { ok: false, error: `Domain ${domain} does not match URI host ${uri.host}` };
     }
   }
 
@@ -108,7 +118,7 @@ export async function verifySiweMessage(input: VerifySiweInput): Promise<VerifyS
   const chainIdMatch = message.match(CHAIN_ID_RE);
   if (!chainIdMatch) return { ok: false, error: "message missing Chain ID field" };
   const chainId = Number(chainIdMatch[1]);
-  if (!Number.isFinite(chainId) || chainId <= 0) {
+  if (!Number.isSafeInteger(chainId) || chainId <= 0) {
     return { ok: false, error: "Chain ID is not a positive integer" };
   }
   if (typeof expectedChainId === "number" && chainId !== expectedChainId) {
@@ -133,22 +143,22 @@ export async function verifySiweMessage(input: VerifySiweInput): Promise<VerifyS
   const expirationMatch = message.match(EXPIRATION_RE);
   if (expirationMatch) {
     const exp = Date.parse(expirationMatch[1]);
-    if (!Number.isNaN(exp) && exp < Date.now()) {
+    if (Number.isNaN(exp)) {
+      return { ok: false, error: "message Expiration Time is not a valid timestamp" };
+    }
+    if (exp < Date.now()) {
       return { ok: false, error: "message Expiration Time has passed" };
     }
   }
   const notBeforeMatch = message.match(NOT_BEFORE_RE);
   if (notBeforeMatch) {
     const nbf = Date.parse(notBeforeMatch[1]);
-    if (!Number.isNaN(nbf) && nbf > Date.now()) {
+    if (Number.isNaN(nbf)) {
+      return { ok: false, error: "message Not Before is not a valid timestamp" };
+    }
+    if (nbf > Date.now()) {
       return { ok: false, error: "message Not Before is in the future" };
     }
-  }
-
-  // Consume the nonce *before* verifying so a failed verify still burns it
-  // (replay protection even on partial failures).
-  if (!consumeNonce(nonce)) {
-    return { ok: false, error: "nonce is invalid, expired, or already used" };
   }
 
   let ok = false;
@@ -162,6 +172,13 @@ export async function verifySiweMessage(input: VerifySiweInput): Promise<VerifyS
     return { ok: false, error: "signature verification threw" };
   }
   if (!ok) return { ok: false, error: "signature does not match address" };
+
+  // Consume only after cryptographic verification. The database UPDATE is
+  // atomic, so concurrent valid replays still have exactly one winner while
+  // a typo/invalid signature cannot burn the user's one-time nonce.
+  if (!consumeNonce(nonce)) {
+    return { ok: false, error: "nonce is invalid, expired, or already used" };
+  }
 
   return { ok: true, address: claimedAddress.toLowerCase() };
 }

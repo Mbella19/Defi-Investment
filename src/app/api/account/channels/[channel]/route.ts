@@ -4,6 +4,7 @@ import {
   setChannelEnabled,
   type ChannelKind,
 } from "@/lib/notifications/channels";
+import { jsonBodyErrorResponse, readJsonBody } from "@/lib/request-body";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,12 +35,16 @@ export async function PATCH(
   if (!VALID.includes(channel as ChannelKind)) {
     return Response.json({ error: "Unknown channel." }, { status: 400 });
   }
-  let body: { enabled?: boolean };
+  let parsed: unknown;
   try {
-    body = (await request.json()) as { enabled?: boolean };
-  } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    parsed = await readJsonBody(request);
+  } catch (error) {
+    return jsonBodyErrorResponse(error);
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return Response.json({ error: "JSON body must be an object" }, { status: 400 });
+  }
+  const body = parsed as { enabled?: unknown };
   if (typeof body.enabled !== "boolean") {
     return Response.json({ error: "enabled must be a boolean" }, { status: 400 });
   }

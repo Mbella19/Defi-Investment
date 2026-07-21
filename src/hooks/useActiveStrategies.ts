@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { ActiveStrategy, StrategyAlert } from "@/types/active-strategy";
-import type { InvestmentStrategy, StrategyCriteria } from "@/types/strategy";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
+import { apiFetch } from "@/lib/api-client";
 
 /**
  * Strategy CRUD against the wallet-scoped /api/strategies routes. The auth
@@ -47,17 +47,26 @@ export function useActiveStrategies() {
   }, [isAuthed]);
 
   useEffect(() => {
-    fetchStrategies();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) void fetchStrategies();
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [fetchStrategies]);
 
   const activateStrategy = useCallback(
-    async (strategy: InvestmentStrategy, criteria: StrategyCriteria) => {
-      const res = await fetch("/api/strategies", {
+    async (jobId: string) => {
+      const res = await apiFetch("/api/strategies", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ strategy, criteria }),
+        body: JSON.stringify({ jobId }),
       });
-      if (!res.ok) throw new Error("Failed to activate strategy");
+      if (!res.ok) {
+        const detail = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(detail.error ?? "Failed to activate strategy");
+      }
       const data = await res.json();
       // Activation only registers the strategy for monitoring — it does NOT
       // record a deposit. The user has not actually moved funds; they've asked
@@ -70,7 +79,7 @@ export function useActiveStrategies() {
 
   const updateStatus = useCallback(
     async (id: string, status: "active" | "paused" | "archived") => {
-      const res = await fetch(`/api/strategies/${id}`, {
+      const res = await apiFetch(`/api/strategies/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
@@ -83,7 +92,7 @@ export function useActiveStrategies() {
 
   const deleteStrategy = useCallback(
     async (id: string) => {
-      const res = await fetch(`/api/strategies/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/strategies/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Failed to delete strategy");
       await fetchStrategies();
     },
@@ -92,7 +101,7 @@ export function useActiveStrategies() {
 
   const runScan = useCallback(
     async (strategyId?: string) => {
-      const res = await fetch("/api/strategies/monitor", {
+      const res = await apiFetch("/api/strategies/monitor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ strategyId }),

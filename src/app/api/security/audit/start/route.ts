@@ -1,18 +1,22 @@
-import { runMultiEngineAudit } from "@/lib/security/audit/orchestrator";
+import { randomUUID } from "crypto";
+import { isAddress } from "viem";
 import {
   createAuditJob,
-  emitAuditEvent,
-  completeAuditJob,
-  failAuditJob,
+  getAuditJobByIdempotency,
+  publicAuditView,
 } from "@/lib/security/audit/jobs";
-import { CHAIN_NAME_TO_ID } from "@/lib/security/etherscan";
+import { kickAuditWorker } from "@/lib/security/audit/worker";
+import { CHAIN_ID_TO_NAME, CHAIN_NAME_TO_ID } from "@/lib/security/etherscan";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { requireWallet } from "@/lib/auth/guard";
 import { getPlan } from "@/lib/plans/access";
-import { auditsThisMonth, recordAuditRun } from "@/lib/plans/usage";
+import {
+  auditsThisMonth,
+  releaseUsage,
+  reserveMonthlyUsage,
+} from "@/lib/plans/usage";
+import { jsonBodyErrorResponse, readJsonBody } from "@/lib/request-body";
 
-// Multi-engine audit takes 5-10 minutes; this route fires the job and returns
-// the id. Client polls /api/security/audit/status?id=<jobId>.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -20,92 +24,127 @@ export const maxDuration = 800;
 
 function parseChain(input: string | number | null | undefined): number | null {
   if (input == null) return null;
-  if (typeof input === "number") return Number.isFinite(input) && input > 0 ? input : null;
-  const asNum = Number(input);
-  if (Number.isFinite(asNum) && asNum > 0) return asNum;
+  if (typeof input === "number") return CHAIN_ID_TO_NAME[input] ? input : null;
+  const asNumber = Number(input);
+  if (Number.isSafeInteger(asNumber) && CHAIN_ID_TO_NAME[asNumber]) return asNumber;
   const match = Object.entries(CHAIN_NAME_TO_ID).find(
-    ([name]) => name.toLowerCase() === input.toLowerCase()
+    ([name]) => name.toLowerCase() === input.toLowerCase(),
   );
   return match ? match[1] : null;
 }
 
-function isValidAddress(addr: string): boolean {
-  return /^0x[a-fA-F0-9]{40}$/.test(addr);
-}
-
 export async function POST(request: Request) {
-  // Multi-engine audits are 5-10min each and run Slither/Aderyn/Mythril
-  // plus 25× ensemble explanations. Tight per-caller cap.
-  const limited = enforceRateLimit(request, "audit", { max: 3, windowMs: 60 * 60 * 1000 });
+  const limited = enforceRateLimit(request, "audit", {
+    max: 3,
+    windowMs: 60 * 60 * 1000,
+  });
   if (limited) return limited;
 
   const auth = requireWallet(request);
   if ("response" in auth) return auth.response;
 
-  let body: { address?: string; chain?: string | number; skipMythril?: boolean; skipAi?: boolean };
+  let parsed: unknown;
   try {
-    body = await request.json();
-  } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    parsed = await readJsonBody(request);
+  } catch (error) {
+    return jsonBodyErrorResponse(error);
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return Response.json({ error: "JSON body must be an object" }, { status: 400 });
+  }
+  const body = parsed as { address?: unknown; chain?: unknown };
 
-  const address = body.address;
-  if (!address || !isValidAddress(address)) {
+  const address = typeof body.address === "string"
+    ? body.address.trim().toLowerCase()
+    : null;
+  if (!address || !isAddress(address)) {
     return Response.json(
-      { error: "Invalid contract address. Expected 0x-prefixed 40-hex-char string." },
-      { status: 400 }
+      { error: "Invalid contract address. Expected a 20-byte EVM address." },
+      { status: 400 },
     );
   }
-
-  const chainId = parseChain(body.chain ?? 1);
+  const chainInput = typeof body.chain === "string" || typeof body.chain === "number"
+    ? body.chain
+    : 1;
+  const chainId = parseChain(chainInput);
   if (!chainId) {
-    return Response.json({ error: `Unsupported chain: ${body.chain}` }, { status: 400 });
+    return Response.json({ error: "Unsupported chain" }, { status: 400 });
   }
 
   const plan = getPlan(auth.wallet);
   const cap = plan.capabilities.monthlyAudits;
-  if (cap !== -1) {
-    const used = auditsThisMonth(auth.wallet);
-    if (used >= cap) {
+  const idempotencyKey = request.headers.get("idempotency-key");
+  if (idempotencyKey && !/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey.trim())) {
+    return Response.json({ error: "Invalid Idempotency-Key header" }, { status: 400 });
+  }
+  const existing = getAuditJobByIdempotency(auth.wallet, idempotencyKey);
+  if (existing) {
+    if (existing.contractAddress !== address || existing.chainId !== chainId) {
       return Response.json(
-        {
-          error: "Monthly audit limit reached",
-          tier: plan.tier,
-          used,
-          limit: cap,
-          upgradePath: plan.tier === "free" ? "pro" : plan.tier === "pro" ? "ultra" : null,
-        },
-        { status: 402 },
+        { error: "Idempotency key was already used for a different audit request" },
+        { status: 409 },
       );
     }
+    kickAuditWorker();
+    return Response.json(
+      {
+        ...publicAuditView(existing),
+        jobId: existing.id,
+        tier: plan.tier,
+        used: auditsThisMonth(auth.wallet),
+        limit: cap,
+        idempotentReplay: true,
+      },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   }
 
-  const job = createAuditJob(auth.wallet, address, chainId);
-  recordAuditRun(auth.wallet, job.id);
-
-  // Fire and forget — orchestrator resolves long after the response ships.
-  void runMultiEngineAudit(address, chainId, {
-    skipMythril: body.skipMythril,
-    skipAiExplanation: body.skipAi,
-    onProgress: (event) => emitAuditEvent(job.id, event),
-  })
-    .then((report) => completeAuditJob(job.id, report))
-    .catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`Audit job ${job.id} failed:`, err);
-      failAuditJob(job.id, message);
-    });
-
-  const used = cap === -1 ? 0 : auditsThisMonth(auth.wallet);
-  return Response.json({
-    jobId: job.id,
-    status: job.status,
-    contractAddress: address,
-    chainId,
-    progress: 0,
-    message: job.events[0]?.message ?? "Starting contract review...",
-    tier: plan.tier,
-    used,
+  const jobId = randomUUID();
+  const reservation = reserveMonthlyUsage({
+    wallet: auth.wallet,
+    kind: "audit",
+    id: jobId,
     limit: cap,
   });
+  if (!reservation.ok) {
+    return Response.json(
+      {
+        error: "Monthly audit limit reached",
+        tier: plan.tier,
+        used: reservation.used,
+        limit: cap,
+        upgradePath: plan.tier === "free" ? "pro" : plan.tier === "pro" ? "ultra" : null,
+      },
+      { status: 402 },
+    );
+  }
+
+  let job;
+  try {
+    job = createAuditJob(auth.wallet, address, chainId, idempotencyKey, jobId);
+    if (job.id !== jobId) {
+      // Another identical request won the unique idempotency insert. Only its
+      // durable job should consume the wallet's monthly allowance.
+      releaseUsage(jobId);
+    }
+  } catch (error) {
+    releaseUsage(jobId);
+    throw error;
+  }
+  kickAuditWorker();
+
+  return Response.json(
+    {
+      jobId: job.id,
+      status: job.status,
+      contractAddress: address,
+      chainId,
+      progress: 0,
+      message: job.events[0]?.message ?? "Starting contract review...",
+      tier: plan.tier,
+      used: job.id === jobId ? reservation.used : auditsThisMonth(auth.wallet),
+      limit: cap,
+    },
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
 }

@@ -20,7 +20,11 @@ export interface StrategyAllocation {
   legitimacyScore: number;
   verdict: "high_confidence" | "moderate_confidence" | "low_confidence" | "caution";
   redFlags: string[];
-  /** Protocol's primary contract address (from DeFiLlama). Enables one-click multi-engine audit. */
+  /**
+   * Protocol-level canonical address reported by DeFiLlama. This is a
+   * convenient audit starting point, but is not guaranteed to be this pool's
+   * vault, market, or strategy contract.
+   */
   contractAddress?: string;
   /** Chain on which `contractAddress` is deployed (often differs from `chain` for multi-chain protocols). */
   auditChain?: string;

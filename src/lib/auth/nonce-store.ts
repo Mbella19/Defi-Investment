@@ -1,38 +1,46 @@
-/**
- * Single-use nonces for SIWE sign-in. In-memory with TTL; survives across
- * requests inside one process. For multi-instance deployments swap this
- * with Redis or another shared store.
- */
+import { createHash } from "crypto";
+import { getDb } from "@/lib/db";
 
 const NONCE_TTL_MS = 10 * 60 * 1000;
-const PRUNE_INTERVAL_MS = 5 * 60 * 1000;
 const MAX_ACTIVE_NONCES = 10_000;
-const nonces = new Map<string, number>(); // nonce -> issuedAt epoch ms
+
+function hashNonce(nonce: string): string {
+  return createHash("sha256").update(nonce).digest("hex");
+}
+
+function prune(now: number): void {
+  const db = getDb();
+  db.prepare("DELETE FROM auth_nonces WHERE expires_at <= ? OR consumed_at IS NOT NULL").run(now);
+  const row = db.prepare("SELECT COUNT(*) AS count FROM auth_nonces").get() as { count: number };
+  if (row.count > MAX_ACTIVE_NONCES) {
+    db.prepare(
+      `DELETE FROM auth_nonces WHERE nonce_hash IN (
+         SELECT nonce_hash FROM auth_nonces ORDER BY issued_at ASC LIMIT ?
+       )`,
+    ).run(row.count - MAX_ACTIVE_NONCES);
+  }
+}
 
 export function rememberNonce(nonce: string): void {
-  // Cap memory: drop oldest when over the cap.
-  if (nonces.size >= MAX_ACTIVE_NONCES) {
-    const first = nonces.keys().next().value;
-    if (first) nonces.delete(first);
-  }
-  nonces.set(nonce, Date.now());
+  const now = Date.now();
+  const db = getDb();
+  db.transaction(() => {
+    prune(now);
+    db.prepare(
+      `INSERT OR REPLACE INTO auth_nonces
+       (nonce_hash, issued_at, expires_at, consumed_at) VALUES (?, ?, ?, NULL)`,
+    ).run(hashNonce(nonce), now, now + NONCE_TTL_MS);
+  })();
 }
 
-/** Returns true if the nonce was valid and unused; false otherwise. Always
- *  removes the nonce on first call so it cannot be replayed. */
+/** Atomically consume a live nonce. Invalid, expired, and replayed values fail. */
 export function consumeNonce(nonce: string): boolean {
-  const issued = nonces.get(nonce);
-  if (issued === undefined) return false;
-  nonces.delete(nonce);
-  return Date.now() - issued <= NONCE_TTL_MS;
+  const now = Date.now();
+  const result = getDb()
+    .prepare(
+      `UPDATE auth_nonces SET consumed_at = ?
+       WHERE nonce_hash = ? AND consumed_at IS NULL AND expires_at > ?`,
+    )
+    .run(now, hashNonce(nonce), now);
+  return result.changes === 1;
 }
-
-function pruneExpired() {
-  const cutoff = Date.now() - NONCE_TTL_MS;
-  for (const [n, t] of nonces) {
-    if (t < cutoff) nonces.delete(n);
-  }
-}
-
-const _timer = setInterval(pruneExpired, PRUNE_INTERVAL_MS);
-if (typeof _timer.unref === "function") _timer.unref();

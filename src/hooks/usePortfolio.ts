@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAccount } from "wagmi";
 import type { PortfolioSummary } from "@/types/wallet";
+import { apiFetch } from "@/lib/api-client";
 
 export function usePortfolio() {
   const { address, isConnected } = useAccount();
@@ -17,10 +18,8 @@ export function usePortfolio() {
     setError(null);
 
     try {
-      const res = await fetch("/api/portfolio/balances", {
+      const res = await apiFetch("/api/portfolio/balances", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address }),
       });
 
       if (!res.ok) {
@@ -39,11 +38,18 @@ export function usePortfolio() {
 
   // Auto-fetch when wallet connects
   useEffect(() => {
-    if (isConnected && address) {
-      fetchPortfolio();
-    } else {
-      setPortfolio(null);
-    }
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      if (isConnected && address) {
+        void fetchPortfolio();
+      } else {
+        setPortfolio(null);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [isConnected, address, fetchPortfolio]);
 
   return {

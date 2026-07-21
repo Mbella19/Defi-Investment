@@ -33,7 +33,7 @@ function transferLog(params: {
 describe("matchErc20Transfer", () => {
   it("matches a simple transfer to the recipient", () => {
     const logs = [transferLog({ from: SENDER, to: RECIPIENT, value: BigInt(49_000_000) })];
-    const out = matchErc20Transfer(logs, TOKEN, RECIPIENT, "49000000");
+    const out = matchErc20Transfer(logs, TOKEN, RECIPIENT, SENDER, "49000000");
     expect(out).not.toBeNull();
     expect(out!.amountMatches).toBe(true);
     expect(out!.transfer.from.toLowerCase()).toBe(SENDER);
@@ -46,33 +46,51 @@ describe("matchErc20Transfer", () => {
       transferLog({ from: OTHER, to: SENDER, value: BigInt(5) }),
       transferLog({ from: SENDER, to: RECIPIENT, value: BigInt(49_000_000) }),
     ];
-    const out = matchErc20Transfer(logs, TOKEN, RECIPIENT, "49000000");
+    const out = matchErc20Transfer(logs, TOKEN, RECIPIENT, SENDER, "49000000");
     expect(out).not.toBeNull();
     expect(out!.amountMatches).toBe(true);
   });
 
   it("reports amount mismatch when the recipient got the wrong amount", () => {
     const logs = [transferLog({ from: SENDER, to: RECIPIENT, value: BigInt(10_000) })];
-    const out = matchErc20Transfer(logs, TOKEN, RECIPIENT, "49000000");
+    const out = matchErc20Transfer(logs, TOKEN, RECIPIENT, SENDER, "49000000");
     expect(out).not.toBeNull();
     expect(out!.amountMatches).toBe(false);
   });
 
   it("returns null when no transfer reaches the recipient", () => {
     const logs = [transferLog({ from: SENDER, to: OTHER, value: BigInt(49_000_000) })];
-    expect(matchErc20Transfer(logs, TOKEN, RECIPIENT, "49000000")).toBeNull();
+    expect(matchErc20Transfer(logs, TOKEN, RECIPIENT, SENDER, "49000000")).toBeNull();
   });
 
   it("ignores transfers on other token contracts", () => {
     const logs = [
       transferLog({ token: "0x3333333333333333333333333333333333333333", from: SENDER, to: RECIPIENT, value: BigInt(49_000_000) }),
     ];
-    expect(matchErc20Transfer(logs, TOKEN, RECIPIENT, "49000000")).toBeNull();
+    expect(matchErc20Transfer(logs, TOKEN, RECIPIENT, SENDER, "49000000")).toBeNull();
   });
 
-  it("tolerates the ±0.5% band on the matched transfer", () => {
+  it("accepts a transfer above the quote", () => {
     const logs = [transferLog({ from: SENDER, to: RECIPIENT, value: BigInt(49_100_000) })];
-    const out = matchErc20Transfer(logs, TOKEN, RECIPIENT, "49000000");
+    const out = matchErc20Transfer(logs, TOKEN, RECIPIENT, SENDER, "49000000");
     expect(out!.amountMatches).toBe(true);
+  });
+
+  it("rejects a transfer funded by a different address", () => {
+    const logs = [transferLog({ from: OTHER, to: RECIPIENT, value: BigInt(49_000_000) })];
+    expect(matchErc20Transfer(logs, TOKEN, RECIPIENT, SENDER, "49000000")).toBeNull();
+  });
+
+  it("ignores malformed transfer data instead of throwing", () => {
+    const malformed = {
+      address: TOKEN,
+      topics: [
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+        `0x${"0".repeat(24)}${SENDER.slice(2)}`,
+        `0x${"0".repeat(24)}${RECIPIENT.slice(2)}`,
+      ],
+      data: "0xzz",
+    } as unknown as Erc20LogLike;
+    expect(matchErc20Transfer([malformed], TOKEN, RECIPIENT, SENDER, "49000000")).toBeNull();
   });
 });

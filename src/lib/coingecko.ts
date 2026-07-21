@@ -6,7 +6,10 @@ const BASE = "https://api.coingecko.com/api/v3";
 /**
  * Batch-fetch prices for multiple tokens (up to 250 IDs per call).
  */
-export async function fetchTokenPrices(geckoIds: string[]): Promise<Map<string, CoinGeckoPrice>> {
+export async function fetchTokenPrices(
+  geckoIds: string[],
+  options: { fresh?: boolean } = {},
+): Promise<Map<string, CoinGeckoPrice>> {
   const map = new Map<string, CoinGeckoPrice>();
   if (geckoIds.length === 0) return map;
 
@@ -14,7 +17,7 @@ export async function fetchTokenPrices(geckoIds: string[]): Promise<Map<string, 
     const ids = geckoIds.slice(0, 250).map(encodeURIComponent).join(",");
     const res = await fetchWithTimeout(
       `${BASE}/simple/price?ids=${ids}&vs_currencies=usd&include_market_cap=true&include_24hr_vol=true&include_24hr_change=true`,
-      { next: { revalidate: 120 } }
+      options.fresh ? { cache: "no-store" } : { next: { revalidate: 120 } },
     );
     if (!res.ok) return map;
 

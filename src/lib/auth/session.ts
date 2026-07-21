@@ -1,124 +1,213 @@
-import { createHmac, timingSafeEqual, randomBytes } from "crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { getDb } from "@/lib/db";
+import { CSRF_COOKIE_NAME } from "./constants";
 
-/**
- * Server-side session helpers. The cookie value is a self-contained,
- * HMAC-signed JSON blob — no DB row, no external session store. This works
- * across serverless instances because verification only needs SESSION_SECRET.
- */
-
-const COOKIE_NAME = "sov_session";
+const DEV_COOKIE_NAME = "sov_session";
+const PROD_COOKIE_NAME = "__Host-sov_session";
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+const LAST_SEEN_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 
-interface SessionPayload {
-  /** Lower-case 0x-prefixed wallet address. */
+interface SessionRow {
+  wallet_address: string;
+  csrf_hash: string;
+  auth_method: "siwe" | "dev";
+  last_seen_at: number;
+  expires_at: number;
+  revoked_at: number | null;
+}
+
+export interface SessionIdentity {
   wallet: string;
-  /** Expiration epoch milliseconds. */
-  exp: number;
+  csrfHash: string;
+  authMethod: "siwe" | "dev";
+  expiresAt: number;
 }
 
-function getSecret(): Buffer {
-  const s = process.env.SESSION_SECRET;
-  if (!s || s.length < 32) {
-    throw new Error(
-      "SESSION_SECRET is not set or is shorter than 32 chars — required for cookie auth",
-    );
+export interface NewSessionCookies {
+  session: string;
+  csrf: string;
+  csrfToken: string;
+  expiresAt: number;
+}
+
+function getSecret(): string {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error("SESSION_SECRET must be at least 32 characters");
   }
-  return Buffer.from(s, "utf-8");
+  return secret;
 }
 
-function b64url(buf: Buffer): string {
-  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-function b64urlDecode(str: string): Buffer {
-  const padded = str.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((str.length + 3) % 4);
-  return Buffer.from(padded, "base64");
+function cookieName(): string {
+  return process.env.NODE_ENV === "production" ? PROD_COOKIE_NAME : DEV_COOKIE_NAME;
 }
 
-function sign(payloadB64: string): string {
-  return b64url(createHmac("sha256", getSecret()).update(payloadB64).digest());
+function secureAttribute(): string {
+  return process.env.NODE_ENV === "production" ? "; Secure" : "";
 }
 
-/** Build a signed cookie value for a wallet. */
-export function buildSessionCookie(wallet: string): string {
-  const payload: SessionPayload = {
-    wallet: wallet.toLowerCase(),
-    exp: Date.now() + SESSION_TTL_MS,
-  };
-  const payloadB64 = b64url(Buffer.from(JSON.stringify(payload), "utf-8"));
-  const sig = sign(payloadB64);
-  return `${payloadB64}.${sig}`;
+function tokenHash(purpose: "session" | "csrf", token: string): string {
+  return createHmac("sha256", getSecret())
+    .update(`${purpose}:${token}`)
+    .digest("hex");
 }
 
-/** Parse a cookie header into a map. */
+function randomToken(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+export function generateNonce(): string {
+  return randomToken();
+}
+
 function parseCookies(header: string | null): Map<string, string> {
-  const map = new Map<string, string>();
-  if (!header) return map;
+  const cookies = new Map<string, string>();
+  if (!header) return cookies;
   for (const part of header.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq === -1) continue;
-    const k = part.slice(0, eq).trim();
-    const v = part.slice(eq + 1).trim();
-    if (!k) continue;
-    // A malformed percent-encoded value would throw URIError and bubble up
-    // through getSessionWallet → 500 on every protected route. Treat it as
-    // an unparseable cookie (skip) rather than a server error.
+    const separator = part.indexOf("=");
+    if (separator < 1) continue;
+    const name = part.slice(0, separator).trim();
     try {
-      map.set(k, decodeURIComponent(v));
+      cookies.set(name, decodeURIComponent(part.slice(separator + 1).trim()));
     } catch {
-      /* skip malformed cookie value */
+      // Malformed caller cookies are ignored rather than turning auth into a 500.
     }
   }
-  return map;
+  return cookies;
 }
 
-/** Read+verify the session cookie from a request; return wallet or null. */
-export function getSessionWallet(request: Request): string | null {
-  if (!process.env.SESSION_SECRET) return null;
+function sessionToken(request: Request): string | null {
   const cookies = parseCookies(request.headers.get("cookie"));
-  const raw = cookies.get(COOKIE_NAME);
-  if (!raw) return null;
-  const dot = raw.lastIndexOf(".");
-  if (dot < 0) return null;
-  const payloadB64 = raw.slice(0, dot);
-  const sig = raw.slice(dot + 1);
-  const expected = sign(payloadB64);
-  // timingSafeEqual requires equal lengths; bail if not.
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
-  let payload: SessionPayload;
+  return cookies.get(cookieName()) ?? null;
+}
+
+function pruneExpiredSessions(): void {
+  const now = Date.now();
+  getDb()
+    .prepare("DELETE FROM auth_sessions WHERE expires_at <= ? OR revoked_at IS NOT NULL")
+    .run(now);
+}
+
+export function createSessionCookies(
+  wallet: string,
+  authMethod: "siwe" | "dev" = "siwe",
+): NewSessionCookies {
+  const normalizedWallet = wallet.toLowerCase();
+  if (!/^0x[a-f0-9]{40}$/.test(normalizedWallet)) {
+    throw new Error("Cannot create a session for an invalid wallet address");
+  }
+  const sessionToken = randomToken();
+  const csrfToken = randomToken();
+  const now = Date.now();
+  const expiresAt = now + SESSION_TTL_MS;
+  const db = getDb();
+  db.transaction(() => {
+    pruneExpiredSessions();
+    // A fresh SIWE login rotates prior sessions for this wallet. This keeps
+    // logout/address-switch semantics deterministic on a local single-user app.
+    db.prepare("UPDATE auth_sessions SET revoked_at = ? WHERE wallet_address = ? AND revoked_at IS NULL")
+      .run(now, normalizedWallet);
+    db.prepare(
+      `INSERT INTO auth_sessions
+       (token_hash, wallet_address, csrf_hash, auth_method, created_at, last_seen_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      tokenHash("session", sessionToken),
+      normalizedWallet,
+      tokenHash("csrf", csrfToken),
+      authMethod,
+      now,
+      now,
+      expiresAt,
+    );
+  })();
+
+  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
+  const common = `${secureAttribute()}; SameSite=Strict; Path=/; Max-Age=${maxAge}`;
+  return {
+    session: `${cookieName()}=${encodeURIComponent(sessionToken)}; HttpOnly${common}`,
+    csrf: `${CSRF_COOKIE_NAME}=${encodeURIComponent(csrfToken)}${common}`,
+    csrfToken,
+    expiresAt,
+  };
+}
+
+export function appendSessionCookies(headers: Headers, cookies: NewSessionCookies): void {
+  headers.append("Set-Cookie", cookies.session);
+  headers.append("Set-Cookie", cookies.csrf);
+}
+
+export function getSession(request: Request): SessionIdentity | null {
+  if (!process.env.SESSION_SECRET) return null;
+  const rawToken = sessionToken(request);
+  if (!rawToken || rawToken.length > 256) return null;
+  let row: SessionRow | undefined;
   try {
-    payload = JSON.parse(b64urlDecode(payloadB64).toString("utf-8")) as SessionPayload;
+    row = getDb()
+      .prepare(
+        `SELECT wallet_address, csrf_hash, auth_method, last_seen_at, expires_at, revoked_at
+         FROM auth_sessions WHERE token_hash = ?`,
+      )
+      .get(tokenHash("session", rawToken)) as SessionRow | undefined;
   } catch {
     return null;
   }
-  if (typeof payload.exp !== "number" || payload.exp < Date.now()) return null;
-  if (typeof payload.wallet !== "string" || !/^0x[a-f0-9]{40}$/.test(payload.wallet)) return null;
-  return payload.wallet;
+  const now = Date.now();
+  if (!row || row.revoked_at !== null || row.expires_at <= now) return null;
+  if (!/^0x[a-f0-9]{40}$/.test(row.wallet_address)) return null;
+  if (now - row.last_seen_at >= LAST_SEEN_WRITE_INTERVAL_MS) {
+    try {
+      getDb()
+        .prepare("UPDATE auth_sessions SET last_seen_at = ? WHERE token_hash = ?")
+        .run(now, tokenHash("session", rawToken));
+    } catch {
+      // Authentication remains valid if this non-security bookkeeping write fails.
+    }
+  }
+  return {
+    wallet: row.wallet_address,
+    csrfHash: row.csrf_hash,
+    authMethod: row.auth_method,
+    expiresAt: row.expires_at,
+  };
 }
 
-/**
- * Emit Secure for production auth cookies. Local `next dev` over plain
- * http://localhost cannot store Secure cookies, so development is the only
- * environment where we omit it.
- */
-function secureFlag(): string {
-  return process.env.NODE_ENV === "production" || process.env.VERCEL === "1"
-    ? "; Secure"
-    : "";
+export function getSessionWallet(request: Request): string | null {
+  return getSession(request)?.wallet ?? null;
 }
 
-export function sessionCookieHeader(wallet: string): string {
-  const value = buildSessionCookie(wallet);
-  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
-  return `${COOKIE_NAME}=${encodeURIComponent(value)}; HttpOnly${secureFlag()}; SameSite=Lax; Path=/; Max-Age=${maxAge}`;
+export function verifySessionCsrf(request: Request): boolean {
+  const session = getSession(request);
+  if (!session) return false;
+  const supplied = request.headers.get("x-sovereign-csrf");
+  const cookie = parseCookies(request.headers.get("cookie")).get(CSRF_COOKIE_NAME);
+  if (!supplied || !cookie || supplied !== cookie || supplied.length > 256) return false;
+  const actual = Buffer.from(tokenHash("csrf", supplied), "hex");
+  const expected = Buffer.from(session.csrfHash, "hex");
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
-export function clearSessionCookieHeader(): string {
-  return `${COOKIE_NAME}=; HttpOnly${secureFlag()}; SameSite=Lax; Path=/; Max-Age=0`;
+export function revokeSession(request: Request): void {
+  if (!process.env.SESSION_SECRET) return;
+  const rawToken = sessionToken(request);
+  if (!rawToken) return;
+  try {
+    getDb()
+      .prepare("UPDATE auth_sessions SET revoked_at = ? WHERE token_hash = ?")
+      .run(Date.now(), tokenHash("session", rawToken));
+  } catch {
+    // Clearing the browser cookie still prevents ordinary reuse on this client.
+  }
 }
 
-/** 32-byte random nonce, base64url-encoded. */
-export function generateNonce(): string {
-  return b64url(randomBytes(32));
+export function appendClearedSessionCookies(headers: Headers): void {
+  const common = `${secureAttribute()}; SameSite=Strict; Path=/; Max-Age=0`;
+  headers.append("Set-Cookie", `${cookieName()}=; HttpOnly${common}`);
+  if (cookieName() !== DEV_COOKIE_NAME) {
+    headers.append("Set-Cookie", `${DEV_COOKIE_NAME}=; HttpOnly${common}`);
+  }
+  headers.append("Set-Cookie", `${CSRF_COOKIE_NAME}=;${common}`);
+  if (CSRF_COOKIE_NAME !== "sov_csrf") {
+    headers.append("Set-Cookie", `sov_csrf=;${common}`);
+  }
 }

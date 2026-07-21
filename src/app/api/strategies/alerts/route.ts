@@ -1,7 +1,9 @@
 import { getDb } from "@/lib/db";
 import { requireWallet } from "@/lib/auth/guard";
 import { requireCapability } from "@/lib/plans/access";
+import { log } from "@/lib/log";
 import type { StrategyAlert } from "@/types/active-strategy";
+import { jsonBodyErrorResponse, readJsonBody } from "@/lib/request-body";
 
 export async function GET(request: Request) {
   try {
@@ -54,7 +56,7 @@ export async function GET(request: Request) {
 
     return Response.json({ alerts, unreadCount: countRow.count });
   } catch (error) {
-    console.error("Failed to fetch alerts:", error);
+    log.error("strategy-alerts", "failed to fetch alerts", { error });
     return Response.json({ error: "Failed to fetch alerts" }, { status: 500 });
   }
 }
@@ -65,11 +67,44 @@ export async function PATCH(request: Request) {
     if ("response" in auth) return auth.response;
     const cap = requireCapability(auth.wallet, "realtimeAlerts");
     if (!cap.ok) return cap.response;
-    const body = await request.json();
-    const { alertIds, markAllRead } = body as {
-      alertIds?: string[];
-      markAllRead?: boolean;
+    let parsed: unknown;
+    try {
+      parsed = await readJsonBody(request);
+    } catch (error) {
+      return jsonBodyErrorResponse(error);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return Response.json({ error: "JSON body must be an object" }, { status: 400 });
+    }
+    const body = parsed as {
+      alertIds?: unknown;
+      markAllRead?: unknown;
     };
+    const markAllRead = body.markAllRead === true;
+    if (body.markAllRead !== undefined && typeof body.markAllRead !== "boolean") {
+      return Response.json({ error: "markAllRead must be a boolean" }, { status: 400 });
+    }
+    if (Array.isArray(body.alertIds) && body.alertIds.length > 100) {
+      return Response.json({ error: "At most 100 alert IDs can be updated at once" }, { status: 400 });
+    }
+    const alertIds = Array.isArray(body.alertIds)
+      ? body.alertIds.filter(
+          (id): id is string =>
+            typeof id === "string" && /^[A-Za-z0-9_-]{8,128}$/.test(id),
+        )
+      : [];
+    if (
+      Array.isArray(body.alertIds) &&
+      alertIds.length !== body.alertIds.length
+    ) {
+      return Response.json({ error: "One or more alert IDs are invalid" }, { status: 400 });
+    }
+    if (!markAllRead && alertIds.length === 0) {
+      return Response.json(
+        { error: "Provide alertIds or set markAllRead to true" },
+        { status: 400 },
+      );
+    }
 
     const db = getDb();
 
@@ -79,7 +114,7 @@ export async function PATCH(request: Request) {
          WHERE strategy_id IN (SELECT id FROM active_strategies WHERE wallet_address = ?)
          AND read = 0`
       ).run(auth.wallet);
-    } else if (alertIds && alertIds.length > 0) {
+    } else if (alertIds.length > 0) {
       // Cap to keep the IN list bounded, then scope by wallet via JOIN so
       // a caller can't mark someone else's alerts.
       const capped = alertIds.slice(0, 100);
@@ -93,7 +128,7 @@ export async function PATCH(request: Request) {
 
     return Response.json({ message: "Alerts updated" });
   } catch (error) {
-    console.error("Failed to update alerts:", error);
+    log.error("strategy-alerts", "failed to update alerts", { error });
     return Response.json({ error: "Failed to update alerts" }, { status: 500 });
   }
 }

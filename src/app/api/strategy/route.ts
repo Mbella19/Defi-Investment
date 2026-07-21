@@ -1,20 +1,22 @@
-import { generateStrategy } from "@/lib/strategist";
+import { randomUUID } from "crypto";
 import {
   createJob,
-  emitEvent,
-  completeJob,
-  failJob,
   getJob,
+  getJobByIdempotency,
+  getStrategyJobPayload,
   publicView,
 } from "@/lib/strategy-jobs";
+import { kickStrategyWorker } from "@/lib/strategy-worker";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { requireWallet } from "@/lib/auth/guard";
 import { getPlan } from "@/lib/plans/access";
 import {
-  recordStrategyGeneration,
+  releaseUsage,
+  reserveMonthlyUsage,
   strategyGenerationsThisMonth,
 } from "@/lib/plans/usage";
 import { isRiskAppetite } from "@/lib/strategy-validate";
+import { jsonBodyErrorResponse, readJsonBody } from "@/lib/request-body";
 import type { StrategyCriteria } from "@/types/strategy";
 
 export const maxDuration = 800;
@@ -35,12 +37,26 @@ export async function POST(request: Request) {
   const auth = requireWallet(request);
   if ("response" in auth) return auth.response;
 
-  let criteria: StrategyCriteria;
+  let parsed: unknown;
   try {
-    criteria = await request.json();
-  } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    parsed = await readJsonBody(request);
+  } catch (error) {
+    return jsonBodyErrorResponse(error);
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return Response.json({ error: "JSON body must be an object" }, { status: 400 });
+  }
+  const input = parsed as Record<string, unknown>;
+  // Persist and forward only the documented request contract. This prevents
+  // arbitrary client fields from being retained in job payloads or entering
+  // downstream model context.
+  const criteria = {
+    budget: input.budget,
+    riskAppetite: input.riskAppetite,
+    targetApyMin: input.targetApyMin,
+    targetApyMax: input.targetApyMax,
+    assetType: input.assetType,
+  } as StrategyCriteria;
 
   // Strict types before the pipeline: a string budget survived the old
   // truthiness check via coercion, and an unknown riskAppetite silently
@@ -72,24 +88,18 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  criteria.riskAppetite ??= "medium";
+  criteria.assetType ??= "all";
 
   const plan = getPlan(auth.wallet);
-  const used = strategyGenerationsThisMonth(auth.wallet);
-  if (used >= plan.capabilities.monthlyStrategies) {
-    return Response.json(
-      {
-        error: "Monthly strategy limit reached",
-        tier: plan.tier,
-        used,
-        limit: plan.capabilities.monthlyStrategies,
-        upgradePath: plan.tier === "free" ? "pro" : plan.tier === "pro" ? "ultra" : null,
-      },
-      { status: 402 },
-    );
+  const idempotencyKey = request.headers.get("idempotency-key");
+  if (idempotencyKey && !/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey.trim())) {
+    return Response.json({ error: "Invalid Idempotency-Key header" }, { status: 400 });
   }
 
-  // Tier-aware criteria coercion. Free can't pick risk band or stable-only;
-  // only Ultra can supply a custom APY range outside the risk-band preset.
+  // Tier-aware criteria coercion must happen before idempotency comparison so
+  // the key binds to the exact server-authorized operation, not raw input the
+  // caller was not entitled to use.
   if (!plan.capabilities.riskBandSelection) {
     criteria.riskAppetite = "medium";
   }
@@ -103,26 +113,88 @@ export async function POST(request: Request) {
   }
 
   if (
-    !criteria.targetApyMin ||
-    !criteria.targetApyMax ||
+    typeof criteria.targetApyMin !== "number" ||
+    !Number.isFinite(criteria.targetApyMin) ||
+    criteria.targetApyMin < 0 ||
+    criteria.targetApyMin > 1_000 ||
+    typeof criteria.targetApyMax !== "number" ||
+    !Number.isFinite(criteria.targetApyMax) ||
+    criteria.targetApyMax <= 0 ||
+    criteria.targetApyMax > 1_000 ||
     criteria.targetApyMin >= criteria.targetApyMax
   ) {
     return Response.json({ error: "Invalid APY range" }, { status: 400 });
   }
 
-  const job = createJob(auth.wallet);
-  recordStrategyGeneration(auth.wallet, job.id);
+  const existing = getJobByIdempotency(auth.wallet, idempotencyKey);
+  if (existing) {
+    const prior = getStrategyJobPayload(existing.id);
+    if (
+      !prior ||
+      prior.mode !== plan.capabilities.strategistMode ||
+      prior.criteria.budget !== criteria.budget ||
+      prior.criteria.riskAppetite !== criteria.riskAppetite ||
+      prior.criteria.targetApyMin !== criteria.targetApyMin ||
+      prior.criteria.targetApyMax !== criteria.targetApyMax ||
+      (prior.criteria.assetType ?? "all") !== (criteria.assetType ?? "all")
+    ) {
+      return Response.json(
+        { error: "Idempotency key was already used for a different strategy request" },
+        { status: 409 },
+      );
+    }
+    kickStrategyWorker();
+    return Response.json(
+      {
+        ...publicView(existing),
+        jobId: existing.id,
+        tier: plan.tier,
+        used: strategyGenerationsThisMonth(auth.wallet),
+        limit: plan.capabilities.monthlyStrategies,
+        idempotentReplay: true,
+      },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
+  }
 
-  void generateStrategy(criteria, {
-    onProgress: (event) => emitEvent(job.id, event),
-    mode: plan.capabilities.strategistMode,
-  })
-    .then((result) => completeJob(job.id, result))
-    .catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`Strategy job ${job.id} failed:`, err);
-      failJob(job.id, message);
-    });
+  const usageId = randomUUID();
+  const reservation = reserveMonthlyUsage({
+    wallet: auth.wallet,
+    kind: "strategy",
+    id: usageId,
+    limit: plan.capabilities.monthlyStrategies,
+  });
+  if (!reservation.ok) {
+    return Response.json(
+      {
+        error: "Monthly strategy limit reached",
+        tier: plan.tier,
+        used: reservation.used,
+        limit: plan.capabilities.monthlyStrategies,
+        upgradePath: plan.tier === "free" ? "pro" : plan.tier === "pro" ? "ultra" : null,
+      },
+      { status: 402 },
+    );
+  }
+
+  let job;
+  try {
+    job = createJob(
+      auth.wallet,
+      { criteria, mode: plan.capabilities.strategistMode },
+      idempotencyKey,
+      usageId,
+    );
+    if (job.id !== usageId) {
+      // Another request won the idempotency race after our initial lookup.
+      // Its job owns the charge; release this request's provisional usage.
+      releaseUsage(usageId);
+    }
+  } catch (error) {
+    releaseUsage(usageId);
+    throw error;
+  }
+  kickStrategyWorker();
 
   return Response.json({
     jobId: job.id,
@@ -130,7 +202,9 @@ export async function POST(request: Request) {
     progress: 0,
     message: job.events[0]?.message ?? "Preparing allocation workflow...",
     tier: plan.tier,
-    used: used + 1,
+    used: job.id === usageId
+      ? reservation.used
+      : strategyGenerationsThisMonth(auth.wallet),
     limit: plan.capabilities.monthlyStrategies,
   });
 }
@@ -138,9 +212,10 @@ export async function POST(request: Request) {
 export async function GET(request: Request) {
   const auth = requireWallet(request);
   if ("response" in auth) return auth.response;
+  kickStrategyWorker();
   const url = new URL(request.url);
   const id = url.searchParams.get("id");
-  if (!id) {
+  if (!id || !/^[A-Za-z0-9_-]{8,128}$/.test(id)) {
     return Response.json({ error: "Missing job id" }, { status: 400 });
   }
   const job = getJob(id);

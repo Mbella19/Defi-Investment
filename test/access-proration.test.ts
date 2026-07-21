@@ -45,13 +45,13 @@ describe("activateSubscription proration", () => {
     expect(resolveTier(w)).toBe("ultra");
   });
 
-  it("downgrade converts remaining time by price ratio (never loses paid value)", () => {
+  it("a lower-tier payment never downgrades an active Ultra subscription", () => {
     const w = "0x1000000000000000000000000000000000000004";
     expiryMs(w, "ultra"); // 30 days of Ultra remaining
     const exp = expiryMs(w, "pro");
-    const expected = 30 + 30 * (TIER_PRICE_USD.ultra / TIER_PRICE_USD.pro); // ≈ 121.2d
+    const expected = 30 + 30 * (TIER_PRICE_USD.pro / TIER_PRICE_USD.ultra); // ≈ 39.9d Ultra
     expect(daysFromNow(exp)).toBeGreaterThan(expected - 0.5);
     expect(daysFromNow(exp)).toBeLessThan(expected + 0.5);
-    expect(resolveTier(w)).toBe("pro");
+    expect(resolveTier(w)).toBe("ultra");
   });
 });

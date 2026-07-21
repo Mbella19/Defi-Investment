@@ -5,6 +5,7 @@ export type StrategyStatus = "active" | "paused" | "archived";
 
 export interface ActiveStrategy {
   id: string;
+  sourceJobId?: string;
   walletAddress: string | null;
   strategy: InvestmentStrategy;
   criteria: StrategyCriteria;

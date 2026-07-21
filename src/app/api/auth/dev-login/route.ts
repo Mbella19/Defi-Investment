@@ -1,6 +1,10 @@
 import "server-only";
+import { timingSafeEqual } from "crypto";
 import { isOwnerWallet } from "@/lib/plans/access";
-import { sessionCookieHeader } from "@/lib/auth/session";
+import { appendSessionCookies, createSessionCookies } from "@/lib/auth/session";
+import { validateRequestOrigin } from "@/lib/auth/request-security";
+import { enforceRateLimit } from "@/lib/rate-limit";
+import { jsonBodyErrorResponse, readJsonBody } from "@/lib/request-body";
 
 /**
  * Localhost-only owner sign-in bypass. Skips SIWE / hardware-wallet signing
@@ -10,7 +14,7 @@ import { sessionCookieHeader } from "@/lib/auth/session";
  * Hard guarantees:
  *  - Refuses in production builds and on Vercel — deployed apps must use real SIWE.
  *  - Refuses unless the request is served from localhost / loopback.
- *  - Refuses unless ENABLE_DEV_LOGIN=true is explicitly set in env.
+ *  - Refuses unless ENABLE_DEV_LOGIN=true and a strong DEV_LOGIN_SECRET are set.
  *  - Refuses unless SESSION_SECRET is set (otherwise sessionCookieHeader throws).
  *  - Wallet must be in OWNER_WALLETS — randoms can't grant themselves Ultra.
  *
@@ -35,7 +39,16 @@ function isEnabled(request: Request): boolean {
   if (process.env.NODE_ENV === "production") return false;
   if (process.env.VERCEL === "1") return false;
   if (process.env.ENABLE_DEV_LOGIN !== "true") return false;
+  if ((process.env.DEV_LOGIN_SECRET?.length ?? 0) < 32) return false;
   return isLocalRequest(request);
+}
+
+function validDevSecret(input: unknown): boolean {
+  const expected = process.env.DEV_LOGIN_SECRET ?? "";
+  if (typeof input !== "string" || expected.length < 32) return false;
+  const supplied = Buffer.from(input);
+  const wanted = Buffer.from(expected);
+  return supplied.length === wanted.length && timingSafeEqual(supplied, wanted);
 }
 
 export async function POST(request: Request) {
@@ -50,14 +63,26 @@ export async function POST(request: Request) {
       { status: 503 },
     );
   }
-
-  let body: { wallet?: string };
-  try {
-    body = (await request.json()) as { wallet?: string };
-  } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+  if (!validateRequestOrigin(request)) {
+    return Response.json({ error: "Invalid request origin" }, { status: 403 });
   }
-  const wallet = body.wallet?.trim().toLowerCase();
+  const limited = enforceRateLimit(request, "auth.dev-login", { max: 10, windowMs: 10 * 60 * 1000 });
+  if (limited) return limited;
+
+  let parsed: unknown;
+  try {
+    parsed = await readJsonBody(request);
+  } catch (error) {
+    return jsonBodyErrorResponse(error);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return Response.json({ error: "JSON body must be an object" }, { status: 400 });
+  }
+  const body = parsed as { wallet?: unknown; secret?: unknown };
+  if (!validDevSecret(body.secret)) {
+    return Response.json({ error: "Invalid development login credentials" }, { status: 403 });
+  }
+  const wallet = typeof body.wallet === "string" ? body.wallet.trim().toLowerCase() : "";
   if (!wallet || !/^0x[0-9a-f]{40}$/.test(wallet)) {
     return Response.json(
       { error: "Provide a 0x-prefixed 40-hex-char wallet address." },
@@ -74,26 +99,13 @@ export async function POST(request: Request) {
     );
   }
 
-  return new Response(JSON.stringify({ ok: true, wallet }), {
-    status: 200,
-    headers: {
-      "Content-Type": "application/json",
-      "Set-Cookie": sessionCookieHeader(wallet),
-    },
-  });
+  const session = createSessionCookies(wallet, "dev");
+  const headers = new Headers({ "Content-Type": "application/json", "Cache-Control": "no-store" });
+  appendSessionCookies(headers, session);
+  return new Response(JSON.stringify({ ok: true, wallet }), { status: 200, headers });
 }
 
 export async function GET(request: Request) {
-  // Surface the OWNER_WALLETS list to the client so the dev-login UI can
-  // auto-fill the first one. Only useful when dev-login is enabled.
-  const enabled = isEnabled(request);
-  const ownersRaw = process.env.OWNER_WALLETS ?? "";
-  const owners = ownersRaw
-    .split(",")
-    .map((w) => w.trim().toLowerCase())
-    .filter((w) => /^0x[0-9a-f]{40}$/.test(w));
-  return Response.json({
-    enabled,
-    owners: enabled ? owners : [],
-  });
+  // Do not disclose privileged wallet identifiers from a public GET.
+  return Response.json({ enabled: isEnabled(request) });
 }

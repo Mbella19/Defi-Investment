@@ -6,6 +6,7 @@ import type {
   OnChainInterrogation,
   ScsvsReport,
   ToolFinding,
+  ToolName,
   ToolRunResult,
 } from "@/types/audit";
 import { getContractSource, CHAIN_ID_TO_NAME } from "../etherscan";
@@ -17,6 +18,47 @@ import { interrogateContract } from "../onchain/interrogator";
 import { buildConsensus, aggregateRisk } from "./consensus";
 import { buildScsvsReport } from "./scsvs";
 import { explainFindings } from "./explainer";
+import { log } from "@/lib/log";
+
+function displayFilePath(input: string | undefined): string | undefined {
+  if (!input) return undefined;
+  const normalized = input.replace(/\\/g, "/").replace(/\0/g, "");
+  const workspaceRelative = normalized.replace(/^.*\/sov-audit-[^/]+\//, "");
+  if (workspaceRelative !== normalized) return workspaceRelative.slice(0, 300);
+  const contractsIndex = normalized.lastIndexOf("/contracts/");
+  if (contractsIndex >= 0) return normalized.slice(contractsIndex + 1, contractsIndex + 301);
+  if (normalized.startsWith("/")) return normalized.split("/").pop()?.slice(0, 300);
+  return normalized.replace(/^\.\//, "").slice(0, 300);
+}
+
+function sanitizeFinding(finding: ToolFinding): ToolFinding {
+  return {
+    ...finding,
+    filePath: displayFilePath(finding.filePath),
+    raw: undefined,
+  };
+}
+
+function sanitizeToolResult(result: ToolRunResult): ToolRunResult {
+  const executionFailed = Boolean(result.rawError);
+  if (executionFailed) {
+    log.warn("contract-review", "analysis tool execution failed", {
+      tool: result.tool,
+      scope: result.scope?.kind,
+      error: result.rawError,
+    });
+  }
+  return {
+    ...result,
+    available: result.available && !executionFailed,
+    unavailableReason: executionFailed
+      ? "Execution failed for this run; its coverage is unavailable."
+      : result.unavailableReason,
+    findings: result.findings.map(sanitizeFinding),
+    rawError: executionFailed ? "Execution failed; see server logs." : undefined,
+    rawStdout: undefined,
+  };
+}
 
 /**
  * Multi-engine audit orchestrator.
@@ -52,11 +94,15 @@ export async function runMultiEngineAudit(
   const startMs = startedAt.getTime();
   const warnings: string[] = [];
   const emit = (e: Omit<AuditJobEvent, "ts">) => opts.onProgress?.(e);
+  const workspacesToClean: Array<Awaited<ReturnType<typeof materializeSource>>> = [];
+
+  try {
 
   // -------- stage 1: source --------
   emit({ stage: "fetching_source", message: "Fetching verified contract source…" });
   const source = await getContractSource(chainId, address).catch((err) => {
-    warnings.push(`Source fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+    log.warn("contract-review", "verified source fetch failed", { error: err });
+    warnings.push("Verified source could not be fetched; static coverage is unavailable.");
     return null;
   });
 
@@ -64,8 +110,10 @@ export async function runMultiEngineAudit(
   if (source) {
     try {
       workspace = await materializeSource(source);
+      workspacesToClean.push(workspace);
     } catch (err) {
-      warnings.push(`Workspace materialization failed: ${err instanceof Error ? err.message : String(err)}`);
+      log.warn("contract-review", "workspace materialization failed", { error: err });
+      warnings.push("Source workspace could not be prepared; static coverage is unavailable.");
     }
   } else {
     warnings.push("Source code is not verified — static analyzers will be skipped.");
@@ -81,22 +129,74 @@ export async function runMultiEngineAudit(
       isVerified: !!source,
     });
   } catch (err) {
-    warnings.push(`On-chain interrogation failed: ${err instanceof Error ? err.message : String(err)}`);
+    log.warn("contract-review", "on-chain interrogation failed", { error: err });
+    warnings.push("On-chain interrogation failed; live-state coverage is unavailable.");
+  }
+
+  // A proxy shell is not the application logic. Fetch and analyze the active
+  // implementation as a separate scope; otherwise a verified 20-line proxy
+  // could incorrectly produce a clean report while its implementation was
+  // never inspected.
+  let implementationWorkspace: Awaited<ReturnType<typeof materializeSource>> | null = null;
+  const implementationAddress = onchain?.proxy.isProxy
+    ? onchain.proxy.implementationAddress
+    : undefined;
+  if (
+    implementationAddress &&
+    implementationAddress.toLowerCase() !== address.toLowerCase()
+  ) {
+    emit({ stage: "fetching_source", message: "Fetching active implementation source…" });
+    try {
+      const implementationSource = await getContractSource(chainId, implementationAddress);
+      if (implementationSource) {
+        implementationWorkspace = await materializeSource(implementationSource);
+        workspacesToClean.push(implementationWorkspace);
+      } else {
+        warnings.push("Active proxy implementation source is not verified.");
+      }
+    } catch (err) {
+      log.warn("contract-review", "implementation source preparation failed", { error: err });
+      warnings.push("Active implementation source could not be prepared for analysis.");
+    }
+  } else if (onchain?.proxy.isProxy) {
+    warnings.push("Proxy implementation address could not be resolved; implementation analysis is unavailable.");
   }
 
   // -------- stage 3: tools --------
   emit({ stage: "running_tools", message: "Running static & symbolic analyzers in parallel…" });
-  const toolPromises: Promise<ToolRunResult>[] = [];
-  if (workspace) {
-    toolPromises.push(runSlither(workspace));
-    toolPromises.push(runAderyn(workspace));
-    if (!opts.skipMythril) toolPromises.push(runMythril(workspace));
+  const scopes: Array<{
+    address: string;
+    kind: "target" | "implementation";
+    workspace: Awaited<ReturnType<typeof materializeSource>>;
+  }> = [];
+  if (workspace) scopes.push({ address, kind: "target", workspace });
+  if (implementationWorkspace && implementationAddress) {
+    scopes.push({
+      address: implementationAddress,
+      kind: "implementation",
+      workspace: implementationWorkspace,
+    });
   }
-  const settled = await Promise.allSettled(toolPromises);
-  const toolResults: ToolRunResult[] = settled.map((r, i): ToolRunResult => {
-    if (r.status === "fulfilled") return r.value;
+  const toolTasks: Array<{
+    tool: "slither" | "aderyn" | "mythril";
+    scope: { address: string; kind: "target" | "implementation" };
+    promise: Promise<ToolRunResult>;
+  }> = [];
+  for (const scope of scopes) {
+    const scopeMeta = { address: scope.address, kind: scope.kind };
+    toolTasks.push({ tool: "slither", scope: scopeMeta, promise: runSlither(scope.workspace) });
+    toolTasks.push({ tool: "aderyn", scope: scopeMeta, promise: runAderyn(scope.workspace) });
+    if (!opts.skipMythril) {
+      toolTasks.push({ tool: "mythril", scope: scopeMeta, promise: runMythril(scope.workspace) });
+    }
+  }
+  const settled = await Promise.allSettled(toolTasks.map((task) => task.promise));
+  let toolResults: ToolRunResult[] = settled.map((r, i): ToolRunResult => {
+    const task = toolTasks[i];
+    if (r.status === "fulfilled") return { ...r.value, scope: task.scope };
     return {
-      tool: ["slither", "aderyn", "mythril"][i] as ToolRunResult["tool"],
+      tool: task.tool,
+      scope: task.scope,
       available: false,
       durationMs: 0,
       findings: [],
@@ -111,14 +211,15 @@ export async function runMultiEngineAudit(
       available: true,
       durationMs: 0,
       findings: onchain.findings,
+      scope: { address, kind: "target" },
     });
   }
+
+  toolResults = toolResults.map(sanitizeToolResult);
 
   for (const t of toolResults) {
     if (!t.available) {
       warnings.push(`${t.tool}: ${t.unavailableReason ?? "unavailable"}`);
-    } else if (t.rawError) {
-      warnings.push(`${t.tool}: ${t.rawError.slice(0, 200)}`);
     }
   }
 
@@ -154,14 +255,59 @@ export async function runMultiEngineAudit(
   // -------- stage 7: assemble --------
   emit({ stage: "assembling_report", message: "Composing final audit report…" });
 
-  const aggregate = aggregateRisk(consensus);
-  const finishedAt = new Date();
-
-  // Cleanup workspace asynchronously — the temp dir can be reaped after we
-  // assemble the report; nothing downstream needs the files.
-  if (workspace) {
-    void workspace.cleanup();
+  const implementationRequired = Boolean(onchain?.proxy.isProxy);
+  const successfulStaticFor = (kind: "target" | "implementation") =>
+    new Set(
+      toolResults
+        .filter(
+          (result) =>
+            result.scope?.kind === kind &&
+            result.available &&
+            !result.rawError &&
+            (result.tool === "slither" || result.tool === "aderyn" || result.tool === "mythril"),
+        )
+        .map((result) => result.tool),
+    );
+  const targetStatic = successfulStaticFor("target");
+  const implementationStatic = successfulStaticFor("implementation");
+  const staticAnalyzersAvailable = Array.from(
+    new Set(
+      toolResults
+        .filter(
+          (result) =>
+            result.available &&
+            !result.rawError &&
+            (result.tool === "slither" || result.tool === "aderyn" || result.tool === "mythril"),
+        )
+        .map((result) => result.tool),
+    ),
+  ) as ToolName[];
+  const onchainAvailable = Boolean(
+    onchain?.meta.hasCode && onchain.errors.length === 0,
+  );
+  const coverage: AuditReport["coverage"] = {
+    targetSourceAvailable: Boolean(workspace),
+    implementationRequired,
+    implementationSourceAvailable: Boolean(implementationWorkspace),
+    staticAnalyzersAvailable,
+    onchainAvailable,
+    sufficientForCleanVerdict:
+      Boolean(workspace) &&
+      targetStatic.size >= 2 &&
+      onchainAvailable &&
+      (!implementationRequired ||
+        (Boolean(implementationWorkspace) && implementationStatic.size >= 2)),
+  };
+  if (!coverage.sufficientForCleanVerdict) {
+    warnings.push(
+      "Coverage is insufficient for a clean verdict; treat absent findings as unknown, not safe.",
+    );
   }
+
+  const aggregate = aggregateRisk(consensus, {
+    allowClean: coverage.sufficientForCleanVerdict,
+  });
+  const finishedAt = new Date();
 
   const report: AuditReport = {
     version: 1,
@@ -185,16 +331,20 @@ export async function runMultiEngineAudit(
     proxy: onchain?.proxy ?? { isProxy: false, pattern: "none", detected: false },
     admin: onchain?.admin ?? {},
     toolResults,
+    coverage,
     scsvs,
     findings: consensus,
     riskScore: aggregate.riskScore,
     verdict: aggregate.verdict,
-    executiveSummary: writeExecutiveSummary(aggregate, consensus, onchain, scsvs),
+    executiveSummary: writeExecutiveSummary(aggregate, consensus, onchain, scsvs, coverage),
     recommendations: writeRecommendations(consensus, onchain, scsvs),
     warnings,
   };
 
   return report;
+  } finally {
+    await Promise.allSettled(workspacesToClean.map((workspace) => workspace.cleanup()));
+  }
 }
 
 /* ==================== EXEC SUMMARY + RECOMMENDATIONS ==================== */
@@ -203,7 +353,8 @@ function writeExecutiveSummary(
   aggregate: ReturnType<typeof aggregateRisk>,
   findings: ConsensusFinding[],
   onchain: OnChainInterrogation | null,
-  scsvs: ScsvsReport
+  scsvs: ScsvsReport,
+  coverage: AuditReport["coverage"],
 ): string {
   const parts: string[] = [];
 
@@ -215,6 +366,9 @@ function writeExecutiveSummary(
     critical: "Critical risk",
   }[aggregate.verdict];
   parts.push(`${verdictWord} (risk score ${aggregate.riskScore}/100).`);
+  if (!coverage.sufficientForCleanVerdict) {
+    parts.push("Automated coverage was incomplete, so this report cannot establish that the contract is safe.");
+  }
 
   // Headline counts
   const sevSummary: string[] = [];

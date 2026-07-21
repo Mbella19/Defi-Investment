@@ -1,193 +1,155 @@
 # Sovereign Investment Group
 
-A read-only DeFi intelligence terminal for yield discovery, strategy design, portfolio oversight, monitoring, and contract security review. Built with Next.js 16.2.x, React 19, the React Compiler, TypeScript, Tailwind 4, `wagmi` / `viem`, RainbowKit, and `better-sqlite3`.
+Sovereign is a private, read-only DeFi intelligence terminal for yield discovery, wallet-scoped strategy generation, monitoring, portfolio analysis, EVM subscription checkout, and smart-contract review. It uses Next.js 16.2, React 19, TypeScript, wagmi/viem, and SQLite.
 
-The app combines live DeFiLlama/Beefy market data with tier-aware AI strategy generation, SIWE-scoped user data, plan-gated analytics, crypto subscription checkout, and a multi-engine audit workflow.
+## Product surfaces
 
-## What it does
+- Live DeFiLlama yield discovery with bounded, compressed SQLite caching and stale-on-outage fallback.
+- Tier-aware strategy generation backed by protocol ground truth and independent Codex/Gemini security review. AI-proposed pools and metrics are reconciled to the server-side catalogue before a strategy can be saved.
+- Wallet-owned active strategies with APY/TVL, protocol TVL, on-chain pause, and chain-aware exploit monitoring.
+- Durable alert incidents and a retrying notification outbox for email, Telegram, Slack, and Discord. Channel endpoints are encrypted at rest.
+- Contract review using verified source, Slither, Aderyn, Mythril, on-chain interrogation, consensus grouping, and SCSVS mapping. Missing coverage is reported as unknown—not clean.
+- A seven-chain, read-only EVM portfolio lens scoped to the SIWE wallet.
+- APY-change correlation and a deterministic block-bootstrap scenario simulator. These tools are estimates and do not model every shared dependency or loss mechanism.
+- Free, Pro, and Ultra plans with server-enforced capability and monthly usage limits.
+- EVM-only checkout: ETH/USDC/USDT on Ethereum and USDC/USDT on BSC.
 
-- **Live yield discovery**: ranks DeFiLlama pools by TVL, APY, chain, category, stability, and safety. The landing and `/discover` views use cached live feeds and graceful stale fallbacks.
-- **Tier-aware strategy engine**: filters by budget, APY, risk, TVL, stablecoin preference, recent APY volatility, and long-horizon APY stability. Protocols receive triple-model security analysis with ground-truth checks and heuristic vetoes. Strategy review depth scales by tier: Free = solo strategist, Pro = Gemini review, Ultra = Codex + Gemini review.
-- **Active strategy monitoring**: stores accepted allocations by authenticated wallet, scans active strategies for APY drops, TVL drains, protocol-wide TVL crashes, paused contracts, and exploit alerts, then persists unread alerts and optionally posts Discord webhooks.
-- **Security review console**: audits a contract with verified source fetch, Slither, Aderyn, Mythril, viem on-chain interrogation, consensus grouping, triple-AI explanations, and OWASP SCSVS v12 mapping. Missing analyzer binaries degrade to indeterminate coverage instead of aborting the report.
-- **Portfolio and tools**: Pro/Ultra users get a read-only wallet portfolio lens across Ethereum, Arbitrum, Optimism, Polygon, Base, BSC, and Avalanche, plus a scenario simulator and APY-correlation matrix.
-- **Plans and crypto checkout**: Free, Pro, and Ultra tiers are enforced server-side. Pro/Ultra subscriptions can be activated by on-chain crypto payments with quote creation, transaction verification, and 30-day subscription upsert.
+## Runtime model
+
+This build intentionally targets one long-lived Node process with one persistent SQLite database. Do not run multiple application instances against copied databases, and do not deploy the database on ephemeral serverless storage.
+
+SQLite stores sessions, nonces, rate limits, usage reservations, job payloads/results/leases, strategies, incidents, alert delivery attempts, payment quotes, subscriptions, AI telemetry, and public-data caches. In-process timers wake the durable workers and monitoring sweep; an external cron can call the protected cron route as a backup. If the process is stopped, work resumes from SQLite after the next start/request, but no monitoring can occur while the machine is offline.
 
 ## Requirements
 
-- Node 20+ and npm.
-- `SESSION_SECRET` with at least 32 characters.
-- WalletConnect Cloud project ID for RainbowKit.
-- One of the local `claude`, `codex`, and `gemini` CLIs for local CLI mode, or Anthropic/OpenAI/Google API keys for API mode.
-- Etherscan V2 API key for source, creation, transaction, and deployer-forensics calls.
-- Recommended: Alchemy, Infura, or explicit per-chain RPC URLs. Public RPC fallbacks work for development but can rate-limit.
-- Optional: `slither`, `aderyn`, and `mythril` binaries for fuller audit coverage.
-- Optional: Discord webhook for monitor alerts.
-- Optional: payment address/RPC overrides for checkout verification.
+- Node.js 22.13+ and npm.
+- A persistent local filesystem for `DATABASE_PATH`.
+- `SESSION_SECRET` of at least 32 characters.
+- A real WalletConnect project ID for production.
+- Codex and Gemini CLI binaries in development-only CLI mode, or their API keys in API mode. Production rejects CLI mode because protocol text is attacker-influenced and local agent CLIs are not a production isolation boundary.
+- An Etherscan V2 key for contract source and on-chain review.
+- Reliable RPC access through Alchemy, Infura, or explicit per-chain URLs.
+- Optional Slither, Aderyn, and Mythril binaries. Their absence reduces reported audit coverage.
 
-## Local Dev
+## Local development
 
 ```bash
 cp .env.example .env.local
-# fill in SESSION_SECRET, NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID, ETHERSCAN_API_KEY
 npm install
 npm run dev
 ```
 
-The SQLite DB is created on first server route hit. By default it writes to `sovereign.db` in the project root; set `DATABASE_PATH` to move it. Deleting the DB is safe during development because schema migrations run on boot.
+The database defaults to `sovereign.db` in the repository root. Runtime artifacts and `.env.local` are ignored and must never be committed.
 
-### Production Mode Locally
+## Production deployment
+
+Use a process supervisor such as systemd or pm2 and put the app behind one trusted TLS reverse proxy.
 
 ```bash
+npm ci
+npm run check:env
+npm test
+npm run lint
 npm run build
 npm run start
 ```
 
-Production mode rejects `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=demo` and hosted runtimes reject AI CLI mode. For a production-like local run, set a real WalletConnect project ID, `AI_MODE=api`, and provider API keys.
+Operational requirements:
 
-## Deploying (single Node server)
+1. Set `DATABASE_PATH` to an absolute path on a backed-up persistent volume. Back up the database and its WAL consistently while the app is stopped or through SQLite's backup API.
+2. Set `NEXT_PUBLIC_APP_HOST` to the canonical HTTPS origin. Only enable `TRUST_PROXY_HEADERS=true` when the app is reachable exclusively through a proxy that overwrites forwarded headers. When it is false, anonymous clients deliberately share one conservative direct-connection rate-limit bucket; this prevents header spoofing but can make one abusive client affect public availability.
+3. Set `PAYMENT_ADDRESS_EVM` to the merchant wallet. There is no baked-in recipient fallback; an unset or invalid address disables every payment rail.
+4. Configure `CRON_SECRET` and call `GET /api/cron/monitor` with `Authorization: Bearer <secret>` every 15 minutes if using an external scheduler.
+5. Monitor disk space, SQLite backup success, job failures, dead alert-outbox rows, and AI usage/cost telemetry.
+6. Exercise SIWE, one strategy job, one audit, each enabled notification channel, and a small real payment on every enabled chain before launch.
 
-The app is designed for one long-lived Node process (VPS, Docker, bare metal) — SQLite persistence, in-process background jobs, and the 15-minute scheduler all assume it. Serverless platforms will break background work; don't deploy there without re-architecting.
+This repository does not include Docker, Postgres, Redis, or a hosted queue by design. Horizontal scaling requires a deliberate storage/worker redesign; copying this SQLite deployment across instances is unsafe.
 
-1. **Env checklist** (see `.env.example`): `SESSION_SECRET` (≥32 chars), `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`, `AI_MODE=api` + the three provider keys, `ETHERSCAN_API_KEY`, an RPC key (`ALCHEMY_API_KEY` or per-chain URLs), payment address overrides if not using the defaults, and optionally `RESEND_API_KEY`/`TELEGRAM_BOT_TOKEN` for alert channels.
-2. **Run it**:
+## Configuration
 
-   ```bash
-   npm ci && npm run build
-   npm run start          # keep alive with systemd, pm2, or Docker restart policy
-   ```
+See [.env.example](.env.example). Important values include:
 
-3. **Data**: everything lives in `sovereign.db` (WAL mode) next to the app — back that file up. Set `DATABASE_PATH` to relocate it (e.g., a mounted volume).
-4. **Background work**: the in-process scheduler starts on the first strategy-route hit and then runs monitoring, payment reconciliation, and expiry reminders every 15 minutes. Optionally point an external cron at `GET /api/cron/monitor` with `Authorization: Bearer $CRON_SECRET` as a backup trigger, and watch `GET /api/strategies/monitor` for `stale: true`.
-5. **Smoke test after deploy**: sign in, generate a Free strategy, and make one small real payment per chain you enable — payment verification is the one path unit tests can't fully exercise.
-
-## Environment
-
-Minimum useful `.env.local`:
-
-```bash
-SESSION_SECRET=...
-NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=...
-ETHERSCAN_API_KEY=...
-
-# Local dev defaults to CLI mode; hosted deployments should use api.
-AI_MODE=cli
-# AI_MODE=api
-# ANTHROPIC_API_KEY=...
-# OPENAI_API_KEY=...
-# GEMINI_API_KEY=...
-
-# Recommended for wallet, checkout, and on-chain interrogation reliability.
-# ALCHEMY_API_KEY=...
-# INFURA_API_KEY=...
-# RPC_URL_ETHEREUM=...
-# RPC_URL_BASE=...
-# RPC_URL_ARBITRUM=...
-# RPC_URL_OPTIMISM=...
-# RPC_URL_POLYGON=...
-# RPC_URL_BSC=...
-# RPC_URL_AVALANCHE=...
-
-# Production cron and notifications.
-CRON_SECRET=...
-# DISCORD_WEBHOOK_URL=...
-
-# Plans / payments.
-# OWNER_WALLETS=0xabc...,0xdef...
-# PAYMENT_ADDRESS_EVM=...
-# PAYMENT_ADDRESS_BTC=...
-# PAYMENT_ADDRESS_SOL=...
-# PAYMENT_ADDRESS_TRON=...
-# TRONGRID_API_KEY=...
-# SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
-# MEMPOOL_API_URL=https://mempool.space/api
-```
-
-See `.env.example` for provider-specific model/base URL overrides and all payment options.
+- `SESSION_SECRET`: opaque session, CSRF, and default encryption-key material; at least 32 characters.
+- `CHANNEL_ENCRYPTION_KEY`: optional dedicated stable key for notification endpoints. Set it before collecting channels and retain it across deployments.
+- `AUDIT_SHARE_SECRET`: optional dedicated key for deterministic public-share capabilities. Retain it while links should remain valid.
+- `NEXT_PUBLIC_APP_HOST`: canonical origin used for SIWE and origin checks.
+- `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`: required and non-placeholder in production.
+- `AI_MODE=api`, `OPENAI_API_KEY`, and `GEMINI_API_KEY` for API mode.
+- `OPENAI_*_USD_PER_MILLION` and `GEMINI_*_USD_PER_MILLION`: optional rates used only for cost telemetry; prompts and outputs are not stored in telemetry.
+- `ETHERSCAN_API_KEY` and RPC configuration.
+- `PAYMENT_ADDRESS_EVM`: enables the EVM checkout rails.
+- `RESEND_API_KEY`, Telegram settings, and optional ops `DISCORD_WEBHOOK_URL`.
+- `CRON_SECRET`: required when the external cron endpoint is used in production.
+- `OWNER_WALLETS`, `ENABLE_DEV_LOGIN`, and `DEV_LOGIN_SECRET`: optional local staff bypass controls. The bypass requires a separate 32+ character secret and is disabled in production/Vercel.
 
 ## Plans
 
-Plans are defined in `src/lib/plans/access.ts` and returned by `/api/me/plan`.
+- Free: 2 strategy generations per month, 2 contract reviews per month, and solo strategy proposal.
+- Pro ($49/month): 20 strategies, 20 reviews, Gemini strategy review, risk selection, stablecoin-only sleeves, monitoring, portfolio lens, simulator, correlation, and Discord alerts.
+- Ultra ($149/month): 60 strategies, unlimited reviews, Codex plus Gemini strategy council, custom APY mode, expanded channels, and priority support.
 
-- **Free**: 2 strategy generations/month, solo strategist mode, full audit access.
-- **Pro ($100/month)**: 20 strategy generations/month, Gemini reviewer, risk-band selection, stablecoin-only sleeves, realtime alerts, simulator, correlation matrix, portfolio lens, Discord alerts.
-- **Ultra ($200/month)**: 60 strategy generations/month, Codex + Gemini reviewer council, custom APY range, expanded alert channels, and priority support.
-
-`OWNER_WALLETS` is a comma-separated bypass list that always resolves those wallets to Ultra. Strategy generation usage is recorded when a job starts, even if the draft is discarded.
+Usage is reserved atomically when a durable job is created. A retry with the same idempotency key returns the existing job rather than charging twice. Failed work remains billable once execution has started; reservations released before job creation do not count.
 
 ## Payments
 
 Checkout lives at `/plans/checkout?tier=pro|ultra`.
 
-- `GET /api/payments/quote` lists enabled payment pairs without recipient addresses.
-- `POST /api/payments/quote` creates a 30-minute wallet-scoped quote.
-- `POST /api/payments/verify` verifies the transaction, prevents double-claiming the same tx hash, and activates or extends the subscription by 30 days.
+- Quotes are bound to the authenticated SIWE wallet, chain, token contract, merchant, live unit price, creation time, and expiry.
+- Verification requires the transaction sender to match the SIWE wallet, an exact-or-greater transfer, a payment block inside the quote window, and the configured confirmation count.
+- Confirmed transaction hashes are unique per chain. Pending hashes cannot permanently squat a transaction.
+- An active Ultra subscription is not downgraded by a Pro payment. Pro-equivalent value extends the active Ultra term.
+- Only Ethereum and BSC EVM rails are supported. There is no manual transaction-hash flow for Bitcoin, Solana, or Tron.
 
-Supported pairs are configured in `src/lib/payments/config.ts`: ETH/USDC/USDT on Ethereum, USDC/USDT on BSC, BTC, SOL, and Tron USDC/USDT when `PAYMENT_ADDRESS_TRON` is set. EVM payments can be sent directly from the checkout with wagmi; BTC/SOL/Tron use manual send plus tx-hash verification.
+## Security model
 
-## Commands
+- SIWE issues random opaque sessions stored hashed in SQLite. The production session cookie is `__Host-`, `Secure`, `HttpOnly`, and `SameSite=Strict`; the paired readable CSRF cookie is also `__Host-`, `Secure`, and `SameSite=Strict`. State changes require that session-bound token plus canonical-origin validation.
+- Nonces are one-time and persistent. Rate limits are persistent and wallet/IP scoped. Proxy headers are ignored unless explicitly trusted.
+- Wallet-owned routes derive authorization from the session, never from a caller-supplied wallet address.
+- External caller-influenced URLs use the guarded fetch path. Provider calls have bounded timeouts.
+- Notification endpoints use AES-256-GCM at rest; verification codes are keyed hashes. API responses expose only redacted channel labels.
+- Audit-share capabilities are hashed at rest, expire after 30 days, are owner-revocable, and are excluded from search indexing.
+- Security reports distinguish unavailable coverage from a clean result. Automated agreement cannot claim formal proof.
+- Production security headers include CSP, HSTS, clickjacking protection, MIME sniffing protection, and a restrictive permissions policy.
+
+## Monitoring semantics
+
+APY/TVL breaches must persist for two scans. A durable incident opens once, is not re-notified while ongoing, and can notify again only after recovery. Protocol and exploit matching is chain-aware. Exploit drain signals are refreshed on the normal scheduler path without sending a cross-wallet holdings set to an AI model. Per-user deliveries are placed in SQLite before sending and retry with bounded backoff.
+
+`POST /api/strategies/monitor` is the authenticated manual trigger. `GET /api/cron/monitor` is the all-wallet operator trigger and requires `CRON_SECRET` in production.
+
+## Verification commands
 
 ```bash
-npm run dev          # next dev
-npm run build        # next build, including type-check
-npm run start        # next start after build
-npm run lint         # eslint
-npx tsc --noEmit     # standalone type-check
+npm run check:env   # validates production-oriented configuration without printing secrets
+npm test            # Vitest
+npm run lint        # ESLint
+npx tsc --noEmit    # standalone TypeScript check after Next type generation
+npm run build       # production compile/type gate
+npm audit --omit=dev
 ```
 
-There is no test runner configured. `npm run build` is the canonical compile gate.
+## Accepted product risks
 
-## Security Model
+- Strategy audit shortcuts use the protocol-level canonical address reported by DeFiLlama. That address may differ from a specific pool's vault, market, or strategy contract, so users must verify the intended contract before treating an audit as pool-specific.
+- This software is analysis tooling, not investment advice, custody, execution, or a guarantee against loss. APY, TVL, token prices, security signals, and model output can be stale or wrong.
+- The simulator and APY correlation tool are scenario aids, not forecasts. They do not fully model token-price covariance, impermanent loss, liquidations, gas, taxes, slippage, bridge risk, or composability dependencies.
+- Public landing-page claims, example incident figures, social/community links, SMS channel metadata, and other marketing placeholders have intentionally not been changed in this engineering pass. They require owner/legal verification or implementation before a public commercial launch.
+- Local single-process operation is an intentional constraint. Availability is limited by that machine and its backup/monitoring discipline.
 
-- **SIWE auth**: `/api/auth/nonce`, `/api/auth/verify`, `/api/auth/logout`, and `/api/auth/me` issue and clear an HMAC-signed `sov_session` cookie with a 24h TTL.
-- **Wallet scoping**: `/api/strategies*`, portfolio, plan, alert, and payment routes use the authenticated wallet from the cookie. Client-supplied wallet params are ignored for authorization.
-- **Plan guards**: `requireCapability()` enforces Pro/Ultra features server-side, not just in the UI.
-- **Rate limiting**: in-process fixed-window buckets key by authenticated wallet when available, otherwise by IP. Current high-cost caps include strategy 5/h, audit 3/h, analyze/forensics/security alerts 20/h, tools and payments 30/h, and manual monitor scans 10/h.
-- **Ground-truth vetoes**: protocol scoring includes audit-link checks, recent exploit alerts, TVL-crash checks, deployer/source-audit cache reads, and deterministic veto ceilings the AI cannot override.
-- **SSRF guard**: caller-influenced outbound URLs should go through the safe fetch path in `src/lib/security/ground-truth.ts`.
-- **Payment safety**: quotes are wallet-scoped, expire, tolerate only small amount drift, and confirmed transaction hashes are unique.
-
-## Monitoring And Cron
-
-Manual UI scans call `POST /api/strategies/monitor` and are SIWE + Pro/Ultra gated. Vercel Cron calls `GET /api/cron/monitor` every 15 minutes as configured in `vercel.json`; production requires `Authorization: Bearer ${CRON_SECRET}`.
-
-`GET /api/strategies/monitor` is only a health/status endpoint. It reports scheduler state and a stale flag when no scan has run in 30+ minutes.
-
-## Deployment Notes
-
-The app is designed for Vercel-style Node serverless routes, but several stateful parts are prototype-grade:
-
-- SQLite (`better-sqlite3`) stores active strategies, alerts, breach state, subscriptions, pending payments, and usage counters. On Vercel, local files are ephemeral and not region-stable. Replace `src/lib/db.ts` with managed Postgres/Supabase/Neon before real production use.
-- Job stores, rate limits, and some caches are in-process `Map`s. Multi-instance deployments should move jobs/limits to durable storage or a queue.
-- AI CLI mode is not supported on hosted runtimes. Use `AI_MODE=api` and provider keys.
-- Slither/Aderyn/Mythril must exist in the runtime image for full audit coverage. If they are missing, the audit still returns a report with reduced/indeterminate coverage.
-
-## Repo Layout
+## Repository layout
 
 ```text
-src/app/(landing)/          public landing route
-src/app/(app)/              terminal pages: discover, portfolio, strategies, security, tools, plans
-src/app/api/                server routes for auth, yields, strategies, tools, payments, security, cron
-src/components/site/        current site shell, landing/app UI primitives, paywall, wallet button
-src/components/sovereign/   legacy/terminal visual primitives reused by notifications and views
-src/components/providers/   wagmi/RainbowKit/React Query/SIWE providers
-src/components/notifications/ alert bell and alert dropdown
-src/lib/security/           AI scoring, audit pipeline, source audit, deployer forensics, exploit monitor
-src/lib/wallet/             chain config, token lists, balance fetcher, portfolio calculator
-src/lib/plans/              tier capabilities, subscription resolution, usage counters
-src/lib/payments/           quote creation, pricing, and chain-specific verification
-src/lib/tools/              pool history, simulator, correlation
-src/types/                  shared TypeScript contracts
-scripts/                    ad-hoc Codex/Gemini review helpers and exploit backtest script
-vercel.json                 Vercel Cron config for /api/cron/monitor
+src/app/(landing)/          public landing and shared-report pages
+src/app/(app)/              authenticated terminal pages
+src/app/api/                auth, strategy, audit, tools, payment, and cron routes
+src/components/             wallet, provider, notification, and product UI
+src/lib/security/           protocol scoring, audit, on-chain, and exploit logic
+src/lib/wallet/             EVM chain/token balance aggregation
+src/lib/payments/           quote, price, verifier, and reconciliation logic
+src/lib/plans/              tier capability, subscription, and usage logic
+src/lib/tools/              history, scenario, and correlation calculations
+test/                       Vitest unit tests
+scripts/                    review and backtest utilities
 ```
-
-## Scripts
-
-- `scripts/codex-review.sh`: pipe a diff/file/question to Codex GPT-5.5 for a read-only second opinion.
-- `scripts/gemini-review.sh`: pipe a diff/file/question to Gemini 3.1 Pro Preview.
-- `scripts/backtest-drain.ts`: backtests the drain-detection heuristic against the Euler exploit fixture.
-
-## License
 
 Private / unpublished. Do not redistribute without permission.

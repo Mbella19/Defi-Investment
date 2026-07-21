@@ -2,6 +2,7 @@ import "server-only";
 import { log } from "@/lib/log";
 import { findPair } from "./config";
 import {
+  clearPendingQuoteTx,
   confirmQuoteAndActivate,
   listReconcilableQuotes,
   markQuoteStatus,
@@ -27,6 +28,14 @@ export async function reconcilePendingPayments(): Promise<{
     const txHash = quote.txHash;
     const pair = findPair(quote.chain, quote.token);
     if (!txHash || !pair) continue;
+    if (
+      quote.chainId === null ||
+      pair.chainId !== quote.chainId ||
+      (pair.contract?.toLowerCase() ?? null) !== (quote.tokenContract?.toLowerCase() ?? null)
+    ) {
+      markQuoteStatus(quote, "failed");
+      continue;
+    }
 
     try {
       const result = await verifyTransaction({
@@ -34,23 +43,21 @@ export async function reconcilePendingPayments(): Promise<{
         txHash,
         expectedRecipient: quote.recipientAddress,
         expectedAmount: quote.amountToken,
+        expectedSender: quote.wallet,
+        notBefore: quote.createdAt,
+        notAfter: quote.expiresAt,
       });
       if (!result.ok) {
-        // Still not final (or transient upstream failure) — try again next sweep.
+        if (!result.retryable) {
+          clearPendingQuoteTx(quote);
+          log.warn("reconciler", "payment verification rejected", {
+            quoteId: quote.id,
+            reason: result.reason,
+          });
+        }
         continue;
       }
-      // Same EVM sender binding as the interactive verify route. A mismatch
-      // is deterministic — stop retrying this quote.
-      if (pair.chainId !== null && result.observed.from !== quote.wallet) {
-        markQuoteStatus(quote.id, "failed");
-        log.warn("reconciler", "sender mismatch — quote marked failed", {
-          quoteId: quote.id,
-          wallet: quote.wallet,
-          observedFrom: result.observed.from,
-        });
-        continue;
-      }
-      confirmQuoteAndActivate(quote, txHash);
+      confirmQuoteAndActivate(quote, txHash, result.observed);
       confirmed += 1;
       log.info("reconciler", "auto-confirmed payment", {
         quoteId: quote.id,
@@ -61,7 +68,7 @@ export async function reconcilePendingPayments(): Promise<{
       });
     } catch (err) {
       if (err instanceof TxAlreadyClaimedError) {
-        markQuoteStatus(quote.id, "failed");
+        markQuoteStatus(quote, "failed");
         log.warn("reconciler", "tx already claimed elsewhere — quote marked failed", {
           quoteId: quote.id,
         });

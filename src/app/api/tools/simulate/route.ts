@@ -9,6 +9,8 @@ import {
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { requireWallet } from "@/lib/auth/guard";
 import { requireCapability } from "@/lib/plans/access";
+import { log } from "@/lib/log";
+import { jsonBodyErrorResponse, readJsonBody } from "@/lib/request-body";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -36,11 +38,20 @@ function parseAllocations(raw: unknown): AllocationInput[] {
   if (!Array.isArray(raw)) return [];
   const out: AllocationInput[] = [];
   for (const item of raw) {
-    if (!item || typeof item !== "object") continue;
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
     const a = item as RawAllocation;
-    const poolId = typeof a.poolId === "string" ? a.poolId : null;
-    const weight = Number(a.weightPct);
-    if (!poolId || !Number.isFinite(weight) || weight <= 0) continue;
+    const poolId =
+      typeof a.poolId === "string" && /^[A-Za-z0-9:_-]{1,200}$/.test(a.poolId)
+        ? a.poolId
+        : null;
+    const weight = a.weightPct;
+    if (
+      !poolId ||
+      typeof weight !== "number" ||
+      !Number.isFinite(weight) ||
+      weight <= 0 ||
+      weight > 100
+    ) continue;
     out.push({ poolId, weightPct: weight });
   }
   return out;
@@ -56,44 +67,85 @@ export async function POST(request: Request) {
   if (limited) return limited;
 
   try {
-    const body = (await request.json().catch(() => ({}))) as Body;
+    let parsed: unknown;
+    try {
+      parsed = await readJsonBody(request);
+    } catch (error) {
+      return jsonBodyErrorResponse(error);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return Response.json({ error: "JSON body must be an object" }, { status: 400 });
+    }
+    const body = parsed as Body;
 
-    const allocations = parseAllocations(body.allocations);
-    if (allocations.length < 1) {
+    if (!Array.isArray(body.allocations) || body.allocations.length < 1) {
       return Response.json(
         { error: "Provide at least 1 allocation with poolId and weightPct." },
         { status: 400 },
       );
     }
-    if (allocations.length > 8) {
+    if (body.allocations.length > 8) {
       return Response.json(
         { error: "Cap is 8 allocations per simulation." },
         { status: 400 },
       );
     }
 
+    const allocations = parseAllocations(body.allocations);
+    if (allocations.length !== body.allocations.length) {
+      return Response.json(
+        { error: "Every allocation must contain a valid poolId and numeric weightPct." },
+        { status: 400 },
+      );
+    }
+    if (new Set(allocations.map((allocation) => allocation.poolId)).size !== allocations.length) {
+      return Response.json({ error: "Each pool can appear only once." }, { status: 400 });
+    }
+
     const totalWeight = allocations.reduce((s, a) => s + a.weightPct, 0);
-    if (Math.abs(totalWeight - 100) > 1) {
+    if (Math.abs(totalWeight - 100) > 0.01) {
       return Response.json(
         { error: `Allocation weights must sum to 100% (got ${totalWeight.toFixed(1)}%).` },
         { status: 400 },
       );
     }
 
-    const principalRaw = Number(body.principalUsd);
-    const principalUsd = Number.isFinite(principalRaw) && principalRaw > 0
-      ? Math.min(1_000_000_000, principalRaw)
-      : 10_000;
+    const principalRaw = body.principalUsd === undefined ? 10_000 : body.principalUsd;
+    if (
+      typeof principalRaw !== "number" ||
+      !Number.isFinite(principalRaw) ||
+      principalRaw <= 0 ||
+      principalRaw > 1_000_000_000
+    ) {
+      return Response.json(
+        { error: "principalUsd must be between 0 and 1,000,000,000." },
+        { status: 400 },
+      );
+    }
+    const principalUsd = principalRaw;
 
-    const horizonRaw = Number(body.horizonDays);
-    const horizonDays = Number.isFinite(horizonRaw) && horizonRaw > 0
-      ? Math.min(365, Math.max(30, Math.floor(horizonRaw)))
-      : 90;
+    const horizonRaw = body.horizonDays === undefined ? 90 : body.horizonDays;
+    if (
+      typeof horizonRaw !== "number" ||
+      !Number.isInteger(horizonRaw) ||
+      horizonRaw < 30 ||
+      horizonRaw > 365
+    ) {
+      return Response.json(
+        { error: "horizonDays must be an integer between 30 and 365." },
+        { status: 400 },
+      );
+    }
+    const horizonDays = horizonRaw;
 
-    const scenarioRaw = typeof body.scenario === "string" ? body.scenario : "baseline";
-    const scenario = (VALID_SCENARIOS as string[]).includes(scenarioRaw)
-      ? (scenarioRaw as Scenario)
-      : "baseline";
+    if (body.scenario !== undefined && typeof body.scenario !== "string") {
+      return Response.json({ error: "scenario must be a string" }, { status: 400 });
+    }
+    const scenarioRaw = body.scenario ?? "baseline";
+    if (!(VALID_SCENARIOS as string[]).includes(scenarioRaw)) {
+      return Response.json({ error: "Unknown simulation scenario." }, { status: 400 });
+    }
+    const scenario = scenarioRaw as Scenario;
 
     const poolIds = allocations.map((a) => a.poolId);
     const [series, allPools] = await Promise.all([
@@ -109,14 +161,25 @@ export async function POST(request: Request) {
           symbol: p.symbol ?? "?",
           protocol: p.project ?? "?",
           chain: p.chain ?? "?",
+          stablecoin: p.stablecoin === true,
         });
       }
     }
 
-    if (seriesById.size === 0) {
+    const unavailable = poolIds.filter(
+      (poolId) =>
+        !seriesById.has(poolId) ||
+        (seriesById.get(poolId)?.points.length ?? 0) < 30 ||
+        !metaById.has(poolId),
+    );
+    if (unavailable.length > 0) {
       return Response.json(
-        { error: "Could not fetch history for any of the selected pools." },
-        { status: 502 },
+        {
+          error:
+            "Simulation requires current metadata and at least 30 history points for every selected pool.",
+          unavailable,
+        },
+        { status: 422 },
       );
     }
 
@@ -131,7 +194,7 @@ export async function POST(request: Request) {
 
     return Response.json(result);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Simulation failed";
-    return Response.json({ error: message }, { status: 502 });
+    log.warn("simulator", "analysis failed", { error: err });
+    return Response.json({ error: "Simulation is temporarily unavailable" }, { status: 502 });
   }
 }

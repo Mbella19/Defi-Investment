@@ -1,9 +1,11 @@
 import { monitorActiveStrategies } from "@/lib/strategy-monitor";
-import { ensureSchedulerStarted, getSchedulerStatus } from "@/lib/monitor-scheduler";
+import { ensureSchedulerStarted } from "@/lib/monitor-scheduler";
 import { requireWallet } from "@/lib/auth/guard";
 import { requireCapability } from "@/lib/plans/access";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { getDb } from "@/lib/db";
+import { log } from "@/lib/log";
+import { jsonBodyErrorResponse, readJsonBody } from "@/lib/request-body";
 
 /**
  * Manual scan trigger from the UI ("Run scan now" button). Authenticated by
@@ -29,8 +31,23 @@ export async function POST(request: Request) {
     // get periodic scans without an external cron. No-op on serverless.
     ensureSchedulerStarted();
 
-    const body = await request.json().catch(() => ({}));
-    const { strategyId } = body as { strategyId?: string };
+    let parsed: unknown;
+    try {
+      parsed = await readJsonBody(request);
+    } catch (error) {
+      return jsonBodyErrorResponse(error);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return Response.json({ error: "JSON body must be an object" }, { status: 400 });
+    }
+    const body = parsed as { strategyId?: unknown };
+    const strategyId = body.strategyId;
+    if (
+      strategyId !== undefined &&
+      (typeof strategyId !== "string" || !/^[A-Za-z0-9_-]{8,128}$/.test(strategyId))
+    ) {
+      return Response.json({ error: "Invalid strategyId" }, { status: 400 });
+    }
 
     // If a strategyId is given, verify it belongs to this wallet first.
     if (strategyId) {
@@ -46,21 +63,7 @@ export async function POST(request: Request) {
     const result = await monitorActiveStrategies(strategyId, auth.wallet);
     return Response.json(result);
   } catch (error) {
-    console.error("Strategy monitor scan failed:", error);
-    const message = error instanceof Error ? error.message : "Monitor scan failed";
-    return Response.json({ error: message }, { status: 500 });
+    log.error("strategy-monitor", "manual scan failed", { error });
+    return Response.json({ error: "Monitor scan failed" }, { status: 502 });
   }
-}
-
-/**
- * Health check. Returns when the last successful scan ran so an external
- * watchdog can alert if the scheduler stops firing (serverless instance
- * recycle, cron misconfiguration, etc.).
- */
-export async function GET() {
-  const status = getSchedulerStatus();
-  const stale =
-    status.lastRunAt === null ||
-    Date.now() - status.lastRunAt > 30 * 60 * 1000; // alert if no scan in 30min
-  return Response.json({ ...status, stale });
 }

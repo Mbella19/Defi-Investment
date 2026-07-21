@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Bell,
@@ -22,6 +22,7 @@ import { CommandStrip } from "@/components/site/ui";
 import { useAccount, useDisconnect } from "wagmi";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { usePlan } from "@/hooks/usePlan";
+import { apiFetch } from "@/lib/api-client";
 
 type ChannelKind = "email" | "telegram" | "slack" | "discord";
 
@@ -110,7 +111,7 @@ export default function AlertsSettingsPage() {
   const [add, setAdd] = useState<AddState>({ kind: "idle" });
   const [endpoint, setEndpoint] = useState("");
   const [code, setCode] = useState("");
-  const [autoSignAttempted, setAutoSignAttempted] = useState(false);
+  const autoSignAttempted = useRef(false);
 
   // If wagmi connected but SIWE session is missing, transparently re-prompt
   // signing once. Wallet shown in the topbar → user already considers
@@ -118,15 +119,13 @@ export default function AlertsSettingsPage() {
   // to view their own settings. The provider's auto-prompt throttle won't
   // re-fire after the user dismissed it, so we call signIn() directly here.
   useEffect(() => {
-    if (autoSignAttempted) return;
+    if (autoSignAttempted.current) return;
     if (authStatus === "checking" || authStatus === "signing") return;
     if (!isConnected) return;
     if (isAuthed) return;
-    setAutoSignAttempted(true);
-    void signIn().catch(() => {
-      /* user dismissed — fall through to the explicit sign-in card */
-    });
-  }, [authStatus, isAuthed, isConnected, signIn, autoSignAttempted]);
+    autoSignAttempted.current = true;
+    void signIn();
+  }, [authStatus, isAuthed, isConnected, signIn]);
 
   const fetchChannels = useCallback(async () => {
     if (!isAuthed) return;
@@ -145,28 +144,38 @@ export default function AlertsSettingsPage() {
   }, [isAuthed]);
 
   useEffect(() => {
-    void fetchChannels();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) void fetchChannels();
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [fetchChannels]);
 
-  // Telegram polling — every 4s while the user is in the telegram-pending state.
+  // Telegram polling while the user is in the pending state. Ten seconds is
+  // responsive without exhausting the server's setup rate limit.
   useEffect(() => {
     if (add.kind !== "telegram") return;
     const id = setInterval(async () => {
       try {
-        const res = await fetch("/api/account/channels/telegram-poll", {
+        const res = await apiFetch("/api/account/channels/telegram-poll", {
           method: "POST",
         });
         if (!res.ok) return;
-        const json = (await res.json()) as { connected: boolean };
+        const json = (await res.json()) as { connected: boolean; pending: boolean };
         if (json.connected) {
           setAdd({ kind: "idle" });
           setEndpoint("");
           await fetchChannels();
+        } else if (!json.pending) {
+          setAdd({ kind: "idle" });
+          setError("Telegram connection expired. Start setup again for a fresh link.");
         }
       } catch {
         /* keep polling */
       }
-    }, 4000);
+    }, 10_000);
     return () => clearInterval(id);
   }, [add, fetchChannels]);
 
@@ -174,7 +183,7 @@ export default function AlertsSettingsPage() {
     setError(null);
     setBusy(true);
     try {
-      const res = await fetch("/api/account/channels", {
+      const res = await apiFetch("/api/account/channels", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ channel, endpoint: endpoint.trim() }),
@@ -217,7 +226,7 @@ export default function AlertsSettingsPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/account/channels/verify", {
+      const res = await apiFetch("/api/account/channels/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ channel: add.channel, code: code.trim() }),
@@ -240,7 +249,7 @@ export default function AlertsSettingsPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/account/channels/${channel}`, {
+      const res = await apiFetch(`/api/account/channels/${channel}`, {
         method: "DELETE",
       });
       if (!res.ok) throw new Error(`Remove ${res.status}`);
@@ -256,7 +265,7 @@ export default function AlertsSettingsPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/account/channels/${channel}`, {
+      const res = await apiFetch(`/api/account/channels/${channel}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),
@@ -352,7 +361,7 @@ export default function AlertsSettingsPage() {
               <button
                 type="button"
                 className="primary-button"
-                onClick={() => signIn().catch(() => {})}
+                onClick={() => void signIn()}
               >
                 {!isConnected ? "Connect wallet" : "Authorize wallet"}
               </button>
@@ -362,7 +371,7 @@ export default function AlertsSettingsPage() {
                   className="ghost-button"
                   onClick={() => {
                     disconnect();
-                    setAutoSignAttempted(false);
+                    autoSignAttempted.current = false;
                   }}
                   title="Disconnect and reconnect — useful if MetaMask got confused"
                 >
@@ -654,8 +663,8 @@ export default function AlertsSettingsPage() {
               <li><Bell size={14} /> Deployer downgraded by ground-truth review</li>
             </ul>
             <p style={{ color: "var(--soft)", fontSize: 12, marginTop: 14 }}>
-              Alerts deduplicate on a 24h window per (strategy, pool, type) so you
-              never get pinged twice for the same event in the same day.
+              Alerts open one durable incident per affected position. You are
+              notified again only after the condition recovers and later returns.
             </p>
           </section>
         </div>
@@ -665,6 +674,9 @@ export default function AlertsSettingsPage() {
 }
 
 function maskEndpoint(kind: ChannelKind, endpoint: string): string {
+  if (endpoint.includes("•••") || endpoint.startsWith("Telegram chat ending")) {
+    return endpoint;
+  }
   if (kind === "email") {
     const [user, domain] = endpoint.split("@");
     if (!user || !domain) return endpoint;

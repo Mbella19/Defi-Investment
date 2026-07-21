@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "crypto";
 import { createPublicClient, http, type PublicClient, isAddress } from "viem";
 import {
   mainnet,
@@ -17,6 +18,11 @@ import { dispatchAlertBatch } from "@/lib/notifications/dispatcher";
 import { getPoolStability, type PoolStability } from "@/lib/pool-stability";
 import { mapWithConcurrency } from "@/lib/async-utils";
 import { getRpcUrl } from "@/lib/rpc";
+import { log } from "@/lib/log";
+import {
+  refreshExploitFeed,
+  type MonitoredStrategy,
+} from "@/lib/security/exploit-monitor";
 import { DEFAULT_ALERT_CONFIG } from "@/types/portfolio";
 import type { AlertEvent } from "@/types/portfolio";
 import type { PortfolioPosition } from "@/types/portfolio";
@@ -77,17 +83,23 @@ const PAUSED_ABI = [
 const PROTOCOL_TVL_CRASH_1D_PCT = 40;
 const PROTOCOL_TVL_CRASH_7D_PCT = 55;
 const EXPLOIT_LOOKBACK_HOURS = 72;
-const PAUSE_CHECK_LIMIT_PER_STRATEGY = 5;
+const PAUSE_CHECK_LIMIT_PER_STRATEGY = 10;
+const PAUSE_SCAN_INTERVAL_MS = 15 * 60 * 1000;
 const PAUSE_CHECK_TIMEOUT_MS = 6_000;
 // APY/TVL drops must persist across this many consecutive 15-min scans before
 // firing — kills single-snapshot dips that DeFiLlama's spot endpoint catches
 // during transient utilization swings.
 const REQUIRED_CONFIRMATIONS = 2;
 
-async function isContractPaused(address: string, chainId: number): Promise<boolean> {
-  if (!isAddress(address)) return false;
+interface PauseCheckResult {
+  available: boolean;
+  paused: boolean;
+}
+
+async function isContractPaused(address: string, chainId: number): Promise<PauseCheckResult> {
+  if (!isAddress(address)) return { available: false, paused: false };
   const client = getClient(chainId);
-  if (!client) return false;
+  if (!client) return { available: false, paused: false };
   try {
     const result = await Promise.race([
       client.readContract({
@@ -99,13 +111,14 @@ async function isContractPaused(address: string, chainId: number): Promise<boole
         setTimeout(() => reject(new Error("pause check timeout")), PAUSE_CHECK_TIMEOUT_MS),
       ),
     ]);
-    return result === true;
+    return { available: true, paused: result === true };
   } catch {
-    return false;
+    return { available: false, paused: false };
   }
 }
 
 interface StoredExploitRow {
+  source: string;
   protocol: string | null;
   address: string | null;
   chain_id: number | null;
@@ -126,7 +139,7 @@ function loadRecentExploits(): StoredExploitRow[] {
   const cutoff = Math.floor(Date.now() / 1000) - EXPLOIT_LOOKBACK_HOURS * 3600;
   return db
     .prepare(
-      `SELECT protocol, address, chain_id, severity, name, description, tx_hash, detected_at
+      `SELECT source, protocol, address, chain_id, severity, name, description, tx_hash, detected_at
        FROM exploit_alerts
        WHERE detected_at >= ?
        ORDER BY detected_at DESC`,
@@ -142,6 +155,13 @@ function matchExploit(
   exploit: StoredExploitRow,
   alloc: StrategyAllocation,
 ): boolean {
+  const allocationChainId = chainNameToId(alloc.auditChain || alloc.chain);
+  // A chain-scoped exploit must never match an allocation whose chain is
+  // unknown: protocol names are reused across deployments and a permissive
+  // match would generate cross-chain false positives.
+  if (exploit.chain_id !== null && allocationChainId !== exploit.chain_id) {
+    return false;
+  }
   const ePro = normalizeName(exploit.protocol);
   const aPro = normalizeName(alloc.protocol);
   if (ePro && aPro && (ePro === aPro || ePro.includes(aPro) || aPro.includes(ePro))) {
@@ -219,20 +239,53 @@ export async function monitorActiveStrategies(
     fetchAllPools().catch(() => [] as DefiLlamaPool[]),
     fetchProtocols().catch(() => [] as DefiLlamaProtocol[]),
   ]);
-  const recentExploits = loadRecentExploits();
   const protocolIndex = buildProtocolIndex(allProtocols);
 
   const uniquePoolIds = new Set<string>();
+  const exploitTargets: MonitoredStrategy[] = [];
   for (const row of rows as Record<string, unknown>[]) {
     try {
       const strategy = JSON.parse(row.strategy_json as string) as InvestmentStrategy;
-      for (const alloc of strategy.allocations) {
+      const criteria = JSON.parse(row.criteria_json as string) as StrategyCriteria;
+      for (const [index, alloc] of strategy.allocations.entries()) {
         if (alloc.poolId) uniquePoolIds.add(alloc.poolId);
+        const address = alloc.contractAddress;
+        exploitTargets.push({
+          id: `${String(row.id)}:${alloc.poolId}:${index}`,
+          protocol: alloc.protocol,
+          symbol: alloc.symbol,
+          chain: alloc.auditChain || alloc.chain,
+          poolId: alloc.poolId,
+          addresses: address && isAddress(address) ? [address] : [],
+          investedAmount: alloc.allocationAmount,
+          riskAppetite: criteria.riskAppetite,
+        });
       }
     } catch {
       // malformed strategy json — skip; runMonitorScan will also skip it
     }
   }
+
+  // Keep the persisted exploit feed fresh on the normal scheduler path. This
+  // deterministic scan deliberately avoids AI relevance analysis so holdings
+  // from different wallets are never combined in an external prompt.
+  let exploitRefreshComplete = exploitTargets.length === 0;
+  if (exploitTargets.length > 0) {
+    try {
+      const refresh = await refreshExploitFeed(exploitTargets, allPools);
+      exploitRefreshComplete = refresh.succeededTargets === refresh.attemptedTargets;
+      if (refresh.succeededTargets < refresh.attemptedTargets) {
+        log.warn("strategy-monitor", "exploit feed coverage was partial", {
+          attempted: refresh.attemptedTargets,
+          succeeded: refresh.succeededTargets,
+          totalTargets: refresh.totalTargets,
+        });
+      }
+    } catch (error) {
+      log.warn("strategy-monitor", "exploit feed refresh failed", { error });
+    }
+  }
+  const recentExploits = loadRecentExploits();
   // Capped fan-out — getPoolStability resolves null on failure, so no
   // per-item error handling needed here.
   const stabilityResults = await mapWithConcurrency(
@@ -245,15 +298,54 @@ export async function monitorActiveStrategies(
     stabilityByPool.set(poolId, stab);
   }
 
-  const dedupStmt = db.prepare(
-    `SELECT COUNT(*) as count FROM strategy_alerts
-     WHERE strategy_id = ? AND type = ? AND COALESCE(pool_id, '') = COALESCE(?, '')
-     AND created_at > datetime('now', '-24 hours')`,
-  );
-
   const insertStmt = db.prepare(
     `INSERT INTO strategy_alerts (id, strategy_id, type, severity, pool_id, protocol, symbol, chain, message, detail)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const readIncidentStmt = db.prepare(
+    `SELECT state, severity FROM alert_incidents WHERE incident_key = ? AND strategy_id = ?`,
+  );
+  const findLegacyAlertStmt = db.prepare(
+    `SELECT id FROM strategy_alerts
+     WHERE strategy_id = ? AND type = ?
+       AND COALESCE(pool_id, '') = COALESCE(?, '')
+       AND lower(protocol) = lower(?)
+       AND created_at > datetime('now', '-24 hours')
+       AND created_at <= COALESCE(
+         (SELECT applied_at FROM schema_migrations
+          WHERE name = 'monitoring_and_notification_integrity_v1'),
+         '1970-01-01'
+       )
+     ORDER BY created_at DESC LIMIT 1`,
+  );
+  const upsertIncidentStmt = db.prepare(
+    `INSERT INTO alert_incidents
+       (incident_key, strategy_id, alert_id, state, severity, opened_at, updated_at, incident_type, subject_key)
+     VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?)
+     ON CONFLICT(incident_key) DO UPDATE SET
+       alert_id = excluded.alert_id,
+       state = 'open',
+       severity = excluded.severity,
+       opened_at = excluded.opened_at,
+       updated_at = excluded.updated_at,
+       incident_type = excluded.incident_type,
+       subject_key = excluded.subject_key`,
+  );
+  const touchIncidentStmt = db.prepare(
+    `UPDATE alert_incidents SET updated_at = ?
+     WHERE incident_key = ? AND strategy_id = ? AND state = 'open'`,
+  );
+  const escalateIncidentStmt = db.prepare(
+    `UPDATE alert_incidents SET alert_id = ?, severity = ?, updated_at = ?
+     WHERE incident_key = ? AND strategy_id = ? AND state = 'open'`,
+  );
+  const recoverIncidentStmt = db.prepare(
+    `UPDATE alert_incidents SET state = 'recovered', updated_at = ?
+     WHERE incident_key = ? AND strategy_id = ? AND state = 'open'`,
+  );
+  const readOpenIncidentsStmt = db.prepare(
+    `SELECT incident_key, incident_type FROM alert_incidents
+     WHERE strategy_id = ? AND state = 'open'`,
   );
 
   // Breach-state CRUD — track consecutive scans where a position-level alert
@@ -281,6 +373,47 @@ export async function monitorActiveStrategies(
   // strategyId → wallet_address. Built as we iterate the strategy rows so
   // alert dispatch can fan out per-user without an extra DB roundtrip.
   const strategyToWallet = new Map<string, string>();
+  const seenIncidentsByStrategy = new Map<string, Set<string>>();
+
+  function incidentKey(sId: string, type: string, subject: string): string {
+    return createHash("sha256")
+      .update(`${sId}\u0000${type}\u0000${subject.trim().toLowerCase()}`)
+      .digest("hex");
+  }
+
+  function severityRank(severity: string): number {
+    switch (severity.toLowerCase()) {
+      case "critical":
+        return 4;
+      case "high":
+        return 3;
+      case "medium":
+      case "warning":
+        return 2;
+      case "info":
+      case "low":
+      default:
+        return 1;
+    }
+  }
+
+  function markRecovered(sId: string, type: string, subject: string): void {
+    recoverIncidentStmt.run(Date.now(), incidentKey(sId, type, subject), sId);
+  }
+
+  function recoverAbsent(sId: string, types: Set<string>): void {
+    const seen = seenIncidentsByStrategy.get(sId) ?? new Set<string>();
+    const open = readOpenIncidentsStmt.all(sId) as Array<{
+      incident_key: string;
+      incident_type: string | null;
+    }>;
+    const now = Date.now();
+    for (const incident of open) {
+      if (incident.incident_type && types.has(incident.incident_type) && !seen.has(incident.incident_key)) {
+        recoverIncidentStmt.run(now, incident.incident_key, sId);
+      }
+    }
+  }
 
   function tryInsert(
     sId: string,
@@ -292,11 +425,64 @@ export async function monitorActiveStrategies(
     chain: string,
     message: string,
     detail: string,
+    subjectKey = poolId ?? normalizeName(protocol),
   ): void {
-    const { count } = dedupStmt.get(sId, type, poolId) as { count: number };
-    if (count > 0) return;
-    const alertId = crypto.randomUUID();
-    insertStmt.run(alertId, sId, type, severity, poolId, protocol, symbol, chain, message, detail);
+    const key = incidentKey(sId, type, subjectKey);
+    const seen = seenIncidentsByStrategy.get(sId) ?? new Set<string>();
+    seen.add(key);
+    seenIncidentsByStrategy.set(sId, seen);
+
+    const createdAt = new Date().toISOString();
+    const alertId = db.transaction((): string | null => {
+      const incident = readIncidentStmt.get(key, sId) as
+        | { state: string; severity: string }
+        | undefined;
+      if (incident?.state === "open") {
+        const now = Date.now();
+        if (severityRank(severity) <= severityRank(incident.severity)) {
+          // Preserve the highest observed severity until recovery. A later
+          // weaker reading should not silently downgrade an active incident.
+          touchIncidentStmt.run(now, key, sId);
+          return null;
+        }
+
+        // A warning becoming critical is a materially new event and must be
+        // delivered even though the underlying incident remains open.
+        const id = randomUUID();
+        insertStmt.run(id, sId, type, severity, poolId, protocol, symbol, chain, message, detail);
+        escalateIncidentStmt.run(id, severity, now, key, sId);
+        return id;
+      }
+
+      // Seed incident state from a recent pre-migration alert so deployment
+      // does not resend an already-visible event once.
+      if (!incident) {
+        const legacy = findLegacyAlertStmt.get(sId, type, poolId, protocol) as
+          | { id: string }
+          | undefined;
+        if (legacy) {
+          const now = Date.now();
+          upsertIncidentStmt.run(
+            key,
+            sId,
+            legacy.id,
+            severity,
+            now,
+            now,
+            type,
+            subjectKey,
+          );
+          return null;
+        }
+      }
+
+      const id = randomUUID();
+      insertStmt.run(id, sId, type, severity, poolId, protocol, symbol, chain, message, detail);
+      const now = Date.now();
+      upsertIncidentStmt.run(key, sId, id, severity, now, now, type, subjectKey);
+      return id;
+    })();
+    if (!alertId) return;
     newAlerts.push({
       id: alertId,
       strategyId: sId,
@@ -308,7 +494,7 @@ export async function monitorActiveStrategies(
       chain,
       message,
       detail,
-      createdAt: new Date().toISOString(),
+      createdAt,
       walletAddress: strategyToWallet.get(sId),
     });
   }
@@ -402,6 +588,7 @@ export async function monitorActiveStrategies(
           alert.detail,
         );
       }
+      recoverAbsent(sId, new Set(["apy_drop", "tvl_drain"]));
     }
 
     // Group allocations by protocol so a multi-pool exposure surfaces every
@@ -460,25 +647,49 @@ export async function monitorActiveStrategies(
         );
       }
     }
+    if (allProtocols.length > 0) {
+      recoverAbsent(sId, new Set(["protocol_tvl_crash"]));
+    }
 
-    const pauseCandidates = strategy.allocations
+    const orderedPauseCandidates = strategy.allocations
       .filter((a) => a.contractAddress && isAddress(a.contractAddress))
-      .slice(0, PAUSE_CHECK_LIMIT_PER_STRATEGY);
+      .sort((a, b) =>
+        `${a.auditChain || a.chain}:${a.contractAddress!.toLowerCase()}`.localeCompare(
+          `${b.auditChain || b.chain}:${b.contractAddress!.toLowerCase()}`,
+        ),
+      );
+    const pauseBatchSize = Math.min(
+      PAUSE_CHECK_LIMIT_PER_STRATEGY,
+      orderedPauseCandidates.length,
+    );
+    const pauseStart = orderedPauseCandidates.length
+      ? (Math.floor(Date.now() / PAUSE_SCAN_INTERVAL_MS) * PAUSE_CHECK_LIMIT_PER_STRATEGY) %
+        orderedPauseCandidates.length
+      : 0;
+    const pauseCandidates = Array.from(
+      { length: pauseBatchSize },
+      (_, index) => orderedPauseCandidates[(pauseStart + index) % orderedPauseCandidates.length],
+    );
 
     if (pauseCandidates.length > 0) {
       const pauseResults = await Promise.allSettled(
         pauseCandidates.map(async (alloc) => {
           const chainId = chainNameToId(alloc.auditChain || alloc.chain);
-          if (!chainId) return { alloc, paused: false };
-          const paused = await isContractPaused(alloc.contractAddress!, chainId);
-          return { alloc, paused };
+          if (!chainId) return { alloc, available: false, paused: false };
+          const result = await isContractPaused(alloc.contractAddress!, chainId);
+          return { alloc, ...result };
         }),
       );
 
       for (const r of pauseResults) {
         if (r.status !== "fulfilled") continue;
-        if (!r.value.paused) continue;
         const alloc = r.value.alloc;
+        if (!r.value.available) continue;
+        const subject = alloc.contractAddress!.toLowerCase();
+        if (!r.value.paused) {
+          markRecovered(sId, "protocol_paused", subject);
+          continue;
+        }
         tryInsert(
           sId,
           "protocol_paused",
@@ -489,6 +700,7 @@ export async function monitorActiveStrategies(
           alloc.chain,
           `${alloc.protocol} contract is paused`,
           `On-chain paused() returned true for ${alloc.contractAddress}. Withdrawals likely suspended — check protocol announcements.`,
+          subject,
         );
       }
     }
@@ -512,15 +724,21 @@ export async function monitorActiveStrategies(
             alloc.chain,
             `Exploit alert matches ${alloc.protocol}: ${exploit.name}`,
             `${exploit.description.slice(0, 220)} (detected ${detectedAgo}h ago${exploit.tx_hash ? `, tx ${exploit.tx_hash.slice(0, 10)}…` : ""})`,
+            exploit.source === "heuristic" && exploit.address
+              ? `heuristic:${exploit.chain_id ?? "unknown"}:${exploit.address.toLowerCase()}`
+              : `${exploit.source}:${exploit.chain_id ?? "unknown"}:${exploit.tx_hash ?? exploit.detected_at}:${exploit.address ?? exploit.protocol ?? "unknown"}:${exploit.name}`,
           );
-          break;
         }
       }
     }
+    if (exploitRefreshComplete) {
+      recoverAbsent(sId, new Set(["exploit_alert"]));
+    }
     } catch (err) {
-      console.warn(
-        `[strategy-monitor] skipping strategy ${sId}: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      log.warn("strategy-monitor", "skipping malformed or unscannable strategy", {
+        strategyId: sId,
+        error: err,
+      });
       continue;
     }
   }
@@ -528,15 +746,15 @@ export async function monitorActiveStrategies(
   if (newAlerts.length > 0) {
     // Per-user dispatch via the notifications layer. Fans out to every
     // verified+enabled channel each user has configured (email, telegram,
-    // slack, discord) and that their tier permits. Fire-and-forget — channel
-    // failures must not abort the scan.
-    void dispatchAlertBatch(newAlerts).catch(() => undefined);
+    // slack, discord) and that their tier permits. Delivery is backed by a
+    // durable outbox, so a process exit cannot silently discard an alert.
+    await dispatchAlertBatch(newAlerts);
 
     // Server-wide Discord webhook (legacy / ops). If configured, ALL alerts
     // also fan out to a single ops channel for staff visibility. Independent
     // of per-user channels — keep, remove, or hard-disable later.
     if (isDiscordWebhookConfigured()) {
-      void sendDiscordAlertBatch(newAlerts).catch(() => undefined);
+      await sendDiscordAlertBatch(newAlerts).catch(() => undefined);
     }
   }
 

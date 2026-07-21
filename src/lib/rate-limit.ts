@@ -1,34 +1,9 @@
+import { isIP } from "net";
 import { getSessionWallet } from "./auth/session";
-
-/**
- * In-memory fixed-window rate limiter. Keys are arbitrary strings
- * (`endpoint:ip:1.2.3.4` or `endpoint:wallet:0x…`). Single-instance only —
- * for multi-instance deployments, swap the Map for Redis with the same
- * `{count, windowStart}` shape.
- */
-
-interface Bucket {
-  count: number;
-  windowStart: number;
-}
-
-const buckets = new Map<string, Bucket>();
-const PRUNE_INTERVAL_MS = 5 * 60 * 1000;
-
-function pruneStale() {
-  const now = Date.now();
-  for (const [key, bucket] of buckets) {
-    // Drop any window started more than 1 hour ago.
-    if (now - bucket.windowStart > 60 * 60 * 1000) buckets.delete(key);
-  }
-}
-const _pruneTimer = setInterval(pruneStale, PRUNE_INTERVAL_MS);
-if (typeof _pruneTimer.unref === "function") _pruneTimer.unref();
+import { getDb } from "./db";
 
 export interface RateLimitOptions {
-  /** Maximum allowed hits in the window. */
   max: number;
-  /** Window length in milliseconds. */
   windowMs: number;
 }
 
@@ -39,69 +14,79 @@ export interface RateLimitResult {
 }
 
 export function takeToken(key: string, opts: RateLimitOptions): RateLimitResult {
+  if (!Number.isSafeInteger(opts.max) || opts.max <= 0) throw new Error("rate-limit max must be positive");
+  if (!Number.isSafeInteger(opts.windowMs) || opts.windowMs <= 0) {
+    throw new Error("rate-limit windowMs must be positive");
+  }
   const now = Date.now();
-  let bucket = buckets.get(key);
-  if (!bucket || now - bucket.windowStart >= opts.windowMs) {
-    bucket = { count: 0, windowStart: now };
-    buckets.set(key, bucket);
-  }
-  if (bucket.count >= opts.max) {
-    return {
-      allowed: false,
-      remaining: 0,
-      resetAt: bucket.windowStart + opts.windowMs,
-    };
-  }
-  bucket.count += 1;
-  return {
-    allowed: true,
-    remaining: opts.max - bucket.count,
-    resetAt: bucket.windowStart + opts.windowMs,
-  };
+  const db = getDb();
+  return db.transaction(() => {
+    // Opportunistic bounded cleanup avoids a process timer and works after restarts.
+    db.prepare("DELETE FROM rate_limit_buckets WHERE expires_at <= ?").run(now);
+    const row = db
+      .prepare("SELECT count, window_start FROM rate_limit_buckets WHERE bucket_key = ?")
+      .get(key) as { count: number; window_start: number } | undefined;
+    const expired = !row || now - row.window_start >= opts.windowMs;
+    const windowStart = expired ? now : row.window_start;
+    const current = expired ? 0 : row.count;
+    const resetAt = windowStart + opts.windowMs;
+    if (current >= opts.max) return { allowed: false, remaining: 0, resetAt };
+    const next = current + 1;
+    db.prepare(
+      `INSERT INTO rate_limit_buckets (bucket_key, count, window_start, expires_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(bucket_key) DO UPDATE SET
+         count = excluded.count,
+         window_start = excluded.window_start,
+         expires_at = excluded.expires_at`,
+    ).run(key, next, windowStart, resetAt);
+    return { allowed: true, remaining: opts.max - next, resetAt };
+  })();
 }
 
-/** Best-effort extract the caller's IP from common proxy headers. */
+function normalizeIp(candidate: string | null): string | null {
+  if (!candidate) return null;
+  const value = candidate.trim().replace(/^\[|\]$/g, "");
+  return isIP(value) ? value : null;
+}
+
 function getIp(request: Request): string {
-  const xff = request.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0].trim();
-  const real = request.headers.get("x-real-ip");
-  if (real) return real.trim();
-  const cf = request.headers.get("cf-connecting-ip");
-  if (cf) return cf.trim();
-  return "unknown";
+  if (process.env.TRUST_PROXY_HEADERS !== "true") return "direct";
+  const cf = normalizeIp(request.headers.get("cf-connecting-ip"));
+  if (cf) return cf;
+  const real = normalizeIp(request.headers.get("x-real-ip"));
+  if (real) return real;
+  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0] ?? null;
+  return normalizeIp(forwarded) ?? "unknown";
 }
 
-/**
- * Apply a per-endpoint rate limit. Keys by authenticated wallet when
- * available, otherwise by IP. Returns null if allowed, or a 429 Response
- * the caller should return immediately.
- */
 export function enforceRateLimit(
   request: Request,
   endpoint: string,
   opts: RateLimitOptions,
 ): Response | null {
-  const wallet = getSessionWallet(request);
-  const key = wallet
-    ? `${endpoint}:wallet:${wallet}`
-    : `${endpoint}:ip:${getIp(request)}`;
-  const result = takeToken(key, opts);
-  if (result.allowed) return null;
-  const retryAfter = Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000));
-  return new Response(
-    JSON.stringify({
-      error: "Rate limit exceeded",
-      retryAfterSeconds: retryAfter,
-    }),
-    {
-      status: 429,
-      headers: {
-        "Content-Type": "application/json",
-        "Retry-After": String(retryAfter),
-        "X-RateLimit-Limit": String(opts.max),
-        "X-RateLimit-Remaining": "0",
-        "X-RateLimit-Reset": String(Math.floor(result.resetAt / 1000)),
+  try {
+    const wallet = getSessionWallet(request);
+    const identity = wallet ? `wallet:${wallet}` : `ip:${getIp(request)}`;
+    const result = takeToken(`${endpoint}:${identity}`, opts);
+    if (result.allowed) return null;
+    const retryAfter = Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000));
+    return Response.json(
+      { error: "Rate limit exceeded", code: "RATE_LIMITED", retryAfterSeconds: retryAfter },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(retryAfter),
+          "X-RateLimit-Limit": String(opts.max),
+          "X-RateLimit-Remaining": "0",
+          "X-RateLimit-Reset": String(Math.floor(result.resetAt / 1000)),
+        },
       },
-    },
-  );
+    );
+  } catch {
+    return Response.json(
+      { error: "Rate limiting is temporarily unavailable", code: "RATE_LIMIT_UNAVAILABLE" },
+      { status: 503 },
+    );
+  }
 }

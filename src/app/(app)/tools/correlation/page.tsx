@@ -18,15 +18,18 @@ import {
 import type { LivePool } from "@/app/api/yields/live/route";
 import { usePlan } from "@/hooks/usePlan";
 import { Paywall } from "@/components/site/Paywall";
+import { apiFetch } from "@/lib/api-client";
 
 interface MatrixResponse {
   poolIds: string[];
   windowDays: number;
   overlapDays: number;
+  changeObservations: number;
   startDate: string;
   endDate: string;
-  matrix: number[][];
+  matrix: Array<Array<number | null>>;
   missing: string[];
+  caveat: string;
 }
 
 const WINDOWS: Array<{ label: string; days: number }> = [
@@ -37,8 +40,8 @@ const WINDOWS: Array<{ label: string; days: number }> = [
 
 const MAX_SELECTED = 8;
 
-function correlationHue(value: number): string {
-  if (!Number.isFinite(value)) return "#1e2226";
+function correlationHue(value: number | null): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "#1e2226";
   if (value > 0.66) return "#fb7185";
   if (value > 0.34) return "#fbbf24";
   if (value > 0.1) return "#60a5fa";
@@ -102,7 +105,7 @@ export default function CorrelationPage() {
     setErr(null);
     setResult(null);
     try {
-      const res = await fetch("/api/tools/correlation", {
+      const res = await apiFetch("/api/tools/correlation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -136,7 +139,7 @@ export default function CorrelationPage() {
     for (let i = 0; i < matrix.length; i++) {
       for (let j = i + 1; j < matrix.length; j++) {
         const v = matrix[i][j];
-        if (Number.isFinite(v)) {
+        if (typeof v === "number" && Number.isFinite(v)) {
           total += v;
           count += 1;
         }
@@ -150,7 +153,8 @@ export default function CorrelationPage() {
     let lo = Infinity;
     for (let i = 0; i < matrix.length; i++) {
       for (let j = i + 1; j < matrix.length; j++) {
-        if (Number.isFinite(matrix[i][j])) lo = Math.min(lo, matrix[i][j]);
+        const value = matrix[i][j];
+        if (typeof value === "number" && Number.isFinite(value)) lo = Math.min(lo, value);
       }
     }
     return Number.isFinite(lo) ? lo : null;
@@ -161,7 +165,8 @@ export default function CorrelationPage() {
     let hi = -Infinity;
     for (let i = 0; i < matrix.length; i++) {
       for (let j = i + 1; j < matrix.length; j++) {
-        if (Number.isFinite(matrix[i][j])) hi = Math.max(hi, matrix[i][j]);
+        const value = matrix[i][j];
+        if (typeof value === "number" && Number.isFinite(value)) hi = Math.max(hi, value);
       }
     }
     return Number.isFinite(hi) ? hi : null;
@@ -175,7 +180,8 @@ export default function CorrelationPage() {
           <h1>Find crowded exposure early.</h1>
           <p>
             Pearson correlation across up to {MAX_SELECTED} live pools using day-over-day
-            APY changes. Lower magnitudes = better diversification.
+            APY changes. This measures yield co-movement only—not token-price,
+            contract, bridge, or shared-protocol risk.
           </p>
         </div>
       </div>
@@ -283,11 +289,11 @@ export default function CorrelationPage() {
                       className="correlation-cell"
                       key={`${rowIndex}-${colIndex}`}
                       style={{
-                        background: `color-mix(in srgb, ${hue} ${Math.round(Math.abs(value) * 62)}%, rgba(30,34,38,.92))`,
+                        background: `color-mix(in srgb, ${hue} ${Math.round(Math.abs(value ?? 0) * 62)}%, rgba(30,34,38,.92))`,
                       }}
                     >
                       <div>
-                        {Number.isFinite(value) ? value.toFixed(2) : "—"}
+                        {typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "—"}
                         <small>{orderedSelected[colIndex]?.symbol}</small>
                       </div>
                     </div>
@@ -301,6 +307,13 @@ export default function CorrelationPage() {
             <div className="ticker">
               <span className="severity-medium">
                 Skipped: {result.missing.length} pool(s) had insufficient history.
+              </span>
+            </div>
+          ) : null}
+          {result ? (
+            <div className="ticker">
+              <span>
+                {result.changeObservations} APY-change observations · {result.caveat}
               </span>
             </div>
           ) : null}

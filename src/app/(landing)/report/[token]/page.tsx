@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/lib/db";
@@ -31,13 +32,16 @@ function loadSharedReport(token: string): AuditReport | null {
   // Token format guard before it touches SQL parameters.
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(token)) return null;
   try {
+    const hash = createHash("sha256").update(token).digest("hex");
     const row = getDb()
       .prepare(
         `SELECT aj.result_json FROM audit_shares s
          JOIN audit_jobs aj ON aj.id = s.job_id
-         WHERE s.token = ? AND aj.status = 'done' AND aj.result_json IS NOT NULL`,
+         WHERE s.token_hash = ? AND s.revoked_at IS NULL
+           AND datetime(s.expires_at) > datetime('now')
+           AND aj.status = 'done' AND aj.result_json IS NOT NULL`,
       )
-      .get(token) as { result_json: string } | undefined;
+      .get(hash) as { result_json: string } | undefined;
     if (!row) return null;
     return JSON.parse(row.result_json) as AuditReport;
   } catch {
@@ -61,6 +65,7 @@ export async function generateMetadata({
   return {
     title: `${report.meta.contractName || report.contractAddress} — contract review · Sovereign`,
     description: report.executiveSummary.slice(0, 160),
+    robots: { index: false, follow: false },
   };
 }
 
@@ -74,6 +79,7 @@ export default async function PublicReportPage({
   if (!report) notFound();
 
   const color = VERDICT_COLOR[report.verdict] ?? "#fbbf24";
+  const cleanCoverage = report.coverage?.sufficientForCleanVerdict ?? false;
   const findings = [...report.findings].sort(
     (a, b) => (SEVERITY_ORDER[a.severity] ?? 5) - (SEVERITY_ORDER[b.severity] ?? 5),
   );
@@ -115,7 +121,10 @@ export default async function PublicReportPage({
             Risk score out of 100 — higher is riskier.{" "}
             {Object.entries(counts)
               .map(([sev, n]) => `${n} ${sev}`)
-              .join(", ") || "No findings surfaced"}
+              .join(", ") ||
+              (cleanCoverage
+                ? "No findings surfaced within completed coverage"
+                : "No findings surfaced, but coverage was incomplete")}
             .
           </div>
         </div>

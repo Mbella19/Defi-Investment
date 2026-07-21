@@ -1,5 +1,6 @@
 import "server-only";
 import { getDb } from "@/lib/db";
+import { log } from "@/lib/log";
 
 export type Tier = "free" | "pro" | "ultra";
 export type StrategistMode = "solo" | "dual" | "council";
@@ -122,7 +123,7 @@ export function resolveTier(wallet: string | null | undefined): Tier {
     if (row.tier === "pro" || row.tier === "ultra") return row.tier;
     return "free";
   } catch (err) {
-    console.warn("[plans] resolveTier db read failed:", err);
+    log.warn("plans", "tier lookup failed", { error: err });
     return "free";
   }
 }
@@ -136,8 +137,9 @@ export interface PlanSnapshot {
 
 export function getPlan(wallet: string | null | undefined): PlanSnapshot {
   const tier = resolveTier(wallet);
+  const isOwner = isOwnerWallet(wallet);
   let expiresAt: string | null = null;
-  if (wallet && !isOwnerWallet(wallet) && tier !== "free") {
+  if (wallet && !isOwner && tier !== "free") {
     try {
       const db = getDb();
       const row = db
@@ -150,8 +152,10 @@ export function getPlan(wallet: string | null | undefined): PlanSnapshot {
   }
   return {
     tier,
-    capabilities: TIER_CAPS[tier],
-    isOwner: isOwnerWallet(wallet),
+    capabilities: isOwner
+      ? { ...TIER_CAPS[tier], monthlyStrategies: -1, monthlyAudits: -1 }
+      : TIER_CAPS[tier],
+    isOwner,
     expiresAt,
   };
 }
@@ -159,9 +163,10 @@ export function getPlan(wallet: string | null | undefined): PlanSnapshot {
 /**
  * Activate or extend a paid subscription. Pro/Ultra rows are upserted with a
  * 30-day expiry. Same-tier renewals extend from the existing future expiry.
- * Tier CHANGES prorate the unused time by price ratio — remaining Pro days
- * become fewer Ultra days on upgrade, remaining Ultra days become more Pro
- * days on downgrade — so nobody loses (or double-dips) paid time.
+ * Upgrades prorate unused Pro value into Ultra time. A late/racing Pro
+ * payment can never downgrade an active Ultra account; its value is instead
+ * converted into additional Ultra time. The quote route blocks that purchase
+ * in normal operation, while this invariant protects direct/internal callers.
  * Caller is responsible for validating the on-chain payment first.
  */
 export function activateSubscription(params: {
@@ -172,7 +177,7 @@ export function activateSubscription(params: {
   amount: string;
   txHash: string;
   durationDays?: number;
-}): { expiresAt: string } {
+}): { expiresAt: string; tier: "pro" | "ultra" } {
   const days = params.durationDays ?? 30;
   const db = getDb();
   const wallet = params.wallet.toLowerCase();
@@ -181,11 +186,17 @@ export function activateSubscription(params: {
     .get(wallet) as { tier: string; expires_at: string } | undefined;
   const now = Date.now();
   let baseTime = now;
+  let effectiveTier: "pro" | "ultra" = params.tier;
+  let durationDays = days;
   if (existing) {
     const existingExpiry = new Date(existing.expires_at).getTime();
     if (Number.isFinite(existingExpiry) && existingExpiry > now) {
       if (existing.tier === params.tier) {
         baseTime = existingExpiry;
+      } else if (existing.tier === "ultra" && params.tier === "pro") {
+        effectiveTier = "ultra";
+        baseTime = existingExpiry;
+        durationDays = days * (TIER_PRICE_USD.pro / TIER_PRICE_USD.ultra);
       } else {
         const oldPrice = TIER_PRICE_USD[existing.tier as Tier] ?? 0;
         const newPrice = TIER_PRICE_USD[params.tier];
@@ -195,7 +206,7 @@ export function activateSubscription(params: {
       }
     }
   }
-  const expiresAt = new Date(baseTime + days * 24 * 60 * 60 * 1000).toISOString();
+  const expiresAt = new Date(baseTime + durationDays * 24 * 60 * 60 * 1000).toISOString();
   db.prepare(
     `INSERT INTO subscriptions (wallet_address, tier, activated_at, expires_at, payment_chain, payment_token, payment_amount, payment_tx_hash)
      VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?)
@@ -209,14 +220,14 @@ export function activateSubscription(params: {
        payment_tx_hash=excluded.payment_tx_hash`,
   ).run(
     wallet,
-    params.tier,
+    effectiveTier,
     expiresAt,
     params.chain,
     params.token,
     params.amount,
     params.txHash,
   );
-  return { expiresAt };
+  return { expiresAt, tier: effectiveTier };
 }
 
 /**

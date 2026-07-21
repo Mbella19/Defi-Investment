@@ -29,8 +29,14 @@ export function runMonitorScan(
   for (const pos of positions) {
     const currentPool = poolMap.get(pos.poolId);
 
-    if (currentPool && pos.entryApy > 0) {
-      const currentApy = currentPool.apy || 0;
+    const currentApy = currentPool?.apy;
+    if (
+      currentPool &&
+      pos.entryApy > 0 &&
+      typeof currentApy === "number" &&
+      Number.isFinite(currentApy) &&
+      currentApy >= 0
+    ) {
       const dropPp = pos.entryApy - currentApy;
       const dropPercent = (dropPp / pos.entryApy) * 100;
 
@@ -54,7 +60,11 @@ export function runMonitorScan(
       // is the canonical example: AI flagged "rate unlikely to persist" at
       // creation, sized 5% accordingly, then mean-reverted as predicted.
       // Alerting on that is noise.
-      const apyMean30d = currentPool.apyMean30d ?? null;
+      const candidateMean = currentPool.apyMean30d;
+      const apyMean30d =
+        typeof candidateMean === "number" && Number.isFinite(candidateMean)
+          ? candidateMean
+          : null;
       const isMeanReversion =
         apyMean30d !== null &&
         apyMean30d > 0 &&
@@ -96,8 +106,14 @@ export function runMonitorScan(
       }
     }
 
-    if (currentPool && pos.entryTvl >= MIN_ENTRY_TVL_FOR_DRAIN_ALERT) {
-      const currentTvl = currentPool.tvlUsd || 0;
+    const currentTvl = currentPool?.tvlUsd;
+    if (
+      currentPool &&
+      pos.entryTvl >= MIN_ENTRY_TVL_FOR_DRAIN_ALERT &&
+      typeof currentTvl === "number" &&
+      Number.isFinite(currentTvl) &&
+      currentTvl >= 0
+    ) {
       const drainPercent = ((pos.entryTvl - currentTvl) / pos.entryTvl) * 100;
 
       if (drainPercent >= config.tvlDrainCritical) {

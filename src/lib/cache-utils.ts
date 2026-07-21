@@ -1,5 +1,5 @@
 /**
- * Bound an in-memory TTL cache. Call before insert: drop entries past
+ * Bound an in-memory TTL cache. Call after insert: drop entries past
  * their TTL, then if the cache is still over `maxSize`, drop oldest
  * entries (FIFO via Map's insertion-order iteration).
  *

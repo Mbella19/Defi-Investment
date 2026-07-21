@@ -1,8 +1,11 @@
 import { spawn } from "child_process";
-import { mkdtemp, readFile, rm } from "fs/promises";
+import { mkdtemp, readFile, rm, stat } from "fs/promises";
 import { tmpdir } from "os";
-import { join } from "path";
+import path from "path";
 import { getAiMode, requireEnv, resolveBaseUrl } from "./ai-mode";
+import { trackAiInvocation } from "@/lib/ai-telemetry";
+import { childProcessEnv } from "./child-process-env";
+import { fetchWithTimeout } from "@/lib/fetch-utils";
 
 export interface CodexInvokeOptions {
   /** Override model. Default gpt-5.6-sol (overridable via OPENAI_MODEL). */
@@ -10,11 +13,10 @@ export interface CodexInvokeOptions {
   /** Override reasoning effort. CLI: user's config (typically "xhigh"). API: maps to OpenAI effort levels. */
   effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   timeoutMs?: number;
-  /** Working directory for codex (CLI mode only). */
-  cwd?: string;
 }
 
 const STDERR_CAP_BYTES = 64 * 1024;
+const RESPONSE_CAP_BYTES = 8 * 1024 * 1024;
 const TIMEOUT_GRACE_MS = 1_500;
 // Codex GPT-5.6 (sol) is the LEAD reasoner — it proposes strategies,
 // synthesizes the security scores, and revises. Model + effort are pinned
@@ -28,10 +30,16 @@ const DEFAULT_EFFORT = "xhigh" as const;
  * OpenAI Responses API depending on AI_MODE / OPENAI_MODE (defaults to "cli").
  */
 export function invokeCodex(prompt: string, opts: CodexInvokeOptions = {}): Promise<string> {
-  if (getAiMode("codex") === "api") {
-    return invokeCodexApi(prompt, opts);
-  }
-  return invokeCodexCli(prompt, opts);
+  const apiMode = getAiMode("codex") === "api";
+  const model = opts.model ?? (apiMode ? process.env.OPENAI_MODEL : undefined) ?? DEFAULT_MODEL;
+  return trackAiInvocation({
+    provider: "openai",
+    model,
+    prompt,
+    run: () => apiMode
+      ? invokeCodexApi(prompt, { ...opts, model })
+      : invokeCodexCli(prompt, { ...opts, model }),
+  });
 }
 
 async function invokeCodexCli(prompt: string, opts: CodexInvokeOptions): Promise<string> {
@@ -39,8 +47,10 @@ async function invokeCodexCli(prompt: string, opts: CodexInvokeOptions): Promise
   const model = opts.model ?? DEFAULT_MODEL;
   const effort = opts.effort ?? DEFAULT_EFFORT;
 
-  const outDir = await mkdtemp(join(tmpdir(), "codex-out-"));
-  const outFile = join(outDir, "last.txt");
+  const outDir = await mkdtemp(
+    path.join(/*turbopackIgnore: true*/ tmpdir(), "codex-out-"),
+  );
+  const outFile = path.join(outDir, "last.txt");
 
   try {
     return await new Promise<string>((resolve, reject) => {
@@ -48,6 +58,9 @@ async function invokeCodexCli(prompt: string, opts: CodexInvokeOptions): Promise
       const args = [
         "exec",
         "--sandbox", "read-only",
+        "--ephemeral",
+        "--ignore-user-config",
+        "--ignore-rules",
         "--skip-git-repo-check",
         "--color", "never",
         "-o", outFile,
@@ -61,8 +74,11 @@ async function invokeCodexCli(prompt: string, opts: CodexInvokeOptions): Promise
 
       const proc = spawn("codex", args, {
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env },
-        cwd: opts.cwd,
+        env: childProcessEnv(),
+        // Prompts carry all required context. Use an empty temporary working
+        // directory so a prompt-injected local agent cannot inspect the app
+        // repository or its .env.local through relative paths.
+        cwd: outDir,
         detached: true,
       });
 
@@ -103,6 +119,11 @@ async function invokeCodexCli(prompt: string, opts: CodexInvokeOptions): Promise
           if (code !== 0) {
             const stderr = Buffer.concat(errChunks).toString("utf-8");
             settle(() => reject(new Error(`codex CLI exited ${code}: ${stderr.slice(0, 500) || "no stderr"}`)));
+            return;
+          }
+          const outputStat = await stat(outFile);
+          if (!outputStat.isFile() || outputStat.size > RESPONSE_CAP_BYTES) {
+            settle(() => reject(new Error("codex CLI response exceeded the output limit")));
             return;
           }
           const text = (await readFile(outFile, "utf-8")).trim();
@@ -151,10 +172,8 @@ async function invokeCodexApi(prompt: string, opts: CodexInvokeOptions): Promise
   const baseUrl = resolveBaseUrl("OPENAI_BASE_URL", "https://api.openai.com");
   const effort = mapEffort(opts.effort ?? DEFAULT_EFFORT);
 
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(`${baseUrl}/v1/responses`, {
+    const res = await fetchWithTimeout(`${baseUrl}/v1/responses`, {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${apiKey}`,
@@ -165,11 +184,14 @@ async function invokeCodexApi(prompt: string, opts: CodexInvokeOptions): Promise
         input: prompt,
         reasoning: { effort },
       }),
-      signal: ctrl.signal,
-    });
+      redirect: "error",
+    }, timeoutMs, RESPONSE_CAP_BYTES);
     if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      throw new Error(`OpenAI API ${res.status}: ${errText.slice(0, 500) || res.statusText}`);
+      // Provider bodies can echo request metadata or account details. The
+      // status is enough for retry/operations without persisting that data in
+      // job errors or returning it to a client.
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error(`OpenAI API request failed with status ${res.status}`);
     }
     const data = (await res.json()) as {
       output_text?: string;
@@ -191,11 +213,10 @@ async function invokeCodexApi(prompt: string, opts: CodexInvokeOptions): Promise
     if (!text) throw new Error("OpenAI API returned no text output");
     return text;
   } catch (err) {
-    if ((err as Error).name === "AbortError") {
+    const message = err instanceof Error ? err.message : String(err);
+    if ((err as Error).name === "AbortError" || /timed out|request timed out/i.test(message)) {
       throw new Error(`OpenAI API timed out after ${timeoutMs}ms`);
     }
     throw err;
-  } finally {
-    clearTimeout(timer);
   }
 }

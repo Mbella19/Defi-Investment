@@ -1,15 +1,18 @@
 import { fetchPoolHistory } from "@/lib/defillama";
+import { boundCache } from "@/lib/cache-utils";
 
 /**
- * Long-horizon APY stability metrics. Distinct from `apy-forecast.ts` which
- * focuses on the 30/90-day window for forecasting; this module looks at 12-
- * and 24-month windows so safe/balanced strategies can require multi-year
- * stability instead of just a few-month snapshot.
+ * Long-horizon APY stability metrics over 6-, 12-, and 24-month windows so
+ * safe/balanced strategies can require sustained history instead of a short
+ * snapshot. These are descriptive stability metrics, not return forecasts.
  */
 export interface PoolStability {
   poolId: string;
   /** Total months of APY history available (≈ days / 30). */
   monthsOfHistory: number;
+  observations6m: number;
+  observations12m: number;
+  observations24m: number;
   /** Mean APY over the trailing 6 months. */
   apyMean6m: number;
   /** Standard deviation of APY over the trailing 6 months. */
@@ -40,7 +43,13 @@ interface ChartPoint {
 }
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const CACHE_MAX = 2_000;
 const cache = new Map<string, { value: PoolStability | null; expiresAt: number }>();
+
+function cacheResult(poolId: string, value: PoolStability | null): void {
+  cache.set(poolId, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+  boundCache(cache, CACHE_MAX);
+}
 
 function mean(values: number[]): number {
   if (values.length === 0) return 0;
@@ -73,31 +82,43 @@ export async function getPoolStability(poolId: string): Promise<PoolStability | 
   try {
     raw = (await fetchPoolHistory(poolId)) as ChartPoint[];
   } catch {
-    cache.set(poolId, { value: null, expiresAt: Date.now() + CACHE_TTL_MS });
+    cacheResult(poolId, null);
     return null;
   }
 
   if (!Array.isArray(raw) || raw.length === 0) {
-    cache.set(poolId, { value: null, expiresAt: Date.now() + CACHE_TTL_MS });
+    cacheResult(poolId, null);
     return null;
   }
 
-  const series = raw
-    .filter((p) => typeof p.apy === "number" && Number.isFinite(p.apy))
-    .map((p) => ({ ts: new Date(p.timestamp).getTime(), apy: p.apy as number }))
-    .sort((a, b) => a.ts - b.ts);
+  const byDay = new Map<number, { ts: number; apy: number }>();
+  for (const point of raw) {
+    if (!point || typeof point !== "object") continue;
+    if (typeof point.apy !== "number" || !Number.isFinite(point.apy)) continue;
+    const parsed = new Date(point.timestamp);
+    if (!Number.isFinite(parsed.getTime())) continue;
+    const ts = Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate());
+    byDay.set(ts, { ts, apy: point.apy });
+  }
+  const series = [...byDay.values()].sort((a, b) => a.ts - b.ts);
 
   if (series.length === 0) {
-    cache.set(poolId, { value: null, expiresAt: Date.now() + CACHE_TTL_MS });
+    cacheResult(poolId, null);
     return null;
   }
 
-  const days = series.length;
-  const monthsOfHistory = days / 30;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const latestTs = series[series.length - 1].ts;
+  const spanDays = Math.max(1, (latestTs - series[0].ts) / DAY_MS + 1);
+  const monthsOfHistory = spanDays / 30.4375;
 
-  const last6m = series.slice(-180).map((p) => p.apy);
-  const last12m = series.slice(-365).map((p) => p.apy);
-  const last24m = series.slice(-730).map((p) => p.apy);
+  const windowValues = (days: number): number[] =>
+    series
+      .filter((point) => point.ts >= latestTs - (days - 1) * DAY_MS)
+      .map((point) => point.apy);
+  const last6m = windowValues(183);
+  const last12m = windowValues(365);
+  const last24m = windowValues(730);
 
   const apyMean6m = mean(last6m);
   const apyStdDev6m = stdev(last6m);
@@ -113,6 +134,9 @@ export async function getPoolStability(poolId: string): Promise<PoolStability | 
   const stability: PoolStability = {
     poolId,
     monthsOfHistory: Math.round(monthsOfHistory * 10) / 10,
+    observations6m: last6m.length,
+    observations12m: last12m.length,
+    observations24m: last24m.length,
     apyMean6m: Math.round(apyMean6m * 100) / 100,
     apyStdDev6m: Math.round(apyStdDev6m * 100) / 100,
     apyMean12m: Math.round(apyMean12m * 100) / 100,
@@ -134,7 +158,7 @@ export async function getPoolStability(poolId: string): Promise<PoolStability | 
     worstDrawdown: Math.round(maxDrawdown(last24m) * 100) / 100,
   };
 
-  cache.set(poolId, { value: stability, expiresAt: Date.now() + CACHE_TTL_MS });
+  cacheResult(poolId, stability);
   return stability;
 }
 
@@ -154,12 +178,14 @@ export function passesStabilityGate(
   if (riskAppetite === "low") {
     return (
       stability.monthsOfHistory >= 12 &&
+      stability.observations12m >= 300 &&
       stability.coefficientOfVariation12m <= 0.6
     );
   }
   // medium / balanced
   return (
     stability.monthsOfHistory >= 6 &&
+    stability.observations6m >= 150 &&
     stability.coefficientOfVariation6m <= 0.8
   );
 }

@@ -1,4 +1,5 @@
 import type { StrategyMonitorAlert } from "@/lib/strategy-monitor";
+import { log } from "@/lib/log";
 
 const WEBHOOK_TIMEOUT_MS = 6_000;
 const MAX_EMBEDS_PER_REQUEST = 10;
@@ -71,18 +72,18 @@ async function postWebhook(embeds: DiscordEmbed[]): Promise<boolean> {
       body: JSON.stringify({
         username: "Sovereign Terminal",
         embeds,
+        allowed_mentions: { parse: [] },
       }),
       signal: controller.signal,
+      redirect: "error",
     });
     if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.warn("[discord] webhook returned", res.status, body.slice(0, 200));
+      log.warn("discord", "operations webhook rejected delivery", { status: res.status });
       return false;
     }
     return true;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn("[discord] webhook post failed:", msg);
+    log.warn("discord", "operations webhook delivery failed", { error: err });
     return false;
   } finally {
     clearTimeout(timeout);

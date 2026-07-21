@@ -85,9 +85,9 @@ export function alertDiscordEmbed(alert: StrategyMonitorAlert) {
   const sev = alert.severity.toLowerCase();
   const color = SEVERITY_DISCORD_COLOR[sev] ?? SEVERITY_DISCORD_COLOR.info;
   const fields: Array<{ name: string; value: string; inline?: boolean }> = [
-    { name: "Protocol", value: alert.protocol || "—", inline: true },
-    { name: "Pool", value: alert.symbol || "—", inline: true },
-    { name: "Chain", value: alert.chain || "—", inline: true },
+    { name: "Protocol", value: (alert.protocol || "—").slice(0, 1_024), inline: true },
+    { name: "Pool", value: (alert.symbol || "—").slice(0, 1_024), inline: true },
+    { name: "Chain", value: (alert.chain || "—").slice(0, 1_024), inline: true },
   ];
   if (alert.detail) {
     fields.push({ name: "Detail", value: alert.detail.slice(0, 1000) });

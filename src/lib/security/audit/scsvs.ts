@@ -347,8 +347,8 @@ function evaluateRule(rule: ScsvsRule, ctx: ScsvsContext): ScsvsCheck {
         id: rule.id,
         category: rule.category,
         description: rule.description,
-        status: "pass",
-        evidence: [`Partial coverage: ${missing.join(", ")} did not run, but ${rule.requiredTools.filter((t) => !missing.includes(t)).join(", ")} found nothing.`],
+        status: "indeterminate",
+        evidence: [`Partial coverage only: ${missing.join(", ")} did not run; ${rule.requiredTools.filter((t) => !missing.includes(t)).join(", ")} found nothing.`],
       };
     }
   }
@@ -372,7 +372,7 @@ function summarize(checks: ScsvsCheck[]): ScsvsReport {
     indeterminate: checks.filter((c) => c.status === "indeterminate").length,
   };
   const decided = counts.passed + counts.failed;
-  const coveragePercent = decided > 0 ? Math.round((counts.passed / decided) * 100) : 0;
+  const coveragePercent = counts.total > 0 ? Math.round((decided / counts.total) * 100) : 0;
 
   const byCategoryMap = new Map<ScsvsCategoryId, { passed: number; failed: number; total: number }>();
   for (const c of checks) {

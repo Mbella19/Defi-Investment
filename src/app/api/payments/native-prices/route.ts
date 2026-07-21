@@ -1,4 +1,5 @@
 import { fetchTokenPrices } from "@/lib/coingecko";
+import { log } from "@/lib/log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,8 +41,9 @@ export async function GET() {
       { headers: { "Cache-Control": CACHE_HEADER } },
     );
   } catch (err) {
+    log.warn("native-prices", "price fetch failed", { error: err });
     return Response.json(
-      { byChainId: {}, error: err instanceof Error ? err.message : "price fetch failed" },
+      { byChainId: {}, error: "Live gas-token prices are temporarily unavailable" },
       { status: 502 },
     );
   }

@@ -1,16 +1,18 @@
 import dns from "dns/promises";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import type { DefiLlamaProtocol } from "@/types/pool";
 import type { GroundTruthChecks } from "@/types/analysis";
+import type { AuditReport } from "@/types/audit";
 import { getDb } from "@/lib/db";
 import { CHAIN_NAME_TO_ID } from "./etherscan";
-import { peekCachedAudit } from "./source-audit";
-import { peekCachedForensics } from "./deployer-forensics";
 
 const AUDIT_LINK_TIMEOUT_MS = 8_000;
 const EXPLOIT_LOOKBACK_DAYS = 30;
 const TVL_CRASH_1D_PCT = -40;
 const TVL_CRASH_7D_PCT = -55;
 const MAX_REDIRECTS = 3;
+const CONTRACT_AUDIT_TTL_MS = 24 * 60 * 60 * 1000;
 
 /* ===================== SSRF GUARD ===================== */
 
@@ -38,7 +40,9 @@ function isPrivateIPv6(ip: string): boolean {
   const lower = ip.toLowerCase();
   if (lower === "::" || lower === "::1") return true;
   if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // unique local
-  if (lower.startsWith("fe80")) return true; // link-local
+  if (/^fe[89ab]/.test(lower)) return true; // fe80::/10 link-local
+  if (lower.startsWith("ff")) return true; // multicast
+  if (lower.startsWith("2001:db8")) return true; // documentation range
   if (lower.startsWith("::ffff:")) {
     const v4 = lower.slice(7);
     return isPrivateIPv4(v4);
@@ -52,32 +56,89 @@ function isPrivateIPv6(ip: string): boolean {
  * a malicious DeFiLlama protocol entry could otherwise list
  * http://localhost:6379/ as an "audit link" and probe internal services.
  */
-async function isPublicUrl(url: string): Promise<boolean> {
+interface ResolvedPublicUrl {
+  url: URL;
+  address: string;
+  family: 4 | 6;
+}
+
+async function resolvePublicUrl(url: string): Promise<ResolvedPublicUrl | null> {
   let u: URL;
   try {
     u = new URL(url);
   } catch {
-    return false;
+    return null;
   }
-  if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+  if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+  if (u.username || u.password) return null;
+  if (u.port && !((u.protocol === "http:" && u.port === "80") || (u.protocol === "https:" && u.port === "443"))) {
+    return null;
+  }
   const host = u.hostname;
   // Strip surrounding brackets from IPv6 literal hosts before testing
   const bareHost = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   // Literal-IP fast path
-  if (/^[\d.]+$/.test(bareHost)) return !isPrivateIPv4(bareHost);
-  if (bareHost.includes(":")) return !isPrivateIPv6(bareHost);
+  if (/^[\d.]+$/.test(bareHost)) {
+    return isPrivateIPv4(bareHost) ? null : { url: u, address: bareHost, family: 4 };
+  }
+  if (bareHost.includes(":")) {
+    return isPrivateIPv6(bareHost) ? null : { url: u, address: bareHost, family: 6 };
+  }
   // Hostname → DNS resolve and check every A/AAAA record
   try {
     const records = await dns.lookup(bareHost, { all: true });
-    if (records.length === 0) return false;
+    if (records.length === 0) return null;
     for (const r of records) {
-      if (r.family === 4 && isPrivateIPv4(r.address)) return false;
-      if (r.family === 6 && isPrivateIPv6(r.address)) return false;
+      if (r.family === 4 && isPrivateIPv4(r.address)) return null;
+      if (r.family === 6 && isPrivateIPv6(r.address)) return null;
     }
-    return true;
+    const chosen = records[0];
+    return {
+      url: u,
+      address: chosen.address,
+      family: chosen.family as 4 | 6,
+    };
   } catch {
-    return false;
+    return null;
   }
+}
+
+interface SafeHttpResult {
+  status: number;
+  ok: boolean;
+}
+
+function requestPinned(
+  target: ResolvedPublicUrl,
+  init: { method: "HEAD" | "GET"; headers?: Record<string, string>; signal: AbortSignal },
+): Promise<{ status: number; ok: boolean; location: string | null }> {
+  return new Promise((resolve, reject) => {
+    const transport = target.url.protocol === "https:" ? httpsRequest : httpRequest;
+    const req = transport(
+      target.url,
+      {
+        method: init.method,
+        headers: init.headers,
+        signal: init.signal,
+        // Pin the address resolved and vetted above. This closes the DNS
+        // rebinding window between a safety lookup and the actual request,
+        // while preserving the original hostname for Host/SNI validation.
+        lookup: (_hostname, _options, callback) => {
+          callback(null, target.address, target.family);
+        },
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        const location = typeof res.headers.location === "string" ? res.headers.location : null;
+        // We need only status/redirect headers. Closing immediately also
+        // prevents a host that ignores Range from streaming an unbounded body.
+        res.destroy();
+        resolve({ status, ok: status >= 200 && status < 300, location });
+      },
+    );
+    req.once("error", reject);
+    req.end();
+  });
 }
 
 /**
@@ -87,23 +148,24 @@ async function isPublicUrl(url: string): Promise<boolean> {
  */
 async function safeFetch(
   url: string,
-  init: RequestInit,
-): Promise<Response> {
+  init: { method: "HEAD" | "GET"; headers?: Record<string, string>; signal: AbortSignal },
+): Promise<SafeHttpResult> {
   let current = url;
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    if (!(await isPublicUrl(current))) {
-      throw new Error(`URL blocked (private/non-http): ${current}`);
+    const target = await resolvePublicUrl(current);
+    if (!target) {
+      throw new Error("URL blocked by outbound request policy");
     }
-    const res = await fetch(current, { ...init, redirect: "manual" });
+    const res = await requestPinned(target, init);
     if (res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get("location");
+      const loc = res.location;
       if (!loc) return res;
       current = new URL(loc, current).toString();
       continue;
     }
     return res;
   }
-  throw new Error(`Too many redirects for ${url}`);
+  throw new Error("Too many redirects");
 }
 
 /**
@@ -116,7 +178,7 @@ async function verifyAuditLinks(
 ): Promise<GroundTruthChecks["auditLinks"]> {
   const claimed = links.length;
   if (claimed === 0) {
-    return { claimed: 0, verified: 0, broken: 0, details: [] };
+    return { claimed: 0, checked: 0, unchecked: 0, verified: 0, broken: 0, details: [] };
   }
 
   const checks = await Promise.all(
@@ -138,10 +200,12 @@ async function verifyAuditLinks(
             signal: controller.signal,
           });
         }
+        const status = res.status;
+        const ok = res.ok || status === 206;
         return {
           url,
-          ok: res.ok || res.status === 206,
-          status: res.status,
+          ok,
+          status,
         };
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
@@ -154,7 +218,14 @@ async function verifyAuditLinks(
 
   const verified = checks.filter((c) => c.ok).length;
   const broken = checks.length - verified;
-  return { claimed, verified, broken, details: checks };
+  return {
+    claimed,
+    checked: checks.length,
+    unchecked: Math.max(0, claimed - checks.length),
+    verified,
+    broken,
+    details: checks,
+  };
 }
 
 /**
@@ -211,12 +282,24 @@ function detectTvlCrash(protocol: DefiLlamaProtocol): GroundTruthChecks["tvlCras
   return { change1d, change7d, crashed };
 }
 
-function readOnChainCaches(
+const AUDIT_VERDICTS = new Set<AuditReport["verdict"]>([
+  "clean",
+  "review",
+  "dangerous",
+  "critical",
+]);
+
+/**
+ * Reuse only a recent, completed report from the durable audit pipeline.
+ * The old source-audit/deployer caches were process-local and no longer had
+ * an entry point, so this ground-truth branch could never become available.
+ * Validate the stored JSON before allowing it to influence an AI verdict.
+ */
+export function readCompletedContractAudit(
   protocol: DefiLlamaProtocol
 ): GroundTruthChecks["onChain"] {
   const result: GroundTruthChecks["onChain"] = {
-    deployerForensicsAvailable: false,
-    sourceAuditAvailable: false,
+    contractAuditAvailable: false,
   };
 
   if (!protocol.address) return result;
@@ -229,21 +312,56 @@ function readOnChainCaches(
   const chainId = matchKey ? CHAIN_NAME_TO_ID[matchKey] : null;
   if (chainId === null) return result;
 
-  const forensics = peekCachedForensics(chainId, protocol.address);
-  if (forensics) {
-    result.deployerForensicsAvailable = true;
-    result.deployerRiskLevel = forensics.riskLevel;
-    result.deployerScore = forensics.score;
-  }
+  try {
+    const row = getDb()
+      .prepare(
+        `SELECT result_json, finished_at
+         FROM audit_jobs
+         WHERE contract_address = ?
+           AND chain_id = ?
+           AND status = 'done'
+           AND result_json IS NOT NULL
+           AND finished_at >= ?
+         ORDER BY finished_at DESC
+         LIMIT 1`,
+      )
+      .get(
+        protocol.address.toLowerCase(),
+        chainId,
+        Date.now() - CONTRACT_AUDIT_TTL_MS,
+      ) as { result_json: string; finished_at: number } | undefined;
 
-  const audit = peekCachedAudit(chainId, protocol.address);
-  if (audit) {
-    result.sourceAuditAvailable = true;
-    result.sourceAuditVerdict = audit.overallVerdict;
-    result.sourceAuditScore = audit.overallScore;
-  }
+    if (!row) return result;
 
-  return result;
+    const parsed = JSON.parse(row.result_json) as Partial<AuditReport>;
+    const score = parsed.riskScore;
+    const verdict = parsed.verdict;
+    if (
+      parsed.version !== 1 ||
+      parsed.chainId !== chainId ||
+      parsed.contractAddress?.toLowerCase() !== protocol.address.toLowerCase() ||
+      typeof verdict !== "string" ||
+      !AUDIT_VERDICTS.has(verdict as AuditReport["verdict"]) ||
+      typeof score !== "number" ||
+      !Number.isFinite(score) ||
+      score < 0 ||
+      score > 100 ||
+      !Number.isFinite(row.finished_at)
+    ) {
+      return result;
+    }
+
+    return {
+      contractAuditAvailable: true,
+      contractAuditVerdict: verdict as AuditReport["verdict"],
+      contractAuditRiskScore: score,
+      contractAuditCompletedAt: new Date(row.finished_at).toISOString(),
+      contractAuditCoverageSufficient:
+        parsed.coverage?.sufficientForCleanVerdict === true,
+    };
+  } catch {
+    return result;
+  }
 }
 
 /**
@@ -258,7 +376,7 @@ export async function gatherGroundTruth(
   const linkCheck = await verifyAuditLinks(auditLinks);
   const recentExploitAlerts = queryRecentExploits(protocol.name, protocol.slug);
   const tvlCrash = detectTvlCrash(protocol);
-  const onChain = readOnChainCaches(protocol);
+  const onChain = readCompletedContractAudit(protocol);
 
   return {
     auditLinks: linkCheck,
@@ -277,7 +395,7 @@ export function formatGroundTruthForPrompt(gt: GroundTruthChecks): string {
 
   if (gt.auditLinks.claimed > 0) {
     lines.push(
-      `- Audit links: ${gt.auditLinks.claimed} claimed, ${gt.auditLinks.verified} resolve, ${gt.auditLinks.broken} BROKEN`
+      `- Audit links: ${gt.auditLinks.claimed} claimed, ${gt.auditLinks.checked} checked, ${gt.auditLinks.verified} resolve, ${gt.auditLinks.broken} BROKEN, ${gt.auditLinks.unchecked} unchecked`
     );
     if (gt.auditLinks.broken > 0) {
       const brokenUrls = gt.auditLinks.details
@@ -308,18 +426,12 @@ export function formatGroundTruthForPrompt(gt: GroundTruthChecks): string {
     lines.push(`- TVL change: 1d=${c1} | 7d=${c7}${gt.tvlCrash.crashed ? " ← CRASH SIGNAL" : ""}`);
   }
 
-  if (gt.onChain.deployerForensicsAvailable) {
+  if (gt.onChain.contractAuditAvailable) {
     lines.push(
-      `- Deployer forensics (cached): risk=${gt.onChain.deployerRiskLevel} score=${gt.onChain.deployerScore}/100`
+      `- Recent contract audit: verdict=${gt.onChain.contractAuditVerdict} risk=${gt.onChain.contractAuditRiskScore}/100 completed=${gt.onChain.contractAuditCompletedAt} sufficient-clean-coverage=${gt.onChain.contractAuditCoverageSufficient === true}`
     );
-  }
-  if (gt.onChain.sourceAuditAvailable) {
-    lines.push(
-      `- On-chain source audit (cached): verdict=${gt.onChain.sourceAuditVerdict} score=${gt.onChain.sourceAuditScore}/100`
-    );
-  }
-  if (!gt.onChain.deployerForensicsAvailable && !gt.onChain.sourceAuditAvailable) {
-    lines.push("- On-chain checks: no cached deployer/audit data");
+  } else {
+    lines.push("- On-chain checks: no recent completed contract audit");
   }
 
   return lines.join("\n");

@@ -77,38 +77,3 @@ export function ensembleExtractJson<T = unknown>(raw: EnsembleRawResult): {
     errors,
   };
 }
-
-const SEVERITY_RANK: Record<string, number> = {
-  critical: 5,
-  high: 4,
-  medium: 3,
-  low: 2,
-  info: 1,
-};
-
-/** Pick the highest severity string. Case-insensitive. Accepts any number of inputs. */
-export function maxSeverity<S extends string>(...severities: S[]): S {
-  if (severities.length === 0) return "" as S;
-  return severities.reduce((best, s) => {
-    const rb = SEVERITY_RANK[String(best).toLowerCase()] ?? 0;
-    const rs = SEVERITY_RANK[String(s).toLowerCase()] ?? 0;
-    return rs > rb ? s : best;
-  });
-}
-
-/**
- * Deduplicate strings by full normalized text (case-insensitive, whitespace-
- * collapsed). Distinct recommendations that share a prefix are preserved.
- */
-export function dedupeStrings(items: string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const item of items) {
-    const trimmed = item.trim();
-    const key = trimmed.toLowerCase().replace(/\s+/g, " ");
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push(trimmed);
-  }
-  return out;
-}

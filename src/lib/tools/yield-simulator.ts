@@ -1,8 +1,8 @@
 /**
- * Forward-replay portfolio simulator. Takes a user-defined allocation and runs
- * it forward `horizonDays` days, compounding each pool at its own historical
- * APY trajectory. Stress scenarios apply principal haircuts and/or APY shocks
- * at known days to test how the portfolio survives common DeFi failure modes.
+ * Scenario portfolio simulator. Takes a user-defined allocation and runs it
+ * forward `horizonDays` days using a deterministic seven-day block bootstrap
+ * of each pool's historical APY observations. Stress scenarios apply principal
+ * haircuts and/or APY shocks at known days to test common failure modes.
  *
  * The "baseline" path is always computed alongside the requested scenario so
  * the UI can show the cost of the stress in dollars.
@@ -21,6 +21,7 @@ export interface PoolMeta {
   symbol: string;
   protocol: string;
   chain: string;
+  stablecoin: boolean;
 }
 
 export interface SimulationPoint {
@@ -56,18 +57,21 @@ export interface SimulationResult {
   series: SimulationPoint[];
   poolBreakdown: PoolBreakdownRow[];
   skipped: string[];
-}
-
-const STABLE_REGEX = /\b(USD[CTDS]?|DAI|TUSD|FRAX|EUR[CS]?|GBP|GUSD|MIM|crvUSD|sUSD|LUSD|USDe|PYUSD|FDUSD|USDP)\b/i;
-
-function isStableSymbol(symbol: string): boolean {
-  return STABLE_REGEX.test(symbol);
+  methodology: "deterministic_block_bootstrap";
+  historyDaysByPool: Record<string, number>;
 }
 
 function dailyRate(apyPct: number): number {
   if (!Number.isFinite(apyPct)) return 0;
-  const safe = Math.max(-99.9, apyPct);
+  // Winsorize extreme upstream observations. Four-digit APYs can exist, but
+  // values above this are usually launch incentives or bad feed data and make
+  // compounding overflow rather than improve a stress estimate.
+  const safe = Math.max(-99.9, Math.min(1_000, apyPct));
   return Math.pow(1 + safe / 100, 1 / 365) - 1;
+}
+
+function modeledApy(apyPct: number): number {
+  return Number.isFinite(apyPct) ? Math.max(-99.9, Math.min(1_000, apyPct)) : 0;
 }
 
 interface PoolPlan {
@@ -79,12 +83,38 @@ interface PoolPlan {
   isStable: boolean;
 }
 
+function seedFrom(value: string): number {
+  let seed = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    seed ^= value.charCodeAt(i);
+    seed = Math.imul(seed, 16777619);
+  }
+  return seed >>> 0;
+}
+
+function seededRandom(seed: number): () => number {
+  let state = seed || 0x9e3779b9;
+  return () => {
+    state += 0x6d2b79f5;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}
+
 function buildApySeries(series: PoolSeries, horizonDays: number): number[] {
-  const tail = series.points.slice(-Math.max(horizonDays, 30));
-  if (tail.length === 0) return [];
-  const out: number[] = new Array(horizonDays);
-  for (let i = 0; i < horizonDays; i++) {
-    out[i] = tail[i % tail.length].apy;
+  const history = series.points.slice(-730).map((point) => modeledApy(point.apy));
+  if (history.length < 30) return [];
+  const blockSize = Math.min(7, history.length);
+  const random = seededRandom(seedFrom(`${series.poolId}:${horizonDays}:${history.length}`));
+  const out: number[] = [];
+  while (out.length < horizonDays) {
+    const maxStart = history.length - blockSize;
+    const start = Math.floor(random() * (maxStart + 1));
+    for (let offset = 0; offset < blockSize && out.length < horizonDays; offset++) {
+      out.push(history[start + offset]);
+    }
   }
   return out;
 }
@@ -102,12 +132,6 @@ function runScenario(
 ): RunOutput {
   const balances = initBalances.slice();
 
-  if (scen === "depeg") {
-    for (let i = 0; i < plans.length; i++) {
-      if (plans[i].isStable) balances[i] *= 0.95;
-    }
-  }
-
   const totals: number[] = new Array(horizonDays + 1);
   const perPool: number[][] = new Array(horizonDays + 1);
 
@@ -117,6 +141,10 @@ function runScenario(
   for (let day = 1; day <= horizonDays; day++) {
     for (let i = 0; i < plans.length; i++) {
       let apy = plans[i].apySeries[day - 1] ?? 0;
+
+      if (scen === "depeg" && day === 1 && plans[i].isStable) {
+        balances[i] *= 0.95;
+      }
 
       if (scen === "tvl_crash" && day >= 30) {
         apy *= 0.2;
@@ -155,7 +183,7 @@ export function simulate(args: {
   for (const a of allocations) {
     const series = seriesById.get(a.poolId);
     const meta = metaById.get(a.poolId);
-    if (!series || series.points.length < 14 || !meta) {
+    if (!series || series.points.length < 30 || !meta) {
       skipped.push(a.poolId);
       continue;
     }
@@ -171,7 +199,7 @@ export function simulate(args: {
       weightPct: a.weightPct,
       apySeries,
       meanApy,
-      isStable: isStableSymbol(meta.symbol),
+      isStable: meta.stablecoin,
     });
   }
 
@@ -242,5 +270,9 @@ export function simulate(args: {
     series,
     poolBreakdown,
     skipped,
+    methodology: "deterministic_block_bootstrap",
+    historyDaysByPool: Object.fromEntries(
+      plans.map((plan) => [plan.poolId, seriesById.get(plan.poolId)?.points.length ?? 0]),
+    ),
   };
 }

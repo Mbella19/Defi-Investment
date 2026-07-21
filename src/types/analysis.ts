@@ -32,6 +32,8 @@ export interface AnalysisDisagreement {
 export interface GroundTruthChecks {
   auditLinks: {
     claimed: number;
+    checked: number;
+    unchecked: number;
     verified: number;
     broken: number;
     details: Array<{ url: string; ok: boolean; status?: number; error?: string }>;
@@ -47,12 +49,12 @@ export interface GroundTruthChecks {
     crashed: boolean;
   };
   onChain: {
-    deployerForensicsAvailable: boolean;
-    deployerRiskLevel?: "safe" | "caution" | "high_risk" | "avoid";
-    deployerScore?: number;
-    sourceAuditAvailable: boolean;
-    sourceAuditVerdict?: "clean" | "review" | "dangerous";
-    sourceAuditScore?: number;
+    contractAuditAvailable: boolean;
+    contractAuditVerdict?: "clean" | "review" | "dangerous" | "critical";
+    /** Audit risk uses 0 = least risk and 100 = greatest risk. */
+    contractAuditRiskScore?: number;
+    contractAuditCompletedAt?: string;
+    contractAuditCoverageSufficient?: boolean;
   };
 }
 
@@ -82,6 +84,8 @@ export interface TripleAiMeta {
 }
 
 export interface ProtocolAnalysis {
+  /** Cache/schema version. Increment when safety-relevant normalization changes. */
+  analysisVersion: 2;
   protocolName: string;
   slug: string;
   legitimacyScore: number;

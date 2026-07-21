@@ -4,10 +4,10 @@ import type { GroundTruthChecks } from "@/types/analysis";
 
 function baseGroundTruth(overrides: Partial<GroundTruthChecks> = {}): GroundTruthChecks {
   return {
-    auditLinks: { claimed: 0, verified: 0, broken: 0, details: [] },
+    auditLinks: { claimed: 0, checked: 0, unchecked: 0, verified: 0, broken: 0, details: [] },
     recentExploitAlerts: { count: 0, lookbackDays: 30, alerts: [] },
     tvlCrash: { change1d: -2, change7d: 1, crashed: false },
-    onChain: { deployerForensicsAvailable: false, sourceAuditAvailable: false },
+    onChain: { contractAuditAvailable: false },
     ...overrides,
   };
 }
@@ -48,20 +48,36 @@ describe("applyHeuristicVetoes", () => {
     expect(out.overallVerdict).toBe("low_confidence");
   });
 
-  it("caps score at 30 for an avoid-rated deployer", () => {
+  it("caps score at 30 for a dangerous recent contract audit", () => {
     const out = applyHeuristicVetoes(
       { legitimacyScore: 75, overallVerdict: "moderate_confidence" },
       baseGroundTruth({
         onChain: {
-          deployerForensicsAvailable: true,
-          deployerRiskLevel: "avoid",
-          deployerScore: 12,
-          sourceAuditAvailable: false,
+          contractAuditAvailable: true,
+          contractAuditVerdict: "dangerous",
+          contractAuditRiskScore: 72,
         },
       }),
     );
     expect(out.legitimacyScore).toBe(30);
     expect(out.overallVerdict).toBe("caution");
+    expect(out.vetoes.map((v) => v.rule)).toContain("CONTRACT_AUDIT_DANGEROUS");
+  });
+
+  it("caps score at 20 for a critical recent contract audit", () => {
+    const out = applyHeuristicVetoes(
+      { legitimacyScore: 75, overallVerdict: "moderate_confidence" },
+      baseGroundTruth({
+        onChain: {
+          contractAuditAvailable: true,
+          contractAuditVerdict: "critical",
+          contractAuditRiskScore: 95,
+        },
+      }),
+    );
+    expect(out.legitimacyScore).toBe(20);
+    expect(out.overallVerdict).toBe("caution");
+    expect(out.vetoes.map((v) => v.rule)).toContain("CONTRACT_AUDIT_CRITICAL");
   });
 
   it("forces low_confidence when every claimed audit link is broken", () => {
@@ -70,6 +86,8 @@ describe("applyHeuristicVetoes", () => {
       baseGroundTruth({
         auditLinks: {
           claimed: 3,
+          checked: 3,
+          unchecked: 0,
           verified: 0,
           broken: 3,
           details: [
@@ -89,7 +107,7 @@ describe("applyHeuristicVetoes", () => {
     const out = applyHeuristicVetoes(
       { legitimacyScore: 70, overallVerdict: "high_confidence" },
       baseGroundTruth({
-        auditLinks: { claimed: 1, verified: 0, broken: 1, details: [{ url: "https://a", ok: false }] },
+        auditLinks: { claimed: 1, checked: 1, unchecked: 0, verified: 0, broken: 1, details: [{ url: "https://a", ok: false }] },
       }),
     );
     expect(out.vetoes).toHaveLength(0);

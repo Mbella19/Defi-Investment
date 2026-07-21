@@ -4,6 +4,7 @@ import {
   generateAlphanumericToken,
   generateNumericCode,
   listUserChannels,
+  redactChannelEndpoint,
   startVerification,
   upsertChannel,
   type ChannelKind,
@@ -25,6 +26,7 @@ import {
   verifyDiscordWebhook,
 } from "@/lib/notifications/channels/discord-user";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { jsonBodyErrorResponse, readJsonBody } from "@/lib/request-body";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,7 +55,10 @@ export async function GET(request: Request) {
   const channels = listUserChannels(auth.wallet);
   const plan = getPlan(auth.wallet);
   return Response.json({
-    channels,
+    channels: channels.map((channel) => ({
+      ...channel,
+      endpoint: redactChannelEndpoint(channel.channel, channel.endpoint),
+    })),
     allowedChannels: plan.capabilities.alertChannels,
     tier: plan.tier,
     config: {
@@ -72,12 +77,16 @@ export async function POST(request: Request) {
   const auth = requireWallet(request);
   if ("response" in auth) return auth.response;
 
-  let body: StartBody;
+  let parsed: unknown;
   try {
-    body = (await request.json()) as StartBody;
-  } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+    parsed = await readJsonBody(request);
+  } catch (error) {
+    return jsonBodyErrorResponse(error);
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return Response.json({ error: "JSON body must be an object" }, { status: 400 });
+  }
+  const body = parsed as StartBody;
 
   const channel = body.channel as ChannelKind | undefined;
   const endpoint = body.endpoint?.trim() ?? "";
@@ -86,6 +95,9 @@ export async function POST(request: Request) {
       { error: "Unknown channel. Expected: email, telegram, slack, or discord." },
       { status: 400 },
     );
+  }
+  if (endpoint.length > 2_048) {
+    return Response.json({ error: "Endpoint is too long." }, { status: 400 });
   }
 
   const plan = getPlan(auth.wallet);
@@ -133,7 +145,7 @@ export async function POST(request: Request) {
     const response: StartResponse = {
       channel,
       status: "pending_code",
-      message: `We sent a 6-digit code to ${endpoint}. Paste it below to confirm.`,
+      message: `We sent a 6-digit code to ${redactChannelEndpoint(channel, endpoint)}. Paste it below to confirm.`,
     };
     return Response.json(response);
   }

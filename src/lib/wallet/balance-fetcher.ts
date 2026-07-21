@@ -112,7 +112,9 @@ export async function fetchAllBalances(
     if (result.status === "fulfilled") {
       allBalances.push(...result.value);
     } else {
-      errors.push(`${chains[i].name}: ${result.reason?.message || "Failed"}`);
+      // Do not expose provider URLs or embedded API keys through client-facing
+      // partial-error strings.
+      errors.push(`${chains[i].name}: RPC unavailable`);
     }
   }
 

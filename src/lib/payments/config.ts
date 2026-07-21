@@ -2,12 +2,15 @@
  * Payment configuration — supported chain/token pairs, deposit addresses,
  * decimals, and metadata for the checkout flow.
  *
- * Deposit addresses are baked in here as defaults but can be overridden
- * per-deployment via PAYMENT_ADDRESS_{EVM,BTC,SOL,TRON} env vars.
+ * Checkout intentionally supports EVM payments only. Every rail is bound to
+ * the SIWE wallet that submits the transaction, which prevents a third party
+ * from claiming somebody else's payment.
  */
 
-export type PaymentChain = "ethereum" | "bsc" | "tron" | "solana" | "bitcoin";
-export type PaymentToken = "ETH" | "BTC" | "SOL" | "USDC" | "USDT";
+import { isAddress } from "viem";
+
+export type PaymentChain = "ethereum" | "bsc";
+export type PaymentToken = "ETH" | "USDC" | "USDT";
 
 export interface PairConfig {
   chain: PaymentChain;
@@ -18,38 +21,22 @@ export interface PairConfig {
   chainLabel: string;
   /** Decimals used for amount formatting. */
   decimals: number;
-  /** EVM chainId for wagmi flows; null for non-EVM chains. */
-  chainId: number | null;
-  /** ERC20/TRC20 contract address; null for native currencies. */
+  /** EVM chainId for wagmi and server-side verification. */
+  chainId: number;
+  /** ERC-20 contract address; null for native currencies. */
   contract: string | null;
-  /** Gecko ID for live USD pricing; null for stablecoins (treated 1:1). */
-  geckoId: string | null;
+  /** CoinGecko ID used for live USD pricing, including stablecoins. */
+  geckoId: string;
   /** Optional override env var for the deposit address. */
   recipient: () => string | null;
   /** Whether this pair is currently enabled. */
   enabled: boolean;
 }
 
-const DEFAULTS = {
-  // EVM addresses passed to viem must be either all-lowercase OR carry a
-  // valid EIP-55 checksum — mixed case that doesn't match the checksum
-  // throws InvalidAddressError. We store lowercase to dodge the issue.
-  evm: "0x35de0b4157ecb2037ab1041d2333981e81baef24",
-  btc: "bc1qjuekjcmlxs90cepkp8qtvanj20hamu74f6t8a3",
-  sol: "72FEbjJmA4Ac37gSpceF9KLmamvCY3tBgYRCoarDDFfM",
-} as const;
-
-export function evmRecipient(): string {
-  return process.env.PAYMENT_ADDRESS_EVM || DEFAULTS.evm;
-}
-export function btcRecipient(): string {
-  return process.env.PAYMENT_ADDRESS_BTC || DEFAULTS.btc;
-}
-export function solRecipient(): string {
-  return process.env.PAYMENT_ADDRESS_SOL || DEFAULTS.sol;
-}
-export function tronRecipient(): string | null {
-  return process.env.PAYMENT_ADDRESS_TRON || null;
+export function evmRecipient(): string | null {
+  const configured = process.env.PAYMENT_ADDRESS_EVM?.trim();
+  if (!configured || !isAddress(configured)) return null;
+  return configured.toLowerCase();
 }
 
 export const PAYMENT_PAIRS: PairConfig[] = [
@@ -73,7 +60,7 @@ export const PAYMENT_PAIRS: PairConfig[] = [
     decimals: 6,
     chainId: 1,
     contract: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-    geckoId: null,
+    geckoId: "usd-coin",
     recipient: evmRecipient,
     enabled: true,
   },
@@ -85,7 +72,7 @@ export const PAYMENT_PAIRS: PairConfig[] = [
     decimals: 6,
     chainId: 1,
     contract: "0xdac17f958d2ee523a2206206994597c13d831ec7",
-    geckoId: null,
+    geckoId: "tether",
     recipient: evmRecipient,
     enabled: true,
   },
@@ -97,7 +84,7 @@ export const PAYMENT_PAIRS: PairConfig[] = [
     decimals: 18,
     chainId: 56,
     contract: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d",
-    geckoId: null,
+    geckoId: "usd-coin",
     recipient: evmRecipient,
     enabled: true,
   },
@@ -109,60 +96,8 @@ export const PAYMENT_PAIRS: PairConfig[] = [
     decimals: 18,
     chainId: 56,
     contract: "0x55d398326f99059ff775485246999027b3197955",
-    geckoId: null,
+    geckoId: "tether",
     recipient: evmRecipient,
-    enabled: true,
-  },
-  {
-    // NOTE: Circle discontinued native USDC on Tron (minting ended 2024;
-    // redemptions wound down through 2025). Kept available per product
-    // decision — liquidity still circulates — but USDT is the primary
-    // Tron rail and this pair may be removed if the market dries up.
-    chain: "tron",
-    token: "USDC",
-    label: "USDC on Tron",
-    chainLabel: "Tron",
-    decimals: 6,
-    chainId: null,
-    contract: "TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8",
-    geckoId: null,
-    recipient: tronRecipient,
-    enabled: true,
-  },
-  {
-    chain: "tron",
-    token: "USDT",
-    label: "USDT on Tron",
-    chainLabel: "Tron",
-    decimals: 6,
-    chainId: null,
-    contract: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
-    geckoId: null,
-    recipient: tronRecipient,
-    enabled: true,
-  },
-  {
-    chain: "solana",
-    token: "SOL",
-    label: "SOL on Solana",
-    chainLabel: "Solana",
-    decimals: 9,
-    chainId: null,
-    contract: null,
-    geckoId: "solana",
-    recipient: solRecipient,
-    enabled: true,
-  },
-  {
-    chain: "bitcoin",
-    token: "BTC",
-    label: "BTC on Bitcoin",
-    chainLabel: "Bitcoin",
-    decimals: 8,
-    chainId: null,
-    contract: null,
-    geckoId: "bitcoin",
-    recipient: btcRecipient,
     enabled: true,
   },
 ];

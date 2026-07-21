@@ -2,37 +2,42 @@
   "name": "sovereign-terminal",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:env": "node scripts/check-production-env.mjs"
   },
   "dependencies": {
-    "@rainbow-me/rainbowkit": "^2.2.10",
-    "@tanstack/react-query": "^5.95.0",
-    "better-sqlite3": "^12.8.0",
-    "bs58": "^6.0.0",
-    "lucide-react": "^1.14.0",
-    "next": "^16.2.4",
-    "react": "19.2.4",
-    "react-dom": "19.2.4",
-    "recharts": "^3.8.0",
-    "viem": "^2.47.6",
-    "wagmi": "^2.19.5"
+    "@tanstack/react-query": "^5.101.3",
+    "better-sqlite3": "^13.0.1",
+    "lucide-react": "^1.25.0",
+    "next": "16.2.10",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "recharts": "^3.10.0",
+    "viem": "2.55.4",
+    "wagmi": "3.7.3"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^20",
-    "@types/react": "^19",
+    "@types/node": "^22.20.1",
+    "@types/react": "^19.2.17",
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
-    "eslint": "^9",
-    "eslint-config-next": "^16.2.4",
-    "tailwindcss": "^4",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "16.2.10",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "postcss": "8.5.20"
   }
 }

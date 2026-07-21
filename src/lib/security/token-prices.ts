@@ -9,9 +9,11 @@
  */
 
 import { fetchWithTimeout } from "@/lib/fetch-utils";
+import { boundCache } from "@/lib/cache-utils";
 
 const PRICE_BASE = "https://coins.llama.fi/prices/current";
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_MAX = 5_000;
 
 const cache = new Map<string, { price: number; expiresAt: number }>();
 
@@ -78,6 +80,7 @@ export async function fetchTokenUsdPrices(
         const original = keyToOriginal.get(k);
         if (original) out.set(original, price);
       }
+      boundCache(cache, CACHE_MAX);
     } catch {
       // Best-effort. Tokens without prices are skipped by the caller.
     }

@@ -110,7 +110,7 @@ const COMPOUND_TIMELOCK_ABI = [
 /* ==================== INTERROGATOR ENTRY POINT ==================== */
 
 export interface InterrogateOpts {
-  /** If known from elsewhere (e.g. deployer-forensics cache), pass to skip Etherscan. */
+  /** If already known, pass it to skip the block-explorer creation lookup. */
   deployerAddress?: string;
   deployedAt?: number;
   /** Verified contract name + compiler if known — saves an Etherscan call. */

@@ -1,6 +1,7 @@
 import "server-only";
 import type { StrategyMonitorAlert } from "@/lib/strategy-monitor";
 import { alertPlainText, alertTitle } from "@/lib/notifications/templates";
+import { log } from "@/lib/log";
 
 const TIMEOUT_MS = 6_000;
 
@@ -24,6 +25,14 @@ interface SlackPayload {
   }>;
 }
 
+/** Prevent Slack mrkdwn control sequences such as <!channel> from mentions. */
+export function escapeSlackMrkdwn(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 async function postSlack(url: string, body: SlackPayload): Promise<boolean> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -33,16 +42,15 @@ async function postSlack(url: string, body: SlackPayload): Promise<boolean> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
       signal: controller.signal,
+      redirect: "error",
     });
     if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      console.warn("[slack] webhook failed", res.status, txt.slice(0, 200));
+      log.warn("slack", "webhook rejected delivery", { status: res.status });
       return false;
     }
     return true;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn("[slack] webhook post failed:", msg);
+    log.warn("slack", "webhook delivery failed", { error: err });
     return false;
   } finally {
     clearTimeout(timeout);
@@ -73,11 +81,11 @@ export async function sendSlackAlert(
   const sev = alert.severity.toLowerCase();
   const color = SEVERITY_COLOR[sev] ?? SEVERITY_COLOR.info;
   return postSlack(url, {
-    text: alertTitle(alert),
+    text: escapeSlackMrkdwn(alertTitle(alert)).slice(0, 300),
     attachments: [
       {
         color,
-        text: alertPlainText(alert),
+        text: escapeSlackMrkdwn(alertPlainText(alert)).slice(0, 3_000),
         footer: "Sovereign · 24/7 monitoring",
       },
     ],

@@ -190,7 +190,7 @@ const FAQ: FaqItem[] = [
   {
     icon: BadgeDollarSign,
     title: "Cancel anytime, paid in crypto",
-    body: "Plans bill monthly, paid from your connected wallet — ETH, USDC, USDT, BTC, or SOL. Cancel and you keep the tier through the current period. No card numbers, no chargebacks, no resubscribe loops.",
+    body: "Plans bill monthly, paid from your connected EVM wallet in ETH, USDC, or USDT. Renewals extend the current period; there are no card numbers or automatic charges.",
   },
   {
     icon: ShieldCheck,

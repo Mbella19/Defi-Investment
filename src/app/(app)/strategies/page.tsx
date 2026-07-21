@@ -29,6 +29,7 @@ import Link from "next/link";
 import { useActiveStrategies } from "@/hooks/useActiveStrategies";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { usePlan } from "@/hooks/usePlan";
+import { apiFetch } from "@/lib/api-client";
 import type { InvestmentStrategy, StrategyAllocation, StrategyCriteria } from "@/types/strategy";
 import type { ActiveStrategy, StrategyStatus } from "@/types/active-strategy";
 
@@ -112,6 +113,10 @@ export default function StrategiesPage() {
     .filter((s) => s.status !== "archived")
     .reduce((sum, s) => sum + s.totalBudget, 0);
   const openAlerts = strategies.reduce((sum, s) => sum + (s.alertCount ?? 0), 0);
+  const strategyUnlimited = plan.capabilities.monthlyStrategies === -1;
+  const atStrategyCap =
+    !strategyUnlimited &&
+    plan.usage.strategiesThisMonth >= plan.capabilities.monthlyStrategies;
 
   const draftStrategy = job.result?.strategy ?? null;
   const draftApy = draftStrategy?.projectedApy ?? 0;
@@ -122,9 +127,8 @@ export default function StrategiesPage() {
     // actual action. The wallet is already shown in the topbar — they think
     // they're signed in.
     if (!isAuthed) {
-      try {
-        await signIn();
-      } catch {
+      const auth = await signIn();
+      if (!auth.ok) {
         setJob({
           status: "error",
           progress: 0,
@@ -152,9 +156,12 @@ export default function StrategiesPage() {
       assetType: effectiveStable ? "stablecoins" : "all",
     };
     try {
-      const res = await fetch("/api/strategy", {
+      const res = await apiFetch("/api/strategy", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": crypto.randomUUID(),
+        },
         body: JSON.stringify(criteria),
       });
       if (!res.ok) {
@@ -210,30 +217,14 @@ export default function StrategiesPage() {
   }
 
   async function activate() {
-    if (!draftStrategy) return;
+    if (!draftStrategy || !job.jobId) return;
     if (!isAuthed) {
-      try {
-        await signIn();
-      } catch {
-        return;
-      }
+      const auth = await signIn();
+      if (!auth.ok) return;
     }
     setActivateBusy(true);
     try {
-      const usingCustomApy = plan.capabilities.customApyMode && customApyEnabled;
-      const [presetMin, presetMax] = APY_RANGE[risk];
-      const targetApyMin = usingCustomApy ? Math.max(0.5, customApyMin) : presetMin;
-      const targetApyMax = usingCustomApy ? Math.max(targetApyMin + 0.5, customApyMax) : presetMax;
-      const effectiveRisk: RiskBand = plan.capabilities.riskBandSelection ? risk : "Balanced";
-      const effectiveStable = plan.capabilities.stablecoinToggle ? stableOnly : false;
-      const criteria: StrategyCriteria = {
-        budget,
-        riskAppetite: RISK_TO_APPETITE[effectiveRisk],
-        targetApyMin,
-        targetApyMax,
-        assetType: effectiveStable ? "stablecoins" : "all",
-      };
-      await activateStrategy(draftStrategy, criteria);
+      await activateStrategy(job.jobId);
       // Reset the draft slot once it moves into the active list.
       setJob({ status: "idle", progress: 0 });
     } catch {
@@ -245,7 +236,7 @@ export default function StrategiesPage() {
 
   async function handleScan(id?: string) {
     if (!isAuthed) {
-      await signIn().catch(() => {});
+      await signIn();
       return;
     }
     setScanBusy(true);
@@ -294,7 +285,9 @@ export default function StrategiesPage() {
         <div className="plan-strip">
           <span className={`plan-strip-tag tier-${plan.tier}`}>{plan.tier}</span>
           <strong>{plan.usage.strategiesThisMonth}</strong>
-          <span>of {plan.capabilities.monthlyStrategies} strategies used this month</span>
+          <span>
+            of {strategyUnlimited ? "∞" : plan.capabilities.monthlyStrategies} strategies used this month
+          </span>
           <Link href="/account/alerts" style={{ marginLeft: "auto" }}>Manage alert channels →</Link>
           {plan.tier !== "ultra" ? (
             <Link href="/plans">Upgrade →</Link>
@@ -479,9 +472,7 @@ export default function StrategiesPage() {
                 job.status === "running" ||
                 authStatus === "signing" ||
                 authStatus === "checking" ||
-                (isAuthed &&
-                  !plan.isLoading &&
-                  plan.usage.strategiesThisMonth >= plan.capabilities.monthlyStrategies)
+                (isAuthed && !plan.isLoading && atStrategyCap)
               }
             >
               <WandSparkles size={18} aria-hidden="true" />
@@ -491,13 +482,13 @@ export default function StrategiesPage() {
                   ? "Loading session…"
                   : authStatus === "signing"
                     ? "Confirm in wallet…"
-                    : isAuthed && plan.usage.strategiesThisMonth >= plan.capabilities.monthlyStrategies
+                    : isAuthed && atStrategyCap
                       ? "Monthly cap reached"
                       : "Generate draft"}
             </button>
             {isAuthed &&
             !plan.isLoading &&
-            plan.usage.strategiesThisMonth >= plan.capabilities.monthlyStrategies ? (
+            atStrategyCap ? (
               <Link
                 href="/plans"
                 className="ghost-button"

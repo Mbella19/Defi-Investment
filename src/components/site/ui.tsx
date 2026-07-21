@@ -60,7 +60,7 @@ export interface MarketRowData {
   tvl: number;
   apy: number;
   apy7d: number | null;
-  safety: number;
+  screenScore: number;
   href?: string;
 }
 
@@ -90,8 +90,8 @@ export function MarketRow({ market }: { market: MarketRowData }) {
       <span className={(market.apy7d ?? 0) >= 0 ? "delta-good" : "delta-bad"}>
         {market.apy7d == null ? "—" : formatPct(market.apy7d, true)}
       </span>
-      <span className="safety-meter" aria-label={`Safety ${market.safety}`}>
-        <i style={{ width: `${Math.max(4, Math.min(100, market.safety))}%` }} />
+      <span className="safety-meter" aria-label={`Market screen score ${market.screenScore}`}>
+        <i style={{ width: `${Math.max(4, Math.min(100, market.screenScore))}%` }} />
       </span>
     </Tag>
   );

@@ -2925,8 +2925,7 @@ main {
   font-variant-numeric: tabular-nums;
 }
 
-/* Wallet button slot inside the prototype top nav. RainbowKit renders its
-   own button — we wrap it to match the prototype pill height. */
+/* Wallet button slot inside the prototype top nav. */
 .connect-slot {
   display: inline-flex;
   align-items: center;
@@ -2940,6 +2939,123 @@ main {
 .alert-slot {
   position: relative;
   display: inline-flex;
+}
+
+.wallet-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(3, 4, 6, 0.78);
+  backdrop-filter: blur(8px);
+}
+
+.wallet-modal {
+  width: min(100%, 430px);
+  max-height: min(720px, calc(100vh - 40px));
+  overflow-y: auto;
+  padding: 22px;
+  color: var(--ink);
+  background: #0d1015;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.62);
+}
+
+.wallet-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+
+.wallet-modal-header h2 {
+  margin: 5px 0 0;
+  font-size: 24px;
+}
+
+.wallet-modal-close {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.wallet-modal-options,
+.wallet-modal-account {
+  display: grid;
+  gap: 10px;
+}
+
+.wallet-modal-option,
+.wallet-modal-address {
+  min-height: 54px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  color: var(--ink);
+  text-align: left;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+button.wallet-modal-option {
+  cursor: pointer;
+}
+
+button.wallet-modal-option:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: var(--line-strong);
+}
+
+.wallet-modal-option:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+}
+
+.wallet-modal-option > :last-child:not(:first-child) {
+  margin-left: auto;
+}
+
+.wallet-modal-address strong,
+.wallet-modal-address span {
+  display: block;
+}
+
+.wallet-modal-address span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.wallet-modal-danger {
+  color: var(--red);
+}
+
+.wallet-modal-error {
+  margin: 14px 0 0;
+  color: var(--red);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.wallet-modal-note {
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 /* Strategy composer-specific styles (allocations rendered after generation). */

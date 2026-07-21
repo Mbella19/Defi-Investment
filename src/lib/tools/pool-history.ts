@@ -1,4 +1,5 @@
 import { fetchPoolHistory } from "@/lib/defillama";
+import { boundCache } from "@/lib/cache-utils";
 
 export interface PoolHistoryPoint {
   /** ISO date `YYYY-MM-DD` (one entry per day, deduped). */
@@ -24,6 +25,7 @@ interface RawChartPoint {
 
 const seriesCache = new Map<string, { series: PoolSeries; expiresAt: number }>();
 const CACHE_TTL_MS = 30 * 60 * 1000;
+const CACHE_MAX = 2_000;
 
 /**
  * Fetch a pool's daily history and normalise into a clean per-day series.
@@ -46,6 +48,7 @@ export async function fetchPoolSeries(poolId: string): Promise<PoolSeries | null
 
   const byDay = new Map<string, PoolHistoryPoint>();
   for (const p of raw) {
+    if (!p || typeof p !== "object") continue;
     if (typeof p.apy !== "number" || !Number.isFinite(p.apy)) continue;
     const dt = new Date(p.timestamp);
     if (Number.isNaN(dt.getTime())) continue;
@@ -64,6 +67,7 @@ export async function fetchPoolSeries(poolId: string): Promise<PoolSeries | null
 
   const series: PoolSeries = { poolId, points };
   seriesCache.set(poolId, { series, expiresAt: Date.now() + CACHE_TTL_MS });
+  boundCache(seriesCache, CACHE_MAX);
   return series;
 }
 

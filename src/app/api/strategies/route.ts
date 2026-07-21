@@ -2,8 +2,11 @@ import { getDb } from "@/lib/db";
 import { ensureSchedulerStarted } from "@/lib/monitor-scheduler";
 import { requireWallet } from "@/lib/auth/guard";
 import { isRiskAppetite, validateStrategyShape } from "@/lib/strategy-validate";
+import { getJob, getStrategyJobPayload } from "@/lib/strategy-jobs";
+import { log } from "@/lib/log";
 import type { ActiveStrategy } from "@/types/active-strategy";
 import type { InvestmentStrategy, StrategyCriteria } from "@/types/strategy";
+import { jsonBodyErrorResponse, readJsonBody } from "@/lib/request-body";
 
 // Every active strategy is scanned every 15 minutes (pool history, RPC pause
 // checks, exploit matching) — an unbounded list is an unbounded monitoring
@@ -34,6 +37,7 @@ export async function GET(request: Request) {
       const alertRow = alertStmt.get(row.id as string) as { count: number } | undefined;
       return {
         id: row.id as string,
+        sourceJobId: (row.source_job_id as string | null) ?? undefined,
         walletAddress: row.wallet_address as string | null,
         strategy: JSON.parse(row.strategy_json as string) as InvestmentStrategy,
         criteria: JSON.parse(row.criteria_json as string) as StrategyCriteria,
@@ -48,7 +52,7 @@ export async function GET(request: Request) {
 
     return Response.json({ strategies });
   } catch (error) {
-    console.error("Failed to list strategies:", error);
+    log.error("strategies", "failed to list strategies", { error });
     return Response.json({ error: "Failed to list strategies" }, { status: 500 });
   }
 }
@@ -59,15 +63,33 @@ export async function POST(request: Request) {
     if ("response" in auth) return auth.response;
     ensureSchedulerStarted();
 
-    const body = await request.json();
-    const { strategy, criteria } = body as {
-      strategy: InvestmentStrategy;
-      criteria: StrategyCriteria;
-    };
-
-    if (!strategy || !criteria) {
-      return Response.json({ error: "strategy and criteria are required" }, { status: 400 });
+    let parsed: unknown;
+    try {
+      parsed = await readJsonBody(request);
+    } catch (error) {
+      return jsonBodyErrorResponse(error);
     }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return Response.json({ error: "JSON body must be an object" }, { status: 400 });
+    }
+    const body = parsed as { jobId?: unknown };
+    const jobId = typeof body.jobId === "string" ? body.jobId : null;
+    if (!jobId || !/^[0-9a-f-]{36}$/i.test(jobId)) {
+      return Response.json({ error: "A valid completed strategy job is required" }, { status: 400 });
+    }
+    const sourceJob = getJob(jobId);
+    const payload = getStrategyJobPayload(jobId);
+    if (
+      !sourceJob ||
+      sourceJob.wallet !== auth.wallet.toLowerCase() ||
+      sourceJob.status !== "done" ||
+      !sourceJob.result ||
+      !payload
+    ) {
+      return Response.json({ error: "Completed strategy job not found" }, { status: 404 });
+    }
+    const strategy = sourceJob.result.strategy;
+    const criteria = payload.criteria;
 
     // Reject malformed bodies BEFORE they hit the database. An arbitrary
     // "strategy" blob previously 500'd on the NOT NULL projected_apy column
@@ -98,10 +120,38 @@ export async function POST(request: Request) {
     const id = crypto.randomUUID();
     const db = getDb();
 
-    const existing = db
-      .prepare("SELECT COUNT(*) AS n FROM active_strategies WHERE wallet_address = ?")
-      .get(auth.wallet) as { n: number };
-    if (existing.n >= MAX_STRATEGIES_PER_WALLET) {
+    const activation = db.transaction(() => {
+      const alreadyActive = db
+        .prepare(
+          "SELECT id, status FROM active_strategies WHERE wallet_address = ? AND source_job_id = ?",
+        )
+        .get(auth.wallet, jobId) as { id: string; status: string } | undefined;
+      if (alreadyActive) return { kind: "existing" as const, ...alreadyActive };
+      const existing = db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM active_strategies WHERE wallet_address = ? AND status != 'archived'",
+        )
+        .get(auth.wallet) as { n: number };
+      if (existing.n >= MAX_STRATEGIES_PER_WALLET) {
+        return { kind: "limit" as const };
+      }
+      db.prepare(`
+        INSERT INTO active_strategies
+          (id, wallet_address, source_job_id, strategy_json, criteria_json,
+           status, projected_apy, total_budget)
+        VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+      `).run(
+        id,
+        auth.wallet,
+        jobId,
+        JSON.stringify(strategy),
+        JSON.stringify(criteria),
+        strategy.projectedApy,
+        criteria.budget,
+      );
+      return { kind: "created" as const, id, status: "active" };
+    })();
+    if (activation.kind === "limit") {
       return Response.json(
         {
           error: `Strategy limit reached (${MAX_STRATEGIES_PER_WALLET}). Archive or delete an existing strategy first.`,
@@ -110,27 +160,17 @@ export async function POST(request: Request) {
       );
     }
 
-    // wallet_address always comes from the authenticated session — ignore
-    // anything the client sends in the body.
-    db.prepare(`
-      INSERT INTO active_strategies (id, wallet_address, strategy_json, criteria_json, status, projected_apy, total_budget)
-      VALUES (?, ?, ?, ?, 'active', ?, ?)
-    `).run(
-      id,
-      auth.wallet,
-      JSON.stringify(strategy),
-      JSON.stringify(criteria),
-      strategy.projectedApy,
-      criteria.budget,
-    );
-
     return Response.json({
-      id,
-      status: "active",
-      message: "Strategy activated and will be monitored",
+      id: activation.id,
+      status: activation.status,
+      message:
+        activation.kind === "existing"
+          ? "Strategy was already placed under monitoring"
+          : "Strategy activated and will be monitored",
+      idempotentReplay: activation.kind === "existing",
     });
   } catch (error) {
-    console.error("Failed to activate strategy:", error);
+    log.error("strategies", "failed to activate strategy", { error });
     return Response.json({ error: "Failed to activate strategy" }, { status: 500 });
   }
 }
