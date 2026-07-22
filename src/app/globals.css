@@ -5302,6 +5302,39 @@ button.wallet-modal-option:hover:not(:disabled) {
   color: var(--ink);
 }
 
+/* Allocation rows that link out to the pool's live page. */
+a.allocation-link {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 130ms ease, background-color 130ms ease;
+}
+
+a.allocation-row.allocation-link {
+  grid-template-columns: minmax(0, 1fr) 72px 120px 16px;
+}
+
+.allocation-go {
+  color: var(--soft);
+  flex: 0 0 auto;
+  transition: color 130ms ease, transform 130ms ease;
+}
+
+.composer-allocation .allocation-go {
+  margin-left: 4px;
+  vertical-align: -1px;
+}
+
+a.allocation-link:hover {
+  border-color: rgba(110, 231, 183, 0.38);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+a.allocation-link:hover .allocation-go {
+  color: var(--mint);
+  transform: translate(1px, -1px);
+}
+
 /* Selected rows inside a desk column: quiet mint edge, not the loud tab gradient. */
 .desk-col .allocation-row.tab-button.active {
   background: rgba(110, 231, 183, 0.07);

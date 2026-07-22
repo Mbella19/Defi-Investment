@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
+  ArrowUpRight,
   BellRing,
   CirclePause,
   Play,
@@ -84,6 +85,11 @@ const COUNCIL_PHASES: PipelinePhase[] = [
 function describeStage(stage?: string): string {
   if (!stage) return "ready";
   return stage.replace(/_/g, " ");
+}
+
+/** The pool's DeFiLlama page — live stats plus the project's own deposit link. */
+function poolUrl(poolId: string): string {
+  return `https://defillama.com/yields/pool/${encodeURIComponent(poolId)}`;
 }
 
 export default function StrategiesPage() {
@@ -612,7 +618,13 @@ export default function StrategiesPage() {
 function DraftAllocation({ allocation }: { allocation: StrategyAllocation }) {
   const chain = chainIdFromName(allocation.chain);
   return (
-    <div className="composer-allocation">
+    <a
+      className="composer-allocation allocation-link"
+      href={poolUrl(allocation.poolId)}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={`Open ${allocation.symbol} on ${allocation.protocol}`}
+    >
       <div className="token-cell">
         <PoolIcon symbol={allocation.symbol} protocol={allocation.protocol} />
         <div>
@@ -622,10 +634,13 @@ function DraftAllocation({ allocation }: { allocation: StrategyAllocation }) {
         </div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-        <strong>{allocation.allocationPercent.toFixed(0)}%</strong>
+        <strong>
+          {allocation.allocationPercent.toFixed(0)}%
+          <ArrowUpRight size={13} className="allocation-go" aria-hidden="true" />
+        </strong>
         <ChainBadge chain={chain} />
       </div>
-    </div>
+    </a>
   );
 }
 
@@ -685,7 +700,14 @@ function StrategyArticle({
         {strategy.strategy.allocations.slice(0, expanded ? undefined : 4).map((alloc) => {
           const chain = chainIdFromName(alloc.chain);
           return (
-            <div className="allocation-row" key={`${strategy.id}-${alloc.poolId}`}>
+            <a
+              className="allocation-row allocation-link"
+              key={`${strategy.id}-${alloc.poolId}`}
+              href={poolUrl(alloc.poolId)}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`Open ${alloc.symbol} on ${alloc.protocol}`}
+            >
               <div className="token-cell">
                 <PoolIcon symbol={alloc.symbol} protocol={alloc.protocol} />
                 <div>
@@ -697,7 +719,8 @@ function StrategyArticle({
               </div>
               <strong>{alloc.allocationPercent.toFixed(0)}%</strong>
               <ChainBadge chain={chain} />
-            </div>
+              <ArrowUpRight size={15} className="allocation-go" aria-hidden="true" />
+            </a>
           );
         })}
       </div>
