@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Activity,
   ArrowRight,
   BellRing,
   CirclePause,
@@ -12,11 +11,14 @@ import {
   WandSparkles,
 } from "lucide-react";
 import {
+  BookHeader,
   ChainBadge,
-  CommandStrip,
-  EmptyState,
-  MetricTile,
+  Console,
+  PipelineRail,
+  phasedSteps,
   RiskPill,
+  type PipelinePhase,
+  type TapeStat,
 } from "@/components/site/ui";
 import { PoolIcon } from "@/components/site/PoolIcon";
 import {
@@ -69,6 +71,15 @@ const STATUS_TONE: Record<StrategyStatus, "ok" | "warn" | "info"> = {
   paused: "warn",
   archived: "info",
 };
+
+/** The composer's five council stages, keyed by the job stages each covers. */
+const COUNCIL_PHASES: PipelinePhase[] = [
+  { key: "screen", label: "Market screen", stages: ["starting", "fetching_data", "filtering_pools"] },
+  { key: "deep", label: "Security deep-dive", stages: ["deep_analysis"] },
+  { key: "proposal", label: "Lead proposal", stages: ["lead_proposer"] },
+  { key: "review", label: "Adversarial review", stages: ["reviewers"] },
+  { key: "revision", label: "Revision & guardrails", stages: ["lead_revision", "finalizing"] },
+];
 
 function describeStage(stage?: string): string {
   if (!stage) return "ready";
@@ -258,6 +269,24 @@ export default function StrategiesPage() {
     }
   }
 
+  const tape: TapeStat[] = [
+    ...(isAuthed && !plan.isLoading
+      ? ([
+          { label: "plan", value: plan.tier, tone: "info" },
+          {
+            label: "used",
+            value: `${plan.usage.strategiesThisMonth}/${strategyUnlimited ? "∞" : plan.capabilities.monthlyStrategies}`,
+            tone: atStrategyCap ? "danger" : "plain",
+          },
+          { label: "capital", value: formatMoney(totalCapital), tone: "ok" },
+          { label: "alerts", value: String(openAlerts), tone: openAlerts > 0 ? "danger" : "plain" },
+        ] as TapeStat[])
+      : []),
+    ...(draftStrategy ? ([{ label: "draft apy", value: formatPct(draftApy), tone: "warn" }] as TapeStat[]) : []),
+  ];
+
+  const generating = job.status === "running";
+
   return (
     <div className="page">
       <div className="page-title">
@@ -273,272 +302,205 @@ export default function StrategiesPage() {
         </div>
       </div>
 
-      <CommandStrip
+      <Console
         file="file/03.strategies"
-        items={[
-          { label: "composer", value: job.status === "running" ? "running" : "ready", tone: job.status === "running" ? "warn" : "ok" },
+        chips={[
+          { label: "composer", value: generating ? "running" : "ready", tone: generating ? "warn" : "ok" },
           { label: "analyst panel", value: "online", tone: "info" },
-          { label: "safety guardrails", value: "active", tone: "danger" },
+          { label: "guardrails", value: "active", tone: "danger" },
         ]}
-      />
-
-      {!plan.isLoading && isAuthed ? (
-        <div className="plan-strip">
-          <span className={`plan-strip-tag tier-${plan.tier}`}>{plan.tier}</span>
-          <strong>{plan.usage.strategiesThisMonth}</strong>
-          <span>
-            of {strategyUnlimited ? "∞" : plan.capabilities.monthlyStrategies} strategies used this month
-          </span>
-          <Link href="/account/alerts" style={{ marginLeft: "auto" }}>Manage alert channels →</Link>
-          {plan.tier !== "ultra" ? (
-            <Link href="/plans">Upgrade →</Link>
-          ) : null}
-        </div>
-      ) : null}
-
-      <div className="metric-grid" style={{ marginBottom: 18 }}>
-        <MetricTile label="Active capital" value={formatMoney(totalCapital)} icon={Activity} tone="#6ee7b7" />
-        <MetricTile
-          label="Open alerts"
-          value={String(openAlerts)}
-          icon={BellRing}
-          tone={openAlerts > 0 ? "#fb7185" : "#fbbf24"}
-        />
-        <MetricTile
-          label="Draft APY"
-          value={draftStrategy ? formatPct(draftApy) : "—"}
-          icon={WandSparkles}
-          tone="#60a5fa"
-        />
-        <MetricTile label="Active mandates" value={String(activeCount)} icon={RefreshCw} tone="#fbbf24" />
-      </div>
-
-      <div className="strategy-layout">
-        <div className="strategy-stack">
-          {authStatus === "checking" || isLoading ? (
-            <EmptyState icon={RefreshCw} title="Loading mandates" body="Reading wallet-scoped strategies…" />
-          ) : !isAuthed ? (
-            <EmptyState
-              icon={WandSparkles}
-              title="Draft your first mandate"
-              body="Use the composer on the right — set your budget and risk band, then hit Generate. We'll prompt your wallet for a one-time authorization signature, then build a custom-weighted allocation."
-            />
-          ) : strategies.length === 0 ? (
-            <EmptyState
-              icon={WandSparkles}
-              title="No allocations under monitoring"
-              body="Use the composer on the right to draft a mandate. Once you accept the proposal, it shows up here for monitoring."
-            />
-          ) : (
-            <>
-              {listError ? (
-                <div className="ticker">
-                  <span className="severity-medium">{listError}</span>
-                </div>
-              ) : null}
-              {scanSummary ? (
-                <div className="ticker">
-                  <span>{scanSummary}</span>
-                </div>
-              ) : null}
-              {strategies.map((strategy) => (
-                <StrategyArticle
-                  key={strategy.id}
-                  strategy={strategy}
-                  onScan={() => handleScan(strategy.id)}
-                  scanBusy={scanBusy}
-                  onPause={() => updateStatus(strategy.id, "paused").catch(() => {})}
-                  onResume={() => updateStatus(strategy.id, "active").catch(() => {})}
-                  onArchive={() => updateStatus(strategy.id, "archived").catch(() => {})}
-                  onDelete={() => {
-                    if (confirm("Delete this allocation and all related alerts?")) {
-                      deleteStrategy(strategy.id).catch(() => {});
-                    }
-                  }}
-                />
-              ))}
-              <div className="filter-row" style={{ justifyContent: "flex-end" }}>
-                <button type="button" className="ghost-button" onClick={() => refetch()}>
-                  <RefreshCw size={16} aria-hidden="true" /> Refresh list
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => handleScan()}
-                  disabled={scanBusy || activeCount === 0}
-                >
-                  <BellRing size={16} aria-hidden="true" />
-                  {scanBusy ? "Reviewing…" : "Run monitor"}
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-
-        <aside className="boost-panel">
-          <p className="eyebrow">Allocation Composer</p>
-          <h2 style={{ margin: "0 0 12px", fontSize: 30, lineHeight: 1.06 }}>Draft a new mandate</h2>
-          <div className="sim-controls">
-            <label>
-              Budget (USD)
-              <input
-                className="number-input"
-                type="number"
-                min={1000}
-                max={10_000_000}
-                step={1000}
-                value={budget}
-                onChange={(event) => setBudget(Math.max(1000, Number(event.target.value) || 0))}
-              />
-            </label>
-            <label>
-              Risk band
-              {plan.capabilities.riskBandSelection ? null : (
-                <small style={{ color: "var(--soft)", display: "block", marginTop: 2, fontSize: 11, fontWeight: 500 }}>
-                  Locked on Free — <Link href="/plans" style={{ color: "var(--mint)" }}>upgrade</Link>
-                </small>
-              )}
-              <select
-                className="select-input"
-                value={risk}
-                onChange={(event) => setRisk(event.target.value as RiskBand)}
-                disabled={!plan.capabilities.riskBandSelection}
-              >
-                <option value="Conservative">Conservative</option>
-                <option value="Balanced">Balanced</option>
-                <option value="Asymmetric">Asymmetric</option>
-              </select>
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--muted)" }}>
-              <input
-                type="checkbox"
-                checked={plan.capabilities.stablecoinToggle ? stableOnly : false}
-                onChange={(event) => setStableOnly(event.target.checked)}
-                disabled={!plan.capabilities.stablecoinToggle}
-              />
-              Stablecoin sleeves only
-              {!plan.capabilities.stablecoinToggle ? (
-                <Link href="/plans" style={{ color: "var(--mint)", fontSize: 11, marginLeft: 6 }}>
-                  Pro+
-                </Link>
-              ) : null}
-            </label>
-            {plan.capabilities.customApyMode ? (
-              <label style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--muted)" }}>
-                <input
-                  type="checkbox"
-                  checked={customApyEnabled}
-                  onChange={(event) => setCustomApyEnabled(event.target.checked)}
-                />
-                Custom APY range (Ultra)
-              </label>
-            ) : null}
-            {plan.capabilities.customApyMode && customApyEnabled ? (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <label>
-                  Min APY %
-                  <input
-                    className="number-input"
-                    type="number"
-                    min={0.5}
-                    max={400}
-                    step={0.5}
-                    value={customApyMin}
-                    onChange={(event) =>
-                      setCustomApyMin(Math.max(0.5, Number(event.target.value) || 0.5))
-                    }
-                  />
-                </label>
-                <label>
-                  Max APY %
-                  <input
-                    className="number-input"
-                    type="number"
-                    min={1}
-                    max={500}
-                    step={0.5}
-                    value={customApyMax}
-                    onChange={(event) =>
-                      setCustomApyMax(Math.max(1, Number(event.target.value) || 1))
-                    }
-                  />
-                </label>
-              </div>
-            ) : null}
-            <button
-              className="primary-button"
-              type="button"
-              onClick={generate}
-              disabled={
-                job.status === "running" ||
-                authStatus === "signing" ||
-                authStatus === "checking" ||
-                (isAuthed && !plan.isLoading && atStrategyCap)
-              }
-            >
-              <WandSparkles size={18} aria-hidden="true" />
-              {job.status === "running"
-                ? "Generating…"
-                : authStatus === "checking"
-                  ? "Loading session…"
-                  : authStatus === "signing"
-                    ? "Confirm in wallet…"
-                    : isAuthed && atStrategyCap
-                      ? "Monthly cap reached"
-                      : "Generate draft"}
-            </button>
-            {isAuthed &&
-            !plan.isLoading &&
-            atStrategyCap ? (
-              <Link
-                href="/plans"
-                className="ghost-button"
-                style={{ justifyContent: "center" }}
-              >
-                Upgrade for more strategies
-              </Link>
+        tape={tape}
+      >
+        <div className="desk-title">
+          <div>
+            <p className="eyebrow">Allocation composer</p>
+            <h2>Draft a new mandate</h2>
+          </div>
+          <div className="desk-links">
+            {isAuthed ? <Link href="/account/alerts">Manage alert channels →</Link> : null}
+            {isAuthed && !plan.isLoading && plan.tier !== "ultra" ? (
+              <Link href="/plans">Upgrade →</Link>
             ) : null}
           </div>
+        </div>
 
-          {job.status !== "idle" ? (
-            <div style={{ marginTop: 16 }}>
-              <div className="audit-progress" aria-label={`${job.progress}% complete`}>
-                <i style={{ width: `${job.progress}%` }} />
-              </div>
-              <div className="composer-progress">
-                <p>
-                  <strong>{describeStage(job.stage ?? job.status)}</strong>
-                  {job.status !== "error" && job.message ? ` · ${job.message}` : null}
-                </p>
-                {(job.events ?? [])
-                  .filter((ev) => job.status !== "error" || ev.stage !== "error")
-                  .slice(-6)
-                  .map((ev, i) => <p key={`${ev.ts}-${i}`}>· {ev.message}</p>)}
-                {job.error ? (
-                  <p className="severity-high" role="alert">
-                    {job.error}
-                  </p>
-                ) : null}
-              </div>
-            </div>
+        <div className="ticket">
+          <label>
+            Budget (USD)
+            <input
+              className="number-input"
+              type="number"
+              min={1000}
+              max={10_000_000}
+              step={1000}
+              value={budget}
+              onChange={(event) => setBudget(Math.max(1000, Number(event.target.value) || 0))}
+            />
+          </label>
+          <label>
+            Risk band
+            <select
+              className="select-input"
+              value={risk}
+              onChange={(event) => setRisk(event.target.value as RiskBand)}
+              disabled={!plan.capabilities.riskBandSelection}
+            >
+              <option value="Conservative">Conservative</option>
+              <option value="Balanced">Balanced</option>
+              <option value="Asymmetric">Asymmetric</option>
+            </select>
+          </label>
+          <span className="ticket-check">
+            <input
+              id="stable-only"
+              type="checkbox"
+              checked={plan.capabilities.stablecoinToggle ? stableOnly : false}
+              onChange={(event) => setStableOnly(event.target.checked)}
+              disabled={!plan.capabilities.stablecoinToggle}
+            />
+            <label htmlFor="stable-only" style={{ cursor: "pointer" }}>
+              Stablecoin sleeves only
+            </label>
+            {!plan.capabilities.stablecoinToggle ? (
+              <Link href="/plans" style={{ color: "var(--mint)", fontSize: 11 }}>
+                Pro+
+              </Link>
+            ) : null}
+          </span>
+          {plan.capabilities.customApyMode ? (
+            <span className="ticket-check">
+              <input
+                id="custom-apy"
+                type="checkbox"
+                checked={customApyEnabled}
+                onChange={(event) => setCustomApyEnabled(event.target.checked)}
+              />
+              <label htmlFor="custom-apy" style={{ cursor: "pointer" }}>
+                Custom APY range
+              </label>
+            </span>
           ) : null}
+          {plan.capabilities.customApyMode && customApyEnabled ? (
+            <>
+              <label>
+                Min APY %
+                <input
+                  className="number-input"
+                  type="number"
+                  style={{ minWidth: 110 }}
+                  min={0.5}
+                  max={400}
+                  step={0.5}
+                  value={customApyMin}
+                  onChange={(event) =>
+                    setCustomApyMin(Math.max(0.5, Number(event.target.value) || 0.5))
+                  }
+                />
+              </label>
+              <label>
+                Max APY %
+                <input
+                  className="number-input"
+                  type="number"
+                  style={{ minWidth: 110 }}
+                  min={1}
+                  max={500}
+                  step={0.5}
+                  value={customApyMax}
+                  onChange={(event) =>
+                    setCustomApyMax(Math.max(1, Number(event.target.value) || 1))
+                  }
+                />
+              </label>
+            </>
+          ) : null}
+          <button
+            className="primary-button"
+            type="button"
+            onClick={generate}
+            disabled={
+              generating ||
+              authStatus === "signing" ||
+              authStatus === "checking" ||
+              (isAuthed && !plan.isLoading && atStrategyCap)
+            }
+          >
+            <WandSparkles size={18} aria-hidden="true" />
+            {generating
+              ? "Generating…"
+              : authStatus === "checking"
+                ? "Loading session…"
+                : authStatus === "signing"
+                  ? "Confirm in wallet…"
+                  : isAuthed && atStrategyCap
+                    ? "Monthly cap reached"
+                    : "Generate draft"}
+          </button>
+        </div>
 
-          {draftStrategy ? (
-            <div style={{ marginTop: 16 }}>
-              <div className="ticker">
-                <span>
-                  Projected APY <b>{formatPct(draftStrategy.projectedApy)}</b>
-                </span>
-                <span>
-                  Yearly <b>{formatMoney(draftStrategy.projectedYearlyReturn)}</b>
-                </span>
+        {!plan.capabilities.riskBandSelection && !plan.isLoading ? (
+          <p className="ticket-note">
+            Risk band and stablecoin filters are locked on Free —{" "}
+            <Link href="/plans" style={{ color: "var(--mint)" }}>
+              upgrade
+            </Link>{" "}
+            to steer the council.
+          </p>
+        ) : null}
+
+        <PipelineRail steps={phasedSteps(COUNCIL_PHASES, job.status, job.stage)} />
+
+        {isAuthed && !plan.isLoading && atStrategyCap ? (
+          <p className="ticket-note">
+            Monthly strategy cap reached on the {plan.tier} plan —{" "}
+            <Link href="/plans" style={{ color: "var(--mint)" }}>
+              upgrade for more
+            </Link>
+            .
+          </p>
+        ) : null}
+
+        {job.status !== "idle" ? (
+          <div>
+            <div className="audit-progress" aria-label={`${job.progress}% complete`}>
+              <i style={{ width: `${job.progress}%` }} />
+            </div>
+            <div className="composer-progress" style={{ marginTop: 10 }}>
+              <p>
+                <strong>{describeStage(job.stage ?? job.status)}</strong>
+                {job.status !== "error" && job.message ? ` · ${job.message}` : null}
+              </p>
+              {(job.events ?? [])
+                .filter((ev) => job.status !== "error" || ev.stage !== "error")
+                .slice(-6)
+                .map((ev, i) => <p key={`${ev.ts}-${i}`}>· {ev.message}</p>)}
+              {job.error ? (
+                <p className="severity-high" role="alert">
+                  {job.error}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {draftStrategy ? (
+          <div className="draft-board">
+            <div className="draft-head">
+              <div className="draft-figures">
+                <div>
+                  <small>Projected APY</small>
+                  <b>{formatPct(draftStrategy.projectedApy)}</b>
+                </div>
+                <div>
+                  <small>Projected yearly</small>
+                  <b>{formatMoney(draftStrategy.projectedYearlyReturn)}</b>
+                </div>
+                <div>
+                  <small>Markets</small>
+                  <b>{draftStrategy.allocations.length}</b>
+                </div>
               </div>
-              <div className="allocation-list" style={{ marginTop: 14 }}>
-                {draftStrategy.allocations.map((alloc) => (
-                  <DraftAllocation key={`${alloc.poolId}-${alloc.protocol}`} allocation={alloc} />
-                ))}
-              </div>
-              <div className="filter-row" style={{ marginTop: 14 }}>
+              <div className="filter-row">
                 <button
                   type="button"
                   className="secondary-button"
@@ -557,20 +519,92 @@ export default function StrategiesPage() {
                   {activateBusy ? "Activating…" : "Place under monitor"}
                 </button>
               </div>
-              {draftStrategy.warnings.length > 0 ? (
-                <p style={{ marginTop: 10, fontSize: 12, color: "var(--gold)" }}>
-                  {draftStrategy.warnings[0]}
-                </p>
-              ) : null}
             </div>
-          ) : (
-            <button className="ghost-button" type="button" style={{ marginTop: 16 }}>
-              Generated draft will appear here
-              <ArrowRight size={16} aria-hidden="true" />
-            </button>
-          )}
-        </aside>
-      </div>
+            <div className="draft-grid">
+              {draftStrategy.allocations.map((alloc) => (
+                <DraftAllocation key={`${alloc.poolId}-${alloc.protocol}`} allocation={alloc} />
+              ))}
+            </div>
+            {draftStrategy.warnings.length > 0 ? (
+              <p style={{ margin: 0, fontSize: 12, color: "var(--gold)" }}>
+                {draftStrategy.warnings[0]}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </Console>
+
+      <BookHeader
+        index="03.1"
+        title="Mandates under monitor"
+        meta={
+          strategies.length > 0
+            ? `${strategies.length} on file · ${activeCount} active`
+            : undefined
+        }
+        actions={
+          isAuthed && strategies.length > 0 ? (
+            <>
+              <button type="button" className="ghost-button" onClick={() => refetch()}>
+                <RefreshCw size={16} aria-hidden="true" /> Refresh
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => handleScan()}
+                disabled={scanBusy || activeCount === 0}
+              >
+                <BellRing size={16} aria-hidden="true" />
+                {scanBusy ? "Reviewing…" : "Run monitor"}
+              </button>
+            </>
+          ) : undefined
+        }
+      />
+
+      {authStatus === "checking" || isLoading ? (
+        <p className="book-empty">Reading wallet-scoped strategies…</p>
+      ) : !isAuthed ? (
+        <p className="book-empty">
+          Set your budget and risk in the composer above, then hit Generate — we&apos;ll
+          prompt your wallet for a one-time signature. Accepted mandates land here under
+          round-the-clock monitoring.
+        </p>
+      ) : strategies.length === 0 ? (
+        <p className="book-empty">
+          No mandates on file yet. Accept a draft from the composer above and it moves
+          here for monitoring.
+        </p>
+      ) : (
+        <div className="strategy-stack">
+          {listError ? (
+            <div className="ticker" style={{ marginTop: 0 }}>
+              <span className="severity-medium">{listError}</span>
+            </div>
+          ) : null}
+          {scanSummary ? (
+            <div className="ticker" style={{ marginTop: 0 }}>
+              <span>{scanSummary}</span>
+            </div>
+          ) : null}
+          {strategies.map((strategy) => (
+            <StrategyArticle
+              key={strategy.id}
+              strategy={strategy}
+              onScan={() => handleScan(strategy.id)}
+              scanBusy={scanBusy}
+              onPause={() => updateStatus(strategy.id, "paused").catch(() => {})}
+              onResume={() => updateStatus(strategy.id, "active").catch(() => {})}
+              onArchive={() => updateStatus(strategy.id, "archived").catch(() => {})}
+              onDelete={() => {
+                if (confirm("Delete this allocation and all related alerts?")) {
+                  deleteStrategy(strategy.id).catch(() => {});
+                }
+              }}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

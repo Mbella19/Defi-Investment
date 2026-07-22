@@ -1,21 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Gauge, Plus, Search, X } from "lucide-react";
 import {
-  Activity,
-  Banknote,
-  Gauge,
-  Plus,
-  Search,
-  TrendingDown,
-  TrendingUp,
-  X,
-} from "lucide-react";
-import {
+  BookHeader,
   ChainBadge,
-  CommandStrip,
-  EmptyState,
-  MetricTile,
+  Console,
+  type TapeStat,
 } from "@/components/site/ui";
 import { PoolIcon } from "@/components/site/PoolIcon";
 import {
@@ -216,6 +207,22 @@ export default function SimulatorPage() {
   }, [result]);
 
   const headlineApy = result?.weightedApy ?? 0;
+  const weightsOff = Math.abs(totalWeight - 100) > 1;
+
+  const tape: TapeStat[] = [
+    { label: "scenario end", value: result ? formatMoney(result.endUsd) : "—", tone: result ? "ok" : "plain" },
+    {
+      label: "return",
+      value: result ? formatPct(result.returnPct, true) : "—",
+      tone: result ? (result.returnPct >= 0 ? "ok" : "danger") : "plain",
+    },
+    {
+      label: "impact",
+      value: result ? formatMoney(result.scenarioImpactUsd) : "—",
+      tone: result ? "warn" : "plain",
+    },
+    { label: "w. apy", value: result ? formatPct(headlineApy) : "—", tone: "plain" },
+  ];
 
   return (
     <div className="page">
@@ -231,15 +238,6 @@ export default function SimulatorPage() {
         </div>
       </div>
 
-      <CommandStrip
-        file="file/06a.simulator"
-        items={[
-          { label: "scenario", value: scenario, tone: scenario === "baseline" ? "ok" : "warn" },
-          { label: "horizon", value: `${horizon}d`, tone: "info" },
-          { label: "weights", value: `${totalWeight.toFixed(0)}%`, tone: Math.abs(totalWeight - 100) > 1 ? "danger" : "ok" },
-        ]}
-      />
-
       {!plan.isLoading && !plan.capabilities.toolSimulator ? (
         <Paywall
           title="Scenario simulator unlocks on Pro"
@@ -250,140 +248,54 @@ export default function SimulatorPage() {
         />
       ) : null}
 
-      <div className="metric-grid" style={{ marginBottom: 18 }}>
-        <MetricTile
-          label="Scenario end"
-          value={result ? formatMoney(result.endUsd) : "—"}
-          icon={TrendingUp}
-          tone="#6ee7b7"
-        />
-        <MetricTile
-          label="Return"
-          value={result ? formatPct(result.returnPct, true) : "—"}
-          icon={Activity}
-          tone="#60a5fa"
-        />
-        <MetricTile
-          label="Scenario impact"
-          value={result ? formatMoney(result.scenarioImpactUsd) : "—"}
-          icon={TrendingDown}
-          tone="#fb7185"
-        />
-        <MetricTile
-          label="Weighted APY"
-          value={result ? formatPct(headlineApy) : "—"}
-          icon={Gauge}
-          tone="#fbbf24"
-        />
-      </div>
-
-      {err ? (
-        <div className="ticker" style={{ marginBottom: 16 }}>
-          <span className="severity-high">{err}</span>
-        </div>
-      ) : null}
-
-      <div className="tool-layout">
-        <div className="tool-stack">
-          <div className="projection-chart">
-            {seriesPath ? (
-              <svg viewBox={`0 0 ${seriesPath.w} ${seriesPath.h}`} role="img" aria-label="Scenario estimate">
-                <path
-                  d={seriesPath.base}
-                  fill="none"
-                  stroke="#64748b"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  strokeDasharray="8 8"
-                />
-                <path d={seriesPath.stress} fill="none" stroke="#6ee7b7" strokeWidth="4" strokeLinecap="round" />
-                <path
-                  d={`${seriesPath.stress} L ${seriesPath.w} ${seriesPath.h} L 0 ${seriesPath.h} Z`}
-                  fill="#6ee7b7"
-                  opacity="0.12"
-                />
-              </svg>
-            ) : (
-              <span style={{ color: "var(--muted)", fontSize: 13 }}>
-                Run a simulation to render the stressed vs. baseline scenario curves.
-              </span>
-            )}
+      <Console
+        file="file/06a.simulator"
+        chips={[
+          { label: "scenario", value: scenario, tone: scenario === "baseline" ? "ok" : "warn" },
+          { label: "horizon", value: `${horizon}d`, tone: "info" },
+          { label: "weights", value: `${totalWeight.toFixed(0)}%`, tone: weightsOff ? "danger" : "ok" },
+        ]}
+        tape={tape}
+      >
+        <div className="desk-title">
+          <div>
+            <p className="eyebrow">Scenario console</p>
+            <h2>Stress the allocation.</h2>
           </div>
-
-          {result ? (
-            <div className="strategy-card">
-              <h3>Allocation breakdown</h3>
-              <p>
-                Max drawdown <strong>{formatPct(result.maxDrawdownPct)}</strong> · baseline end{" "}
-                <strong>{formatMoney(result.baselineEndUsd)}</strong>.
-              </p>
-              <div className="allocation-list">
-                {result.poolBreakdown.map((row) => {
-                  const chain = chainIdFromName(row.chain);
-                  return (
-                    <div className="allocation-row" key={`row-${row.poolId}`}>
-                      <div className="token-cell">
-                        <PoolIcon symbol={row.symbol} protocol={row.protocol} />
-                        <div>
-                          <strong>{row.symbol}</strong>
-                          <span>
-                            {row.protocol} · mean APY {formatPct(row.meanApy)}
-                          </span>
-                        </div>
-                      </div>
-                      <strong>{row.weightPct.toFixed(0)}%</strong>
-                      <ChainBadge chain={chain} />
-                    </div>
-                  );
-                })}
-              </div>
-              {result.skipped.length > 0 ? (
-                <p className="severity-medium" style={{ marginTop: 10, fontSize: 12 }}>
-                  Skipped (insufficient history): {result.skipped.join(", ")}
-                </p>
-              ) : null}
-            </div>
-          ) : (
-            <EmptyState
-              icon={Gauge}
-              title="No simulation yet"
-              body="Adjust principal, horizon, and shock scenario, then press Run simulation. The engine block-bootstraps historical APY observations; results are estimates, not forecasts."
-            />
-          )}
         </div>
 
-        <aside className="boost-panel">
-          <p className="eyebrow">Inputs</p>
-          <div className="sim-controls">
-            <label>
-              Principal (USD)
-              <input
-                className="number-input"
-                type="number"
-                min={1000}
-                step={1000}
-                value={principal}
-                onChange={(event) => setPrincipal(Math.max(1000, Number(event.target.value) || 0))}
-              />
-            </label>
-            <label>
-              Horizon
-              <select
-                className="select-input"
-                value={horizon}
-                onChange={(event) => setHorizon(Number(event.target.value))}
-              >
-                {HORIZONS.map((h) => (
-                  <option key={h.label} value={h.days}>
-                    {h.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="scenario-grid">
+        <div className="ticket">
+          <label>
+            Principal (USD)
+            <input
+              className="number-input"
+              type="number"
+              min={1000}
+              step={1000}
+              value={principal}
+              onChange={(event) => setPrincipal(Math.max(1000, Number(event.target.value) || 0))}
+            />
+          </label>
+          <label>
+            Horizon
+            <select
+              className="select-input"
+              value={horizon}
+              onChange={(event) => setHorizon(Number(event.target.value))}
+            >
+              {HORIZONS.map((h) => (
+                <option key={h.label} value={h.days}>
+                  {h.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Shock scenario
+            <span className="ticket-chips">
               {SCENARIOS.map((s) => (
                 <button
-                  className={`tab-button ${scenario === s.key ? "active" : ""}`}
+                  className={`chip-button ${scenario === s.key ? "active" : ""}`}
                   key={s.key}
                   type="button"
                   onClick={() => setScenario(s.key)}
@@ -392,129 +304,203 @@ export default function SimulatorPage() {
                   {s.label}
                 </button>
               ))}
-            </div>
-            <button
-              type="button"
-              className="primary-button"
-              onClick={simulate}
-              disabled={running || allocations.length === 0}
-            >
-              <Gauge size={17} aria-hidden="true" />
-              {running ? "Simulating…" : "Run simulation"}
-            </button>
-          </div>
-
-          <div className="ticker" style={{ marginTop: 18 }}>
-            <span>
-              <Banknote size={16} aria-hidden="true" />
-              Total weight <b>{totalWeight.toFixed(0)}%</b>
             </span>
-          </div>
+          </label>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={simulate}
+            disabled={running || allocations.length === 0}
+          >
+            <Gauge size={17} aria-hidden="true" />
+            {running ? "Simulating…" : "Run simulation"}
+          </button>
+        </div>
 
-          <p className="eyebrow" style={{ marginTop: 18 }}>
-            Allocations ({allocations.length}/{MAX_ALLOCATIONS})
+        {err ? (
+          <p className="ticket-note severity-high" role="alert" style={{ margin: 0 }}>
+            {err}
           </p>
-          <div className="allocation-list" style={{ marginBottom: 14 }}>
-            {allocations.length === 0 ? (
-              <span style={{ fontSize: 13, color: "var(--muted)" }}>
-                Add pools below — weights will balance equally.
-              </span>
-            ) : (
-              allocations.map((alloc) => {
-                const chain = chainIdFromName(alloc.pool.chain);
-                return (
-                  <div className="allocation-row" key={`alloc-${alloc.pool.poolId}`}>
-                    <div className="token-cell">
-                      <PoolIcon
-                        symbol={alloc.pool.symbol}
-                        protocol={alloc.pool.protocol}
-                        category={alloc.pool.category}
-                      />
-                      <div>
-                        <strong>{alloc.pool.symbol}</strong>
-                        <span>
-                          {alloc.pool.protocol} · {formatPct(alloc.pool.apy)}
-                        </span>
-                      </div>
-                    </div>
-                    <input
-                      type="number"
-                      className="number-input"
-                      style={{ width: 70, minHeight: 36, padding: "0 8px" }}
-                      min={0}
-                      max={100}
-                      value={alloc.weightPct}
-                      onChange={(event) => changeWeight(alloc.pool.poolId, Number(event.target.value) || 0)}
-                    />
-                    <button
-                      type="button"
-                      className="ghost-button"
-                      style={{ minHeight: 36, padding: "0 8px" }}
-                      aria-label="Remove"
-                      onClick={() => removePool(alloc.pool.poolId)}
-                    >
-                      <X size={14} aria-hidden="true" />
-                      <ChainBadge chain={chain} />
-                    </button>
-                  </div>
-                );
-              })
-            )}
-          </div>
+        ) : null}
 
-          <p className="eyebrow">Add pool</p>
-          <div style={{ position: "relative", marginBottom: 12 }}>
-            <Search
-              size={14}
-              aria-hidden="true"
-              style={{ position: "absolute", top: "50%", left: 12, transform: "translateY(-50%)", color: "var(--muted)" }}
-            />
-            <input
-              className="search-input"
-              style={{ paddingLeft: 32, width: "100%", minWidth: 0 }}
-              placeholder="Search pool, protocol, chain"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </div>
-
-          {poolsErr ? (
-            <span className="severity-high" style={{ fontSize: 12 }}>
-              {poolsErr}
-            </span>
-          ) : (
-            <div className="allocation-list" style={{ maxHeight: 280, overflowY: "auto" }}>
-              {filtered.length === 0 ? (
+        <div className="desk-grid">
+          <div className="desk-col">
+            <p className="eyebrow">
+              Allocations ({allocations.length}/{MAX_ALLOCATIONS}) · total weight{" "}
+              {totalWeight.toFixed(0)}%
+            </p>
+            <div className="allocation-list" style={{ marginTop: 0 }}>
+              {allocations.length === 0 ? (
                 <span style={{ fontSize: 13, color: "var(--muted)" }}>
-                  {pools.length === 0 ? "Loading…" : "No matches."}
+                  Add pools from the shelf — weights balance equally.
                 </span>
               ) : (
-                filtered.map((pool) => (
-                  <button
-                    key={`add-${pool.poolId}`}
-                    type="button"
-                    className="allocation-row"
-                    disabled={allocations.length >= MAX_ALLOCATIONS}
-                    onClick={() => addPool(pool)}
-                  >
-                    <div className="token-cell">
-                      <PoolIcon symbol={pool.symbol} protocol={pool.protocol} category={pool.category} />
-                      <div>
-                        <strong>{pool.symbol}</strong>
-                        <span>
-                          {pool.protocol} · {formatUsd(pool.tvlUsd)}
-                        </span>
+                allocations.map((alloc) => {
+                  const chain = chainIdFromName(alloc.pool.chain);
+                  return (
+                    <div className="allocation-row" key={`alloc-${alloc.pool.poolId}`}>
+                      <div className="token-cell">
+                        <PoolIcon
+                          symbol={alloc.pool.symbol}
+                          protocol={alloc.pool.protocol}
+                          category={alloc.pool.category}
+                        />
+                        <div>
+                          <strong>{alloc.pool.symbol}</strong>
+                          <span>
+                            {alloc.pool.protocol} · {formatPct(alloc.pool.apy)}
+                          </span>
+                        </div>
                       </div>
+                      <input
+                        type="number"
+                        className="number-input"
+                        style={{ width: 70, minHeight: 36, padding: "0 8px" }}
+                        min={0}
+                        max={100}
+                        value={alloc.weightPct}
+                        onChange={(event) => changeWeight(alloc.pool.poolId, Number(event.target.value) || 0)}
+                      />
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        style={{ minHeight: 36, padding: "0 8px" }}
+                        aria-label="Remove"
+                        onClick={() => removePool(alloc.pool.poolId)}
+                      >
+                        <X size={14} aria-hidden="true" />
+                        <ChainBadge chain={chain} />
+                      </button>
                     </div>
-                    <ChainBadge chain={chainIdFromName(pool.chain)} />
-                    <Plus size={16} aria-hidden="true" />
-                  </button>
-                ))
+                  );
+                })
               )}
             </div>
-          )}
-        </aside>
+          </div>
+
+          <div className="desk-col">
+            <p className="eyebrow">Add pool</p>
+            <div style={{ position: "relative" }}>
+              <Search
+                size={14}
+                aria-hidden="true"
+                style={{ position: "absolute", top: "50%", left: 12, transform: "translateY(-50%)", color: "var(--muted)" }}
+              />
+              <input
+                className="search-input"
+                style={{ paddingLeft: 32, width: "100%", minWidth: 0 }}
+                placeholder="Search pool, protocol, chain"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </div>
+
+            {poolsErr ? (
+              <span className="severity-high" style={{ fontSize: 12 }}>
+                {poolsErr}
+              </span>
+            ) : (
+              <div className="allocation-list" style={{ marginTop: 0, maxHeight: 280, overflowY: "auto" }}>
+                {filtered.length === 0 ? (
+                  <span style={{ fontSize: 13, color: "var(--muted)" }}>
+                    {pools.length === 0 ? "Loading…" : "No matches."}
+                  </span>
+                ) : (
+                  filtered.map((pool) => (
+                    <button
+                      key={`add-${pool.poolId}`}
+                      type="button"
+                      className="allocation-row"
+                      disabled={allocations.length >= MAX_ALLOCATIONS}
+                      onClick={() => addPool(pool)}
+                    >
+                      <div className="token-cell">
+                        <PoolIcon symbol={pool.symbol} protocol={pool.protocol} category={pool.category} />
+                        <div>
+                          <strong>{pool.symbol}</strong>
+                          <span>
+                            {pool.protocol} · {formatUsd(pool.tvlUsd)}
+                          </span>
+                        </div>
+                      </div>
+                      <ChainBadge chain={chainIdFromName(pool.chain)} />
+                      <Plus size={16} aria-hidden="true" />
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </Console>
+
+      <BookHeader
+        index="06a.1"
+        title="Scenario estimate"
+        meta={result ? `${result.horizonDays}d · ${SCENARIOS.find((s) => s.key === result.scenario)?.label ?? result.scenario}` : undefined}
+      />
+
+      <div className="projection-chart">
+        {seriesPath ? (
+          <svg viewBox={`0 0 ${seriesPath.w} ${seriesPath.h}`} role="img" aria-label="Scenario estimate">
+            <path
+              d={seriesPath.base}
+              fill="none"
+              stroke="#64748b"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeDasharray="8 8"
+            />
+            <path d={seriesPath.stress} fill="none" stroke="#6ee7b7" strokeWidth="4" strokeLinecap="round" />
+            <path
+              d={`${seriesPath.stress} L ${seriesPath.w} ${seriesPath.h} L 0 ${seriesPath.h} Z`}
+              fill="#6ee7b7"
+              opacity="0.12"
+            />
+          </svg>
+        ) : (
+          <span style={{ color: "var(--muted)", fontSize: 13, textAlign: "center", maxWidth: 520 }}>
+            Set principal, horizon, and shock scenario above, then run the simulation to
+            render the stressed vs. baseline curves. The engine block-bootstraps each
+            pool&apos;s historical APY — results are estimates, not forecasts.
+          </span>
+        )}
       </div>
+
+      {result ? (
+        <div className="strategy-card" style={{ marginTop: 14 }}>
+          <h3>Allocation breakdown</h3>
+          <p>
+            Max drawdown <strong>{formatPct(result.maxDrawdownPct)}</strong> · baseline end{" "}
+            <strong>{formatMoney(result.baselineEndUsd)}</strong>.
+          </p>
+          <div className="allocation-list">
+            {result.poolBreakdown.map((row) => {
+              const chain = chainIdFromName(row.chain);
+              return (
+                <div className="allocation-row" key={`row-${row.poolId}`}>
+                  <div className="token-cell">
+                    <PoolIcon symbol={row.symbol} protocol={row.protocol} />
+                    <div>
+                      <strong>{row.symbol}</strong>
+                      <span>
+                        {row.protocol} · mean APY {formatPct(row.meanApy)}
+                      </span>
+                    </div>
+                  </div>
+                  <strong>{row.weightPct.toFixed(0)}%</strong>
+                  <ChainBadge chain={chain} />
+                </div>
+              );
+            })}
+          </div>
+          {result.skipped.length > 0 ? (
+            <p className="severity-medium" style={{ marginTop: 10, fontSize: 12 }}>
+              Skipped (insufficient history): {result.skipped.join(", ")}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

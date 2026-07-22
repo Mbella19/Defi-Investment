@@ -4770,3 +4770,618 @@ button.wallet-modal-option:hover:not(:disabled) {
     grid-template-columns: 1fr;
   }
 }
+
+/* ================================================================
+   Console desk vocabulary — app workspace pages.
+   One instrument per page: a full-width console with a bezel rail
+   (file tag + status chips + telemetry tape), the input ticket,
+   a pipeline stage rail, and the "book" (results) below.
+   ================================================================ */
+
+/* App pages use workspace-scale headers; the landing hero keeps its own. */
+.page-title h1 {
+  font-size: clamp(27px, 3.2vw, 36px);
+  letter-spacing: -0.01em;
+}
+
+.page-title {
+  padding: 8px 0 18px;
+  margin-bottom: 22px;
+}
+
+.page-title p {
+  font-size: 14.5px;
+  max-width: 660px;
+  margin-top: 8px;
+}
+
+/* Quiet the marketing confetti behind working surfaces. */
+.site-shell:has(.desk) .pixel-field {
+  opacity: 0.12;
+}
+
+.desk {
+  position: relative;
+  margin-bottom: 26px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+
+.desk-bezel {
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+  background: rgba(5, 5, 7, 0.62);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+}
+
+.desk-bezel .command-file,
+.desk-bezel .command-chip {
+  border-right: 1px solid var(--line);
+}
+
+.desk-tape {
+  margin-left: auto;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+}
+
+.tape-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 13px;
+  border-left: 1px solid var(--line);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--soft);
+}
+
+.tape-item b {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+
+.tape-item[data-tone="ok"] b {
+  color: var(--mint);
+}
+
+.tape-item[data-tone="warn"] b {
+  color: var(--gold);
+}
+
+.tape-item[data-tone="danger"] b {
+  color: var(--coral);
+}
+
+.tape-item[data-tone="info"] b {
+  color: #7cc4ff;
+}
+
+.desk-body {
+  padding: 22px;
+  display: grid;
+  gap: 18px;
+}
+
+.desk-title {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.desk-title .eyebrow {
+  margin-bottom: 6px;
+}
+
+.desk-title h2 {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+}
+
+.desk-links {
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.desk-links a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.desk-links a:hover {
+  color: var(--ink);
+}
+
+/* The ticket: inputs side by side like an order form, CTA at the end. */
+.ticket {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 14px;
+  align-items: flex-end;
+}
+
+.ticket > label {
+  display: grid;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--soft);
+}
+
+.ticket .number-input,
+.ticket .select-input {
+  min-width: 150px;
+}
+
+.ticket-grow {
+  flex: 1 1 280px;
+}
+
+.ticket-grow input {
+  width: 100%;
+}
+
+.ticket-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  color: var(--muted);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.ticket-check input {
+  accent-color: var(--mint);
+  width: 15px;
+  height: 15px;
+}
+
+.ticket-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ticket-note {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--soft);
+}
+
+/* Pipeline rail: the stages of the run, lit as they execute. */
+.pipeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.pipeline-step {
+  flex: 1 1 150px;
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 3px;
+  padding: 10px 14px 12px;
+  border: 1px solid var(--line);
+  border-left-width: 0;
+  background: rgba(255, 255, 255, 0.02);
+  position: relative;
+}
+
+.pipeline-step:first-child {
+  border-left-width: 1px;
+  border-radius: 4px 0 0 4px;
+}
+
+.pipeline-step:last-child {
+  border-radius: 0 4px 4px 0;
+}
+
+.pipeline-step i {
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: var(--soft);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.pipeline-step strong {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pipeline-step span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pipeline-step[data-state="done"] {
+  background: rgba(110, 231, 183, 0.03);
+}
+
+.pipeline-step[data-state="done"] i {
+  color: var(--mint);
+}
+
+.pipeline-step[data-state="done"] strong {
+  color: var(--muted);
+}
+
+.pipeline-step[data-state="active"] {
+  background: rgba(110, 231, 183, 0.07);
+  border-color: rgba(110, 231, 183, 0.4);
+  border-left-width: 1px;
+  margin-left: -1px;
+}
+
+.pipeline-step[data-state="active"]:first-child {
+  margin-left: 0;
+}
+
+.pipeline-step[data-state="active"]::before {
+  content: "";
+  position: absolute;
+  inset: -1px -1px auto;
+  height: 2px;
+  background: var(--mint);
+}
+
+.pipeline-step[data-state="active"] i {
+  color: var(--mint);
+}
+
+.pipeline-step[data-state="active"] i::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  background: var(--mint);
+  animation: live-blink 1.4s steps(2, end) infinite;
+}
+
+.pipeline-step[data-state="active"] strong {
+  color: var(--ink);
+}
+
+.pipeline-step[data-state="error"] {
+  background: rgba(255, 69, 48, 0.06);
+  border-color: rgba(255, 69, 48, 0.45);
+  border-left-width: 1px;
+  margin-left: -1px;
+}
+
+.pipeline-step[data-state="error"]:first-child {
+  margin-left: 0;
+}
+
+.pipeline-step[data-state="error"] i,
+.pipeline-step[data-state="error"] strong {
+  color: var(--coral);
+}
+
+.desk-body .composer-progress {
+  margin-top: 0;
+}
+
+/* Draft board: a fresh proposal awaiting a decision. */
+.draft-board {
+  border: 1px solid rgba(110, 231, 183, 0.3);
+  background: rgba(110, 231, 183, 0.045);
+  border-radius: 6px;
+  padding: 18px;
+  display: grid;
+  gap: 16px;
+}
+
+.draft-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.draft-figures {
+  display: flex;
+  gap: 30px;
+  flex-wrap: wrap;
+}
+
+.draft-figures small {
+  display: block;
+  margin-bottom: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--soft);
+}
+
+.draft-figures b {
+  font-size: 30px;
+  line-height: 1;
+  color: var(--ink);
+}
+
+.draft-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+/* Desk grid: two working areas side by side inside a console. */
+.desk-grid {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.desk-col {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.desk-col .eyebrow {
+  margin-bottom: 2px;
+}
+
+/* Book: the section below the console holding results/records. */
+.book-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin: 34px 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.book-header-main {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.book-index {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--soft);
+}
+
+.book-header h2 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+}
+
+.book-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--soft);
+}
+
+.book-empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 62px;
+  padding: 12px 18px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.book-empty::before {
+  content: ">>";
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--soft);
+}
+
+/* Engine coverage strip (audit results). */
+.engine-row {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.engine-cell {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.engine-cell strong {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.engine-cell span {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--soft);
+}
+
+.engine-cell[data-live="true"] strong {
+  color: var(--ink);
+}
+
+.engine-cell[data-live="true"] span {
+  color: var(--mint);
+}
+
+/* Chain exposure strip (portfolio). */
+.exposure-strip {
+  display: flex;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.exposure-strip i {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+}
+
+.exposure-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.exposure-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.exposure-legend i {
+  width: 8px;
+  height: 8px;
+}
+
+.exposure-legend b {
+  color: var(--ink);
+}
+
+/* Selected rows inside a desk column: quiet mint edge, not the loud tab gradient. */
+.desk-col .allocation-row.tab-button.active {
+  background: rgba(110, 231, 183, 0.07);
+  border-color: rgba(110, 231, 183, 0.32);
+  justify-content: space-between;
+}
+
+/* Nested states inside a console lose their own panel chrome. */
+.desk-body .empty-state {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  min-height: 150px;
+}
+
+.desk-body .projection-chart {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.strategy-card {
+  transition: border-color 140ms ease;
+}
+
+.strategy-card:hover {
+  border-color: var(--line-strong);
+}
+
+@media (max-width: 1120px) {
+  .desk-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .engine-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .pipeline {
+    gap: 8px;
+  }
+
+  .pipeline-step {
+    flex: 1 1 44%;
+    border-left-width: 1px;
+    border-radius: 4px;
+  }
+
+  .pipeline-step[data-state="active"],
+  .pipeline-step[data-state="error"] {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .desk-tape {
+    margin-left: 0;
+    width: 100%;
+    border-top: 1px solid var(--line);
+  }
+
+  .tape-item:first-child {
+    border-left: 0;
+  }
+
+  .desk-body {
+    padding: 16px;
+  }
+
+  .draft-grid,
+  .engine-row {
+    grid-template-columns: 1fr;
+  }
+
+  .ticket > label {
+    flex: 1 1 100%;
+  }
+
+  .ticket .number-input,
+  .ticket .select-input {
+    width: 100%;
+  }
+
+  .ticket .primary-button {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+}

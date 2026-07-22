@@ -180,6 +180,137 @@ export function CommandStrip({
   );
 }
 
+export type StatusTone = "ok" | "warn" | "danger" | "info";
+
+export interface ConsoleChip {
+  label: string;
+  value: string;
+  tone?: StatusTone;
+}
+
+export interface TapeStat {
+  label: string;
+  value: string;
+  tone?: StatusTone | "plain";
+}
+
+/**
+ * Full-width instrument panel: bezel rail (file tag + status chips +
+ * right-aligned telemetry tape) over a padded body. One per page.
+ */
+export function Console({
+  file,
+  chips = [],
+  tape = [],
+  children,
+}: {
+  file: string;
+  chips?: ConsoleChip[];
+  tape?: TapeStat[];
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="desk">
+      <header className="desk-bezel" aria-label={`${file} console status`}>
+        <span className="command-file">{file}</span>
+        {chips.map((chip) => (
+          <span className={`command-chip tone-${chip.tone ?? "info"}`} key={chip.label}>
+            <em>{chip.label}</em>
+            <strong>{chip.value}</strong>
+          </span>
+        ))}
+        {tape.length > 0 ? (
+          <span className="desk-tape">
+            {tape.map((stat) => (
+              <span className="tape-item" data-tone={stat.tone ?? "plain"} key={stat.label}>
+                {stat.label}
+                <b>{stat.value}</b>
+              </span>
+            ))}
+          </span>
+        ) : null}
+      </header>
+      <div className="desk-body">{children}</div>
+    </section>
+  );
+}
+
+export type PipelineState = "idle" | "active" | "done" | "error";
+
+export interface PipelineStep {
+  key: string;
+  label: string;
+  state: PipelineState;
+  detail?: string;
+}
+
+export interface PipelinePhase {
+  key: string;
+  label: string;
+  /** Job stage identifiers this phase covers, in emit order. */
+  stages: string[];
+}
+
+/** Map a job's status + current stage onto pipeline step states. */
+export function phasedSteps(
+  phases: PipelinePhase[],
+  status: "idle" | "running" | "done" | "error",
+  stage?: string,
+): PipelineStep[] {
+  const found = phases.findIndex((phase) => phase.stages.includes(stage ?? ""));
+  const active = found === -1 ? 0 : found;
+  return phases.map((phase, index) => {
+    let state: PipelineState = "idle";
+    if (status === "done") {
+      state = "done";
+    } else if (status === "running") {
+      state = index < active ? "done" : index === active ? "active" : "idle";
+    } else if (status === "error") {
+      state = index < active ? "done" : index === active ? "error" : "idle";
+    }
+    return { key: phase.key, label: phase.label, state };
+  });
+}
+
+/** The stages of a run, lit as they execute. */
+export function PipelineRail({ steps }: { steps: PipelineStep[] }) {
+  return (
+    <ol className="pipeline">
+      {steps.map((step, index) => (
+        <li className="pipeline-step" data-state={step.state} key={step.key}>
+          <i>{String(index + 1).padStart(2, "0")}</i>
+          <strong>{step.label}</strong>
+          {step.detail ? <span>{step.detail}</span> : null}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** Section header for the records below a console. */
+export function BookHeader({
+  index,
+  title,
+  meta,
+  actions,
+}: {
+  index?: string;
+  title: string;
+  meta?: string;
+  actions?: React.ReactNode;
+}) {
+  return (
+    <div className="book-header">
+      <div className="book-header-main">
+        {index ? <span className="book-index">{index}</span> : null}
+        <h2>{title}</h2>
+        {meta ? <span className="book-meta">{meta}</span> : null}
+      </div>
+      {actions ? <div className="filter-row">{actions}</div> : null}
+    </div>
+  );
+}
+
 export function EmptyState({
   title,
   body,

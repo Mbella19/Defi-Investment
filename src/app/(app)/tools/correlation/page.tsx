@@ -4,10 +4,10 @@ import type React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { Network, Plus, Search, X } from "lucide-react";
 import {
+  BookHeader,
   ChainBadge,
-  CommandStrip,
-  EmptyState,
-  MetricTile,
+  Console,
+  type TapeStat,
 } from "@/components/site/ui";
 import { PoolIcon } from "@/components/site/PoolIcon";
 import {
@@ -172,6 +172,20 @@ export default function CorrelationPage() {
     return Number.isFinite(hi) ? hi : null;
   }, [matrix]);
 
+  const tape: TapeStat[] = [
+    { label: "mean", value: meanRel == null ? "—" : meanRel.toFixed(2), tone: "plain" },
+    {
+      label: "lowest pair",
+      value: lowestPair == null ? "—" : lowestPair.toFixed(2),
+      tone: lowestPair == null ? "plain" : "ok",
+    },
+    {
+      label: "highest pair",
+      value: highestPair == null ? "—" : highestPair.toFixed(2),
+      tone: highestPair == null ? "plain" : highestPair > 0.66 ? "danger" : "warn",
+    },
+  ];
+
   return (
     <div className="page">
       <div className="page-title">
@@ -186,15 +200,6 @@ export default function CorrelationPage() {
         </div>
       </div>
 
-      <CommandStrip
-        file="file/06b.correlation"
-        items={[
-          { label: "selected", value: String(selected.length), tone: "ok" },
-          { label: "window", value: `${windowDays}d`, tone: "info" },
-          { label: "limit", value: `${MAX_SELECTED} pools`, tone: "warn" },
-        ]}
-      />
-
       {!plan.isLoading && !plan.capabilities.toolCorrelation ? (
         <Paywall
           title="Correlation matrix unlocks on Pro"
@@ -205,42 +210,37 @@ export default function CorrelationPage() {
         />
       ) : null}
 
-      <div className="metric-grid" style={{ marginBottom: 18 }}>
-        <MetricTile label="Selected" value={String(selected.length)} icon={Network} tone="#60a5fa" />
-        <MetricTile
-          label="Mean relation"
-          value={meanRel == null ? "—" : meanRel.toFixed(2)}
-          icon={Network}
-          tone="#6ee7b7"
-        />
-        <MetricTile
-          label="Lowest pair"
-          value={lowestPair == null ? "—" : lowestPair.toFixed(2)}
-          icon={Network}
-          tone="#fbbf24"
-        />
-        <MetricTile
-          label="Highest pair"
-          value={highestPair == null ? "—" : highestPair.toFixed(2)}
-          icon={Network}
-          tone="#fb7185"
-        />
-      </div>
-
-      <div className="page-tools" style={{ marginBottom: 18 }}>
-        <div className="filter-row">
-          {WINDOWS.map((w) => (
-            <button
-              type="button"
-              key={w.label}
-              className={`chip-button ${windowDays === w.days ? "active" : ""}`}
-              onClick={() => setWindowDays(w.days)}
-            >
-              {w.label}
-            </button>
-          ))}
+      <Console
+        file="file/06b.correlation"
+        chips={[
+          { label: "selected", value: `${selected.length}/${MAX_SELECTED}`, tone: selected.length >= 2 ? "ok" : "warn" },
+          { label: "window", value: `${windowDays}d`, tone: "info" },
+        ]}
+        tape={tape}
+      >
+        <div className="desk-title">
+          <div>
+            <p className="eyebrow">Correlation console</p>
+            <h2>Cross the pools.</h2>
+          </div>
         </div>
-        <div className="filter-row">
+
+        <div className="ticket">
+          <label>
+            Window
+            <span className="ticket-chips">
+              {WINDOWS.map((w) => (
+                <button
+                  type="button"
+                  key={w.label}
+                  className={`chip-button ${windowDays === w.days ? "active" : ""}`}
+                  onClick={() => setWindowDays(w.days)}
+                >
+                  {w.label}
+                </button>
+              ))}
+            </span>
+          </label>
           <button type="button" className="ghost-button" onClick={() => setSelected([])}>
             <X size={16} aria-hidden="true" /> Clear
           </button>
@@ -254,139 +254,31 @@ export default function CorrelationPage() {
             {running ? "Computing…" : "Compute matrix"}
           </button>
         </div>
-      </div>
 
-      {err ? (
-        <div className="ticker" style={{ marginBottom: 18 }}>
-          <span className="severity-high">{err}</span>
-        </div>
-      ) : null}
+        {err ? (
+          <p className="ticket-note severity-high" role="alert" style={{ margin: 0 }}>
+            {err}
+          </p>
+        ) : null}
 
-      <div className="tool-layout">
-        <div className="tool-stack">
-          {orderedSelected.length < 2 ? (
-            <EmptyState
-              icon={Network}
-              title="Pick at least two pools"
-              body="Use the search panel on the right to add up to eight pools to the matrix."
-            />
-          ) : !result ? (
-            <EmptyState
-              icon={Network}
-              title="Matrix not yet computed"
-              body="Press Compute matrix to pull live yield history and build the correlation grid."
-            />
-          ) : (
-            <div
-              className="correlation-grid"
-              style={{ "--matrix-size": orderedSelected.length } as React.CSSProperties}
-            >
-              {matrix.map((row, rowIndex) =>
-                row.map((value, colIndex) => {
-                  const hue = correlationHue(value);
-                  return (
-                    <div
-                      className="correlation-cell"
-                      key={`${rowIndex}-${colIndex}`}
-                      style={{
-                        background: `color-mix(in srgb, ${hue} ${Math.round(Math.abs(value ?? 0) * 62)}%, rgba(30,34,38,.92))`,
-                      }}
-                    >
-                      <div>
-                        {typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "—"}
-                        <small>{orderedSelected[colIndex]?.symbol}</small>
-                      </div>
-                    </div>
-                  );
-                }),
-              )}
-            </div>
-          )}
-
-          {result?.missing && result.missing.length > 0 ? (
-            <div className="ticker">
-              <span className="severity-medium">
-                Skipped: {result.missing.length} pool(s) had insufficient history.
-              </span>
-            </div>
-          ) : null}
-          {result ? (
-            <div className="ticker">
-              <span>
-                {result.changeObservations} APY-change observations · {result.caveat}
-              </span>
-            </div>
-          ) : null}
-        </div>
-
-        <aside className="boost-panel">
-          <p className="eyebrow">Selected ({selected.length}/{MAX_SELECTED})</p>
-          <div className="allocation-list" style={{ marginBottom: 14 }}>
-            {selected.length === 0 ? (
-              <span style={{ fontSize: 13, color: "var(--muted)" }}>None yet — add pools below.</span>
-            ) : (
-              selected.map((pool) => (
-                <button
-                  key={`sel-${pool.poolId}`}
-                  type="button"
-                  className="allocation-row tab-button active"
-                  onClick={() =>
-                    setSelected((current) => current.filter((p) => p.poolId !== pool.poolId))
-                  }
-                >
-                  <div className="token-cell">
-                    <PoolIcon symbol={pool.symbol} protocol={pool.protocol} category={pool.category} />
-                    <div>
-                      <strong>{pool.symbol}</strong>
-                      <span>
-                        {pool.protocol} · {formatPct(pool.apy)}
-                      </span>
-                    </div>
-                  </div>
-                  <ChainBadge chain={chainIdFromName(pool.chain)} />
-                  <X size={16} aria-hidden="true" />
-                </button>
-              ))
-            )}
-          </div>
-
-          <p className="eyebrow">Add pool</p>
-          <div style={{ position: "relative", marginBottom: 12 }}>
-            <Search
-              size={14}
-              aria-hidden="true"
-              style={{ position: "absolute", top: "50%", left: 12, transform: "translateY(-50%)", color: "var(--muted)" }}
-            />
-            <input
-              className="search-input"
-              style={{ paddingLeft: 32, width: "100%", minWidth: 0 }}
-              placeholder="Search pool, protocol, chain"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </div>
-
-          {poolsErr ? (
-            <span className="severity-high" style={{ fontSize: 12 }}>
-              {poolsErr}
-            </span>
-          ) : (
-            <div className="allocation-list" style={{ maxHeight: 360, overflowY: "auto" }}>
-              {filtered.length === 0 ? (
+        <div className="desk-grid">
+          <div className="desk-col">
+            <p className="eyebrow">
+              Selected ({selected.length}/{MAX_SELECTED})
+            </p>
+            <div className="allocation-list" style={{ marginTop: 0 }}>
+              {selected.length === 0 ? (
                 <span style={{ fontSize: 13, color: "var(--muted)" }}>
-                  {pools.length === 0 ? "Loading…" : "No matches."}
+                  None yet — add pools from the shelf.
                 </span>
               ) : (
-                filtered.map((pool) => (
+                selected.map((pool) => (
                   <button
-                    key={`add-${pool.poolId}`}
+                    key={`sel-${pool.poolId}`}
                     type="button"
-                    className="allocation-row"
-                    disabled={selected.length >= MAX_SELECTED}
+                    className="allocation-row tab-button active"
                     onClick={() =>
-                      setSelected((current) =>
-                        current.length < MAX_SELECTED ? [...current, pool] : current,
-                      )
+                      setSelected((current) => current.filter((p) => p.poolId !== pool.poolId))
                     }
                   >
                     <div className="token-cell">
@@ -394,19 +286,133 @@ export default function CorrelationPage() {
                       <div>
                         <strong>{pool.symbol}</strong>
                         <span>
-                          {pool.protocol} · {formatUsd(pool.tvlUsd)}
+                          {pool.protocol} · {formatPct(pool.apy)}
                         </span>
                       </div>
                     </div>
                     <ChainBadge chain={chainIdFromName(pool.chain)} />
-                    <Plus size={16} aria-hidden="true" />
+                    <X size={16} aria-hidden="true" />
                   </button>
                 ))
               )}
             </div>
+          </div>
+
+          <div className="desk-col">
+            <p className="eyebrow">Add pool</p>
+            <div style={{ position: "relative" }}>
+              <Search
+                size={14}
+                aria-hidden="true"
+                style={{ position: "absolute", top: "50%", left: 12, transform: "translateY(-50%)", color: "var(--muted)" }}
+              />
+              <input
+                className="search-input"
+                style={{ paddingLeft: 32, width: "100%", minWidth: 0 }}
+                placeholder="Search pool, protocol, chain"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </div>
+
+            {poolsErr ? (
+              <span className="severity-high" style={{ fontSize: 12 }}>
+                {poolsErr}
+              </span>
+            ) : (
+              <div className="allocation-list" style={{ marginTop: 0, maxHeight: 300, overflowY: "auto" }}>
+                {filtered.length === 0 ? (
+                  <span style={{ fontSize: 13, color: "var(--muted)" }}>
+                    {pools.length === 0 ? "Loading…" : "No matches."}
+                  </span>
+                ) : (
+                  filtered.map((pool) => (
+                    <button
+                      key={`add-${pool.poolId}`}
+                      type="button"
+                      className="allocation-row"
+                      disabled={selected.length >= MAX_SELECTED}
+                      onClick={() =>
+                        setSelected((current) =>
+                          current.length < MAX_SELECTED ? [...current, pool] : current,
+                        )
+                      }
+                    >
+                      <div className="token-cell">
+                        <PoolIcon symbol={pool.symbol} protocol={pool.protocol} category={pool.category} />
+                        <div>
+                          <strong>{pool.symbol}</strong>
+                          <span>
+                            {pool.protocol} · {formatUsd(pool.tvlUsd)}
+                          </span>
+                        </div>
+                      </div>
+                      <ChainBadge chain={chainIdFromName(pool.chain)} />
+                      <Plus size={16} aria-hidden="true" />
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </Console>
+
+      <BookHeader
+        index="06b.1"
+        title="Correlation matrix"
+        meta={result ? `${result.changeObservations} observations · ${result.windowDays}d window` : undefined}
+      />
+
+      {orderedSelected.length < 2 ? (
+        <p className="book-empty">
+          Pick at least two pools in the console above to shape the matrix.
+        </p>
+      ) : !result ? (
+        <p className="book-empty">
+          Press Compute matrix to pull live yield history and build the correlation grid.
+        </p>
+      ) : (
+        <div
+          className="correlation-grid"
+          style={{ "--matrix-size": orderedSelected.length } as React.CSSProperties}
+        >
+          {matrix.map((row, rowIndex) =>
+            row.map((value, colIndex) => {
+              const hue = correlationHue(value);
+              return (
+                <div
+                  className="correlation-cell"
+                  key={`${rowIndex}-${colIndex}`}
+                  style={{
+                    background: `color-mix(in srgb, ${hue} ${Math.round(Math.abs(value ?? 0) * 62)}%, rgba(30,34,38,.92))`,
+                  }}
+                >
+                  <div>
+                    {typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "—"}
+                    <small>{orderedSelected[colIndex]?.symbol}</small>
+                  </div>
+                </div>
+              );
+            }),
           )}
-        </aside>
-      </div>
+        </div>
+      )}
+
+      {result?.missing && result.missing.length > 0 ? (
+        <div className="ticker">
+          <span className="severity-medium">
+            Skipped: {result.missing.length} pool(s) had insufficient history.
+          </span>
+        </div>
+      ) : null}
+      {result ? (
+        <div className="ticker">
+          <span>
+            {result.changeObservations} APY-change observations · {result.caveat}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

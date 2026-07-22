@@ -1,12 +1,13 @@
 "use client";
 
 import { useMemo } from "react";
-import { Eye, LockKeyhole, RefreshCw, WalletCards } from "lucide-react";
+import { LockKeyhole, RefreshCw } from "lucide-react";
 import {
+  BookHeader,
   ChainBadge,
-  CommandStrip,
+  Console,
   EmptyState,
-  MetricTile,
+  type TapeStat,
 } from "@/components/site/ui";
 import { PoolIcon } from "@/components/site/PoolIcon";
 import {
@@ -15,7 +16,6 @@ import {
   formatBalance,
   formatMoney,
   formatPct,
-  formatUsd,
 } from "@/lib/design-utils";
 import { usePortfolio } from "@/hooks/usePortfolio";
 import { usePlan } from "@/hooks/usePlan";
@@ -43,7 +43,21 @@ export default function PortfolioPage() {
     return (weighted / denom) * 100;
   }, [portfolio]);
 
-  const shortAddress = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "Portfolio";
+  const shortAddress = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "No wallet linked";
+  const gated = !plan.isLoading && !plan.capabilities.toolPortfolioLens;
+
+  const tape: TapeStat[] = portfolio
+    ? [
+        { label: "net value", value: formatMoney(total), tone: "ok" },
+        {
+          label: "24h drift",
+          value: weightedChange == null ? "—" : formatPct(weightedChange, true),
+          tone: weightedChange == null ? "plain" : weightedChange >= 0 ? "ok" : "danger",
+        },
+        { label: "positions", value: String(tokens.length), tone: "plain" },
+        { label: "networks", value: String(chains.length), tone: "info" },
+      ]
+    : [];
 
   return (
     <div className="page">
@@ -60,20 +74,7 @@ export default function PortfolioPage() {
         </div>
       </div>
 
-      <CommandStrip
-        file="file/04.portfolio"
-        items={[
-          {
-            label: "mode",
-            value: isConnected ? "wallet linked" : "preview",
-            tone: isConnected ? "ok" : "warn",
-          },
-          { label: "permission", value: "read-only", tone: "info" },
-          { label: "custody", value: "never requested", tone: "ok" },
-        ]}
-      />
-
-      {!plan.isLoading && !plan.capabilities.toolPortfolioLens ? (
+      {gated ? (
         <Paywall
           title="Portfolio lens is a paid feature"
           body="Portfolio lens reads live on-chain balances across 7 supported networks and ties them back to your strategies. It unlocks on the Pro plan."
@@ -81,133 +82,149 @@ export default function PortfolioPage() {
           currentTier={plan.tier}
           feature="Portfolio"
         />
-      ) : !isConnected ? (
-        <EmptyState
-          icon={LockKeyhole}
-          title="Private by default"
-          body="Connect a wallet to read live balances. Sovereign reads on-chain state directly — it never custodies funds, requests approvals, or signs transactions."
-          action={
-            <div style={{ marginTop: 16 }}>
-              <WalletButton />
-            </div>
-          }
-        />
-      ) : isLoading && !portfolio ? (
-        <EmptyState
-          icon={RefreshCw}
-          title="Reading on-chain balances…"
-          body="Pulling live token positions across the supported chains. Should take a few seconds."
-        />
-      ) : error ? (
-        <EmptyState
-          icon={LockKeyhole}
-          title="Could not read balances"
-          body={error}
-          action={
-            <button type="button" className="ghost-button" onClick={refetch} style={{ marginTop: 14 }}>
-              <RefreshCw size={16} aria-hidden="true" /> Retry
-            </button>
-          }
-        />
       ) : (
         <>
-          <div className="metric-grid" style={{ marginBottom: 18 }}>
-            <MetricTile label="Net value" value={formatMoney(total)} icon={WalletCards} tone="#6ee7b7" />
-            <MetricTile
-              label="24h drift"
-              value={weightedChange == null ? "—" : formatPct(weightedChange, true)}
-              icon={RefreshCw}
-              tone="#60a5fa"
-            />
-            <MetricTile label="Positions" value={String(tokens.length)} icon={Eye} tone="#fbbf24" />
-            <MetricTile label="Networks" value={String(chains.length)} icon={LockKeyhole} tone="#fb7185" />
-          </div>
+          <Console
+            file="file/04.portfolio"
+            chips={[
+              {
+                label: "mode",
+                value: isConnected ? "wallet linked" : "preview",
+                tone: isConnected ? "ok" : "warn",
+              },
+              { label: "permission", value: "read-only", tone: "info" },
+              { label: "custody", value: "never requested", tone: "ok" },
+            ]}
+            tape={tape}
+          >
+            {!isConnected ? (
+              <EmptyState
+                icon={LockKeyhole}
+                title="Private by default"
+                body="Connect a wallet to read live balances. Sovereign reads on-chain state directly — it never custodies funds, requests approvals, or signs transactions."
+                action={
+                  <div style={{ marginTop: 16 }}>
+                    <WalletButton />
+                  </div>
+                }
+              />
+            ) : isLoading && !portfolio ? (
+              <EmptyState
+                icon={RefreshCw}
+                title="Reading on-chain balances…"
+                body="Pulling live token positions across the supported chains. Should take a few seconds."
+              />
+            ) : error ? (
+              <EmptyState
+                icon={LockKeyhole}
+                title="Could not read balances"
+                body={error}
+                action={
+                  <button type="button" className="ghost-button" onClick={refetch} style={{ marginTop: 14 }}>
+                    <RefreshCw size={16} aria-hidden="true" /> Retry
+                  </button>
+                }
+              />
+            ) : (
+              <>
+                <div className="desk-title">
+                  <div>
+                    <p className="eyebrow">Wallet lens</p>
+                    <h2>{shortAddress}</h2>
+                  </div>
+                  <div className="filter-row">
+                    <button type="button" className="ghost-button" onClick={refetch}>
+                      <RefreshCw size={16} aria-hidden="true" /> Refresh
+                    </button>
+                  </div>
+                </div>
 
-          <div className="page-tools" style={{ marginBottom: 18 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <span className="eyebrow" style={{ marginBottom: 0 }}>{shortAddress}</span>
-              <span style={{ fontSize: 13, color: "var(--muted)" }}>
-                {portfolio
-                  ? `${portfolio.tokenCount} tokens · ${portfolio.chainCount} chains · updated ${new Date(portfolio.fetchedAt).toLocaleTimeString()}`
-                  : ""}
-              </span>
-            </div>
-            <div className="filter-row">
-              <button type="button" className="ghost-button" onClick={refetch}>
-                <RefreshCw size={16} aria-hidden="true" /> Refresh
-              </button>
-            </div>
-          </div>
+                <p className="ticket-note" style={{ margin: 0 }}>
+                  {portfolio
+                    ? `${portfolio.tokenCount} tokens · ${portfolio.chainCount} chains · updated ${new Date(portfolio.fetchedAt).toLocaleTimeString()} · read-only`
+                    : ""}
+                </p>
 
-          <div className="portfolio-layout">
-            <div className="portfolio-stack">
-              {tokens.length === 0 ? (
-                <EmptyState
-                  icon={WalletCards}
-                  title="No tracked tokens here"
-                  body="This wallet has no balances on the supported chains. Try a different address."
-                />
-              ) : (
-                tokens.map((token) => {
-                  const chain = chainIdFromEvmId(token.chainId);
-                  return (
-                    <div className="portfolio-row" key={`${token.chainId}-${token.symbol}-${token.name}`}>
-                      <div className="token-cell">
-                        <PoolIcon symbol={token.symbol} protocol={token.name} />
-                        <div>
-                          <strong>{token.symbol}</strong>
-                          <span>{token.name}</span>
-                        </div>
-                      </div>
-                      <ChainBadge chain={chain} />
-                      <span className="desktop-cell">
-                        {formatBalance(token.balance)} {token.symbol}
-                      </span>
-                      <strong>{formatMoney(token.balanceUsd)}</strong>
-                      <span className={(token.priceChange24h ?? 0) >= 0 ? "delta-good" : "delta-bad"}>
-                        {token.priceChange24h == null ? "—" : formatPct(token.priceChange24h, true)}
-                      </span>
+                {chains.length > 0 ? (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <div className="exposure-strip" aria-label="Chain exposure breakdown">
+                      {chains.map((c) => {
+                        const id = chainIdFromEvmId(c.chainId);
+                        const meta = chainMeta[id];
+                        return (
+                          <i
+                            key={c.chainId}
+                            style={{ width: `${c.percentage}%`, background: meta.color }}
+                            title={`${meta.label} ${c.percentage.toFixed(0)}%`}
+                          />
+                        );
+                      })}
                     </div>
-                  );
-                })
-              )}
-            </div>
-
-            <aside className="boost-panel">
-              <p className="eyebrow">Chain Exposure</p>
-              <h2 style={{ margin: "0 0 16px", fontSize: 32 }}>{formatMoney(total)}</h2>
-              <div className="exposure-bars">
-                {chains.length === 0 ? (
-                  <span style={{ color: "var(--muted)", fontSize: 13 }}>
-                    No exposure to break down yet.
-                  </span>
+                    <div className="exposure-legend">
+                      {chains.map((c) => {
+                        const id = chainIdFromEvmId(c.chainId);
+                        const meta = chainMeta[id];
+                        return (
+                          <span key={c.chainId}>
+                            <i style={{ background: meta.color }} />
+                            {meta.label} <b>{c.percentage.toFixed(0)}%</b>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
                 ) : (
-                  chains.map((c) => {
-                    const id = chainIdFromEvmId(c.chainId);
-                    const meta = chainMeta[id];
+                  <p className="ticket-note" style={{ margin: 0 }}>
+                    No exposure to break down yet.
+                  </p>
+                )}
+              </>
+            )}
+          </Console>
+
+          {isConnected && portfolio && !error ? (
+            <>
+              <BookHeader
+                index="04.1"
+                title="Positions"
+                meta={`${tokens.length} tracked`}
+              />
+              {tokens.length === 0 ? (
+                <p className="book-empty">
+                  This wallet has no balances on the supported chains. Try a different
+                  address.
+                </p>
+              ) : (
+                <div className="portfolio-stack">
+                  {tokens.map((token) => {
+                    const chain = chainIdFromEvmId(token.chainId);
                     return (
-                      <div className="exposure-bar" key={c.chainId}>
-                        <strong>{meta.label}</strong>
-                        <span className="share-track" aria-label={`${c.percentage.toFixed(0)}%`}>
-                          <i style={{ width: `${c.percentage}%`, background: meta.color }} />
+                      <div className="portfolio-row" key={`${token.chainId}-${token.symbol}-${token.name}`}>
+                        <div className="token-cell">
+                          <PoolIcon symbol={token.symbol} protocol={token.name} />
+                          <div>
+                            <strong>{token.symbol}</strong>
+                            <span>{token.name}</span>
+                          </div>
+                        </div>
+                        <ChainBadge chain={chain} />
+                        <span className="desktop-cell">
+                          {formatBalance(token.balance)} {token.symbol}
                         </span>
-                        <span>{c.percentage.toFixed(0)}%</span>
+                        <strong>{formatMoney(token.balanceUsd)}</strong>
+                        <span className={(token.priceChange24h ?? 0) >= 0 ? "delta-good" : "delta-bad"}>
+                          {token.priceChange24h == null ? "—" : formatPct(token.priceChange24h, true)}
+                        </span>
                       </div>
                     );
-                  })
-                )}
-              </div>
-              <div style={{ marginTop: 12 }} className="ticker">
-                <span>
-                  {formatUsd(total)} total · {weightedChange == null
-                    ? "24h price drift unavailable"
-                    : `${formatPct(weightedChange, true)} price-weighted 24h drift`} · read-only
-                </span>
-              </div>
-            </aside>
-          </div>
+                  })}
+                </div>
+              )}
+            </>
+          ) : null}
         </>
       )}
     </div>
   );
 }
+

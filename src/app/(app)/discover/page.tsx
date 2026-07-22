@@ -1,13 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Filter, Search, SlidersHorizontal, Sparkles } from "lucide-react";
+import { Filter, SlidersHorizontal, Sparkles } from "lucide-react";
 import {
+  BookHeader,
   ChainBadge,
-  CommandStrip,
+  Console,
   MarketRow,
-  MetricTile,
   RiskPill,
+  type TapeStat,
 } from "@/components/site/ui";
 import {
   chainIdFromName,
@@ -120,9 +121,9 @@ export default function DiscoverPage() {
         </div>
       </div>
 
-      <CommandStrip
+      <Console
         file="file/02.markets"
-        items={[
+        chips={[
           {
             label: "scanner",
             value: error ? "stale" : loading && !data ? "syncing" : "live",
@@ -139,62 +140,78 @@ export default function DiscoverPage() {
             tone: "warn",
           },
         ]}
-      />
-
-      <div className="metric-grid" style={{ marginBottom: 18 }}>
-        <MetricTile label="Visible markets" value={String(filtered.length)} icon={Filter} tone="#60a5fa" />
-        <MetricTile label="Screened TVL" value={formatUsd(totalTvl)} icon={Sparkles} tone="#6ee7b7" />
-        <MetricTile label="Average APY" value={formatPct(avgApy)} icon={SlidersHorizontal} tone="#fbbf24" />
-        <MetricTile label="Market screen mean" value={avgScreenScore > 0 ? avgScreenScore.toFixed(0) : "—"} icon={Search} tone="#fb7185" />
-      </div>
-
-      <div className="page-tools">
-        <input
-          className="search-input"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search market, protocol, or type"
-          aria-label="Search markets"
-        />
-        <div className="filter-row">
-          <select
-            className="select-input"
-            value={chain}
-            onChange={(event) => setChain(event.target.value as ChainId | "All")}
-          >
-            <option value="All">All chains</option>
-            {visibleChains.map((id) => (
-              <option key={id} value={id}>
-                {chainMeta[id].name}
-              </option>
-            ))}
-          </select>
-          <select
-            className="select-input"
-            value={category}
-            onChange={(event) => setCategory(event.target.value as MarketCategory | "All")}
-          >
-            {CATEGORIES.map((item) => (
-              <option key={item} value={item}>
-                {item === "All" ? "All categories" : item}
-              </option>
-            ))}
-          </select>
+        tape={
+          [
+            { label: "visible", value: String(filtered.length), tone: "info" },
+            { label: "screened tvl", value: formatUsd(totalTvl), tone: "ok" },
+            { label: "avg apy", value: formatPct(avgApy), tone: "warn" },
+            {
+              label: "screen mean",
+              value: avgScreenScore > 0 ? avgScreenScore.toFixed(0) : "—",
+              tone: "plain",
+            },
+          ] as TapeStat[]
+        }
+      >
+        <div className="desk-title">
+          <div>
+            <p className="eyebrow">Market scanner</p>
+            <h2>Filter the shelf.</h2>
+          </div>
         </div>
-      </div>
+        <div className="page-tools" style={{ marginBottom: 0 }}>
+          <input
+            className="search-input"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search market, protocol, or type"
+            aria-label="Search markets"
+          />
+          <div className="filter-row">
+            <select
+              className="select-input"
+              value={chain}
+              onChange={(event) => setChain(event.target.value as ChainId | "All")}
+            >
+              <option value="All">All chains</option>
+              {visibleChains.map((id) => (
+                <option key={id} value={id}>
+                  {chainMeta[id].name}
+                </option>
+              ))}
+            </select>
+            <select
+              className="select-input"
+              value={category}
+              onChange={(event) => setCategory(event.target.value as MarketCategory | "All")}
+            >
+              {CATEGORIES.map((item) => (
+                <option key={item} value={item}>
+                  {item === "All" ? "All categories" : item}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="filter-row">
+          {RISKS.map((item) => (
+            <button
+              key={item}
+              type="button"
+              className={`chip-button ${risk === item ? "active" : ""}`}
+              onClick={() => setRisk(item)}
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+      </Console>
 
-      <div className="filter-row" style={{ marginBottom: 18 }}>
-        {RISKS.map((item) => (
-          <button
-            key={item}
-            type="button"
-            className={`chip-button ${risk === item ? "active" : ""}`}
-            onClick={() => setRisk(item)}
-          >
-            {item}
-          </button>
-        ))}
-      </div>
+      <BookHeader
+        index="02.1"
+        title="Screened markets"
+        meta={`${filtered.length} visible`}
+      />
 
       {error && filtered.length === 0 ? (
         <div className="empty-state">

@@ -3,15 +3,15 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { BadgeCheck, ShieldCheck } from "lucide-react";
 import {
-  AlertTriangle,
-  BadgeCheck,
-  FileSearch,
-  ShieldCheck,
-  Siren,
-  TimerReset,
-} from "lucide-react";
-import { CommandStrip, MetricTile } from "@/components/site/ui";
+  BookHeader,
+  Console,
+  PipelineRail,
+  phasedSteps,
+  type PipelinePhase,
+  type TapeStat,
+} from "@/components/site/ui";
 import { usePlan } from "@/hooks/usePlan";
 import { useSiweAuth } from "@/hooks/useSiweAuth";
 import { apiFetch } from "@/lib/api-client";
@@ -62,6 +62,15 @@ const ENGINE_LABEL: Record<string, string> = {
   onchain_interrogator: "Control coverage",
 };
 
+/** The review's five phases, keyed by the job stages each covers. */
+const REVIEW_PHASES: PipelinePhase[] = [
+  { key: "source", label: "Source intake", stages: ["starting", "fetching_source"] },
+  { key: "onchain", label: "On-chain state", stages: ["fetching_onchain"] },
+  { key: "engines", label: "Engine sweep", stages: ["running_tools"] },
+  { key: "consensus", label: "Consensus", stages: ["consensus", "ai_explanation"] },
+  { key: "briefing", label: "Standards & briefing", stages: ["scsvs_mapping", "assembling_report"] },
+];
+
 function stageLabel(s?: string): string {
   if (!s) return "review";
   return STAGE_LABEL[s] ?? s.replace(/_/g, " ");
@@ -81,6 +90,10 @@ function reviewCopy(message?: string): string {
 
 function isValidAddress(addr: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test(addr.trim());
+}
+
+function shortAddress(addr: string): string {
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
 export default function AuditPage() {
@@ -342,6 +355,26 @@ function AuditConsole() {
   const coverageTotal = r?.toolResults.length ?? 6;
   const cleanCoverage = r?.coverage?.sufficientForCleanVerdict ?? false;
 
+  const tape: TapeStat[] = [
+    {
+      label: "risk",
+      value: r ? `${r.riskScore}/100` : "—",
+      tone: r ? (r.riskScore >= 60 ? "danger" : r.riskScore >= 30 ? "warn" : "ok") : "plain",
+    },
+    { label: "findings", value: r ? String(findingsCount) : "—", tone: r && findingsCount > 0 ? "warn" : "plain" },
+    { label: "coverage", value: r ? `${coverageCount}/${coverageTotal}` : "—", tone: "plain" },
+    { label: "elapsed", value: elapsedLabel, tone: job.status === "running" ? "warn" : "plain" },
+    ...(isAuthed && !plan.isLoading
+      ? ([
+          {
+            label: "used",
+            value: `${auditsUsed}/${unlimited ? "∞" : auditCap}`,
+            tone: atCap ? "danger" : "plain",
+          },
+        ] as TapeStat[])
+      : []),
+  ];
+
   return (
     <div className="page">
       <div className="page-title">
@@ -357,205 +390,207 @@ function AuditConsole() {
         </div>
       </div>
 
-      <CommandStrip
+      <Console
         file="file/05.audit"
-        items={[
+        chips={[
           { label: "source", value: validAddress ? "target valid" : "invalid", tone: validAddress ? "ok" : "danger" },
-          { label: "engines", value: job.status === "running" ? "running" : job.status === "done" ? "complete" : "queued", tone: job.status === "running" ? "warn" : job.status === "done" ? "ok" : "info" },
+          {
+            label: "engines",
+            value: job.status === "running" ? "running" : job.status === "done" ? "complete" : "queued",
+            tone: job.status === "running" ? "warn" : job.status === "done" ? "ok" : "info",
+          },
           {
             label: "coverage",
             value: r ? (cleanCoverage ? "sufficient" : "limited") : "pending",
             tone: r && cleanCoverage ? "ok" : "warn",
           },
         ]}
-      />
+        tape={tape}
+      >
+        <div className="desk-title">
+          <div>
+            <p className="eyebrow">Review console</p>
+            <h2>Point it at a contract.</h2>
+          </div>
+        </div>
 
-      <div className="metric-grid" style={{ marginBottom: 18 }}>
-        <MetricTile
-          label="Risk score"
-          value={r ? `${r.riskScore}/100` : "—"}
-          icon={ShieldCheck}
-          tone="#6ee7b7"
-        />
-        <MetricTile
-          label="Findings"
-          value={r ? String(findingsCount) : "—"}
-          icon={AlertTriangle}
-          tone="#fbbf24"
-        />
-        <MetricTile
-          label="Coverage"
-          value={r ? `${coverageCount}/${coverageTotal}` : "—"}
-          icon={FileSearch}
-          tone="#60a5fa"
-        />
-        <MetricTile label="Elapsed" value={elapsedLabel} icon={TimerReset} tone="#fb7185" />
-      </div>
+        <div className="ticket">
+          <label className="ticket-grow">
+            Contract address
+            <input
+              className="address-input"
+              value={address}
+              onChange={(event) => setAddress(event.target.value)}
+              spellCheck={false}
+              placeholder="0x…"
+            />
+          </label>
+          <label>
+            Chain
+            <select
+              className="select-input"
+              value={chainId}
+              onChange={(event) => setChainId(Number(event.target.value))}
+            >
+              {CHAINS.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => runReview()}
+            disabled={
+              job.status === "running" ||
+              !validAddress ||
+              atCap ||
+              authStatus === "checking" ||
+              authStatus === "signing"
+            }
+          >
+            <ShieldCheck size={18} aria-hidden="true" />
+            {job.status === "running"
+              ? "Reviewing"
+              : authStatus === "checking"
+                ? "Loading session…"
+                : authStatus === "signing"
+                  ? "Confirm in wallet…"
+                  : atCap
+                    ? "Monthly cap reached"
+                    : "Run review"}
+          </button>
+        </div>
 
-      <div className="audit-layout">
-        <div className="audit-stack">
-          <div className="boost-panel">
-            <p className="eyebrow">Review Target</p>
-            <div className="audit-form">
-              <label>
-                Contract address
-                <input
-                  className="address-input"
-                  value={address}
-                  onChange={(event) => setAddress(event.target.value)}
-                  spellCheck={false}
-                  placeholder="0x…"
-                />
-              </label>
-              <label>
-                Chain
-                <select
-                  className="select-input"
-                  value={chainId}
-                  onChange={(event) => setChainId(Number(event.target.value))}
-                >
-                  {CHAINS.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                className="primary-button"
-                type="button"
-                onClick={() => runReview()}
-                disabled={
-                  job.status === "running" ||
-                  !validAddress ||
-                  atCap ||
-                  authStatus === "checking" ||
-                  authStatus === "signing"
-                }
-              >
-                <ShieldCheck size={18} aria-hidden="true" />
-                {job.status === "running"
-                  ? "Reviewing"
-                  : authStatus === "checking"
-                    ? "Loading session…"
-                    : authStatus === "signing"
-                      ? "Confirm in wallet…"
-                      : atCap
-                        ? "Monthly cap reached"
-                        : "Run review"}
-              </button>
-            </div>
+        {isAuthed && !plan.isLoading && atCap ? (
+          <p className="ticket-note">
+            Monthly review cap reached on the {plan.tier} plan —{" "}
+            <Link
+              href={plan.tier === "free" ? "/plans/checkout?tier=pro" : "/plans/checkout?tier=ultra"}
+              style={{ color: "var(--mint)" }}
+            >
+              upgrade to keep reviewing
+            </Link>
+            .
+          </p>
+        ) : null}
 
-            {isAuthed ? (
+        <PipelineRail steps={phasedSteps(REVIEW_PHASES, job.status, job.stage)} />
+
+        <div>
+          <div className="audit-progress" aria-label={`${job.progress}% complete`}>
+            <i style={{ width: `${job.progress}%` }} />
+          </div>
+          <p
+            style={{
+              color: job.status === "error" ? "var(--coral)" : "var(--muted)",
+              margin: "10px 0 0",
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+            }}
+          >
+            {job.status === "error"
+              ? job.error ?? "Review failed."
+              : job.status === "running"
+                ? `${stageLabel(job.stage)} · ${job.message ?? ""}`
+                : job.status === "done"
+                  ? "Review assembled."
+                  : "Ready for target."}
+          </p>
+        </div>
+      </Console>
+
+      {r ? (
+        <>
+          <BookHeader
+            index="05.1"
+            title="Review report"
+            meta={`${r.chainName} · ${shortAddress(r.meta.address)}`}
+          />
+          <div className="audit-stack">
+            <div className="audit-card">
+              <div className="audit-icon">
+                <BadgeCheck size={24} color={verdictColor(r.verdict)} aria-hidden="true" />
+              </div>
+              <h3 style={{ textTransform: "capitalize" }}>{r.verdict} verdict</h3>
+              <p>{r.executiveSummary}</p>
               <div
                 style={{
                   marginTop: 12,
                   display: "flex",
-                  justifyContent: "space-between",
+                  gap: 10,
                   alignItems: "center",
-                  gap: 12,
-                  fontSize: 12,
-                  color: "var(--muted)",
+                  flexWrap: "wrap",
                 }}
               >
-                <span>
-                  <strong style={{ color: atCap ? "var(--coral)" : "var(--ink)" }}>
-                    {auditsUsed}
-                  </strong>{" "}
-                  of{" "}
-                  {unlimited ? "∞" : auditCap} contract reviews used this month
-                  {plan.tier !== "free" ? ` · ${plan.tier} plan` : ""}
-                </span>
-                {atCap ? (
-                  <Link
-                    href={plan.tier === "free" ? "/plans/checkout?tier=pro" : "/plans/checkout?tier=ultra"}
-                    className="ghost-button"
-                    style={{ fontSize: 12, padding: "4px 10px" }}
-                  >
-                    Upgrade
-                  </Link>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={shareReport}
+                  disabled={share.busy || job.status !== "done"}
+                >
+                  {share.busy
+                    ? "Creating link…"
+                    : share.path
+                      ? "Copy share link again"
+                      : "Share report publicly"}
+                </button>
+                {share.path ? (
+                  <>
+                    <a
+                      href={share.path}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ fontSize: 12, color: "var(--mint, #5AE4D4)" }}
+                    >
+                      {share.copied ? "Link copied — " : ""}open public page →
+                    </a>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={revokeShare}
+                      disabled={share.busy}
+                    >
+                      Revoke link
+                    </button>
+                    {share.expiresAt ? (
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                        Expires {new Date(share.expiresAt).toLocaleDateString()}
+                      </span>
+                    ) : null}
+                  </>
+                ) : null}
+                {share.error ? (
+                  <span className="severity-medium" style={{ fontSize: 12 }}>
+                    {share.error}
+                  </span>
                 ) : null}
               </div>
-            ) : null}
-
-            <div style={{ marginTop: 18 }}>
-              <div className="audit-progress" aria-label={`${job.progress}% complete`}>
-                <i style={{ width: `${job.progress}%` }} />
-              </div>
-              <p style={{ color: job.status === "error" ? "var(--coral)" : "var(--muted)", marginTop: 10 }}>
-                {job.status === "error"
-                  ? job.error ?? "Review failed."
-                  : job.status === "running"
-                    ? `${stageLabel(job.stage)} · ${job.message ?? ""}`
-                    : job.status === "done"
-                      ? "Review assembled."
-                      : "Ready for target."}
-              </p>
             </div>
-          </div>
 
-          {r ? (
-            <>
-              <div className="audit-card">
-                <div className="audit-icon">
-                  <BadgeCheck size={24} color={verdictColor(r.verdict)} aria-hidden="true" />
-                </div>
-                <h3 style={{ textTransform: "capitalize" }}>{r.verdict} verdict</h3>
-                <p>{r.executiveSummary}</p>
+            <div className="engine-row">
+              {r.toolResults.map((tool) => (
                 <div
-                  style={{
-                    marginTop: 12,
-                    display: "flex",
-                    gap: 10,
-                    alignItems: "center",
-                    flexWrap: "wrap",
-                  }}
+                  key={`coverage-${tool.tool}-${tool.scope?.kind ?? "general"}-${tool.scope?.address ?? "default"}`}
+                  className="engine-cell"
+                  data-live={tool.available ? "true" : "false"}
                 >
-                  <button
-                    type="button"
-                    className="ghost-button"
-                    onClick={shareReport}
-                    disabled={share.busy || job.status !== "done"}
-                  >
-                    {share.busy
-                      ? "Creating link…"
-                      : share.path
-                        ? "Copy share link again"
-                        : "Share report publicly"}
-                  </button>
-                  {share.path ? (
-                    <>
-                      <a
-                        href={share.path}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{ fontSize: 12, color: "var(--mint, #5AE4D4)" }}
-                      >
-                        {share.copied ? "Link copied — " : ""}open public page →
-                      </a>
-                      <button
-                        type="button"
-                        className="ghost-button"
-                        onClick={revokeShare}
-                        disabled={share.busy}
-                      >
-                        Revoke link
-                      </button>
-                      {share.expiresAt ? (
-                        <span style={{ fontSize: 12, color: "var(--muted)" }}>
-                          Expires {new Date(share.expiresAt).toLocaleDateString()}
-                        </span>
-                      ) : null}
-                    </>
-                  ) : null}
-                  {share.error ? (
-                    <span className="severity-medium" style={{ fontSize: 12 }}>
-                      {share.error}
-                    </span>
-                  ) : null}
+                  <strong>
+                    {ENGINE_LABEL[tool.tool] ?? tool.tool}
+                    {tool.scope?.kind === "implementation" ? " · impl" : ""}
+                  </strong>
+                  <span>
+                    {tool.available
+                      ? `${tool.findings.length} finding${tool.findings.length === 1 ? "" : "s"}`
+                      : tool.unavailableReason ?? "unavailable"}
+                  </span>
                 </div>
-              </div>
+              ))}
+            </div>
 
+            <div className="desk-grid">
               <div className="boost-panel">
                 <p className="eyebrow">Contract</p>
                 <div className="audit-meta-grid">
@@ -595,112 +630,72 @@ function AuditConsole() {
                   </div>
                 </div>
               ) : null}
-
-              <div className="findings">
-                {r.findings.length === 0 ? (
-                  <div className="finding">
-                    <strong>No findings surfaced within available coverage</strong>
-                    <span>
-                      {cleanCoverage
-                        ? "The configured analyzers and live-state checks completed without surfacing a finding. This is not a security guarantee."
-                        : "Coverage was incomplete. Absence of a finding must be treated as unknown, not as evidence that the contract is safe."}
-                    </span>
-                  </div>
-                ) : (
-                  r.findings.map((finding) => (
-                    <div className="finding" key={finding.id}>
-                      <div className="audit-finding-head">
-                        <span className="audit-pill" data-severity={finding.severity}>
-                          {finding.severity}
-                        </span>
-                        <span style={{ fontFamily: "var(--font-mono)", color: "var(--muted)", fontSize: 11 }}>
-                          {finding.confidence}
-                        </span>
-                        <strong>{finding.title}</strong>
-                      </div>
-                      <span>
-                        {finding.aiExplanation?.whatHappened ?? finding.description}
-                      </span>
-                      {finding.aiExplanation?.whyItMatters ? (
-                        <span style={{ marginTop: 6 }}>
-                          <strong>Why it matters · </strong>
-                          {finding.aiExplanation.whyItMatters}
-                        </span>
-                      ) : null}
-                      {finding.aiExplanation?.recommendedFix ? (
-                        <span style={{ marginTop: 6 }}>
-                          <strong>Fix · </strong>
-                          {finding.aiExplanation.recommendedFix}
-                        </span>
-                      ) : null}
-                      {finding.filePath ? (
-                        <span style={{ marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 11 }}>
-                          {finding.filePath}
-                          {finding.startLine ? `:${finding.startLine}` : ""}
-                        </span>
-                      ) : null}
-                    </div>
-                  ))
-                )}
-              </div>
-            </>
-          ) : null}
-        </div>
-
-        <aside className="boost-panel">
-          <p className="eyebrow">Coverage Map</p>
-          <div className="signal-list">
-            {(r?.toolResults ?? defaultCoverage).map((tool) => {
-              const Icon = tool.available ? ShieldCheck : Siren;
-              const tone = tool.available ? "#6ee7b7" : "#fbbf24";
-              return (
-                <div
-                  key={`coverage-${tool.tool}-${tool.scope?.kind ?? "general"}-${tool.scope?.address ?? "default"}`}
-                  className="coverage-card"
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <Icon size={18} color={tone} />
-                    <span className="coverage-name">
-                      {ENGINE_LABEL[tool.tool] ?? tool.tool}
-                      {tool.scope?.kind === "implementation" ? " · implementation" : ""}
-                    </span>
-                  </div>
-                  <div className="coverage-status">
-                    {r
-                      ? tool.available
-                        ? `${tool.findings.length} findings`
-                        : tool.unavailableReason ?? "unavailable"
-                      : "queued"}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {r?.recommendations.length ? (
-            <div style={{ marginTop: 16 }}>
-              <p className="eyebrow">Recommendations</p>
-              <ul style={{ margin: 0, paddingLeft: 18, color: "var(--muted)", fontSize: 13, lineHeight: 1.55 }}>
-                {r.recommendations.slice(0, 5).map((rec, idx) => (
-                  <li key={idx}>{rec}</li>
-                ))}
-              </ul>
             </div>
-          ) : null}
-        </aside>
-      </div>
+
+            <div className="findings">
+              {r.findings.length === 0 ? (
+                <div className="finding">
+                  <strong>No findings surfaced within available coverage</strong>
+                  <span>
+                    {cleanCoverage
+                      ? "The configured analyzers and live-state checks completed without surfacing a finding. This is not a security guarantee."
+                      : "Coverage was incomplete. Absence of a finding must be treated as unknown, not as evidence that the contract is safe."}
+                  </span>
+                </div>
+              ) : (
+                r.findings.map((finding) => (
+                  <div className="finding" key={finding.id}>
+                    <div className="audit-finding-head">
+                      <span className="audit-pill" data-severity={finding.severity}>
+                        {finding.severity}
+                      </span>
+                      <span style={{ fontFamily: "var(--font-mono)", color: "var(--muted)", fontSize: 11 }}>
+                        {finding.confidence}
+                      </span>
+                      <strong>{finding.title}</strong>
+                    </div>
+                    <span>
+                      {finding.aiExplanation?.whatHappened ?? finding.description}
+                    </span>
+                    {finding.aiExplanation?.whyItMatters ? (
+                      <span style={{ marginTop: 6 }}>
+                        <strong>Why it matters · </strong>
+                        {finding.aiExplanation.whyItMatters}
+                      </span>
+                    ) : null}
+                    {finding.aiExplanation?.recommendedFix ? (
+                      <span style={{ marginTop: 6 }}>
+                        <strong>Fix · </strong>
+                        {finding.aiExplanation.recommendedFix}
+                      </span>
+                    ) : null}
+                    {finding.filePath ? (
+                      <span style={{ marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 11 }}>
+                        {finding.filePath}
+                        {finding.startLine ? `:${finding.startLine}` : ""}
+                      </span>
+                    ) : null}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {r.recommendations.length > 0 ? (
+              <div className="boost-panel">
+                <p className="eyebrow">Recommendations</p>
+                <ul style={{ margin: 0, paddingLeft: 18, color: "var(--muted)", fontSize: 13, lineHeight: 1.55 }}>
+                  {r.recommendations.slice(0, 5).map((rec, idx) => (
+                    <li key={idx}>{rec}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
-
-const defaultCoverage: AuditReport["toolResults"] = [
-  { tool: "slither", available: true, durationMs: 0, findings: [] },
-  { tool: "aderyn", available: true, durationMs: 0, findings: [] },
-  { tool: "mythril", available: true, durationMs: 0, findings: [] },
-  { tool: "regex_pattern", available: true, durationMs: 0, findings: [] },
-  { tool: "onchain_interrogator", available: true, durationMs: 0, findings: [] },
-  { tool: "ai_explainer", available: true, durationMs: 0, findings: [] },
-];
 
 function verdictColor(verdict: AuditReport["verdict"]): string {
   switch (verdict) {
