@@ -8,23 +8,24 @@ import { childProcessEnv } from "./child-process-env";
 import { fetchWithTimeout } from "@/lib/fetch-utils";
 
 export interface GeminiInvokeOptions {
-  /** Model id. Defaults to gemini-3.5-flash. */
+  /** Model id. API and CLI defaults use their provider-specific names. */
   model?: string;
   /** Thinking level (API mode). Defaults to "high". */
   reasoning?: "low" | "medium" | "high";
   timeoutMs?: number;
 }
 
-// Gemini 3.5 Flash is the adversarial REVIEWER of Codex's proposals, run at
+// Gemini 3.6 Flash is the adversarial REVIEWER of Codex's proposals, run at
 // high thinking.
 //
 // Two model-name conventions because the local CLI and the hosted API differ:
-//   - CLI (`agy`): reasoning is baked into the human-readable model name, e.g.
-//     "Gemini 3.5 Flash (High)". Binary + name overridable via env.
+//   - CLI (`agy`): reasoning is baked into the model name, e.g.
+//     "gemini-3.6-flash-high". The name is overridable via env.
 //   - API: model id "gemini-3.5-flash" + a separate thinkingLevel.
 const DEFAULT_MODEL = "gemini-3.5-flash"; // API mode
 const DEFAULT_REASONING = "high" as const;
-const CLI_MODEL = process.env.GEMINI_CLI_MODEL?.trim() || "Gemini 3.5 Flash (High)";
+const CLI_MODEL = process.env.GEMINI_CLI_MODEL?.trim() || "gemini-3.6-flash-high";
+const CLI_PROMPT_CAP_BYTES = 256 * 1024;
 const STDERR_CAP_BYTES = 64 * 1024;
 const RESPONSE_CAP_BYTES = 8 * 1024 * 1024;
 const TIMEOUT_GRACE_MS = 1_500;
@@ -53,13 +54,11 @@ async function invokeGeminiCli(prompt: string, opts: GeminiInvokeOptions): Promi
     path.join(/*turbopackIgnore: true*/ tmpdir(), "gemini-out-"),
   );
 
-  // `agy` (the current Gemini CLI): `--print` runs a single prompt
-  // non-interactively (prompt piped over stdin so long prompts don't hit
-  // ARG_MAX); `--mode plan` keeps it from executing tool calls; the model
-  // name encodes the thinking level. `--print-timeout` is raised to our own
-  // budget so agy's internal 5-minute default can't truncate a 6-minute run.
-  const printTimeout = `${Math.ceil(timeoutMs / 1000)}s`;
-  const args = ["--print", "--model", model, "--mode", "plan", "--print-timeout", printTimeout];
+  const args = buildGeminiCliArgs(prompt, {
+    model,
+    reasoning: opts.reasoning ?? DEFAULT_REASONING,
+    timeoutMs,
+  });
 
   try {
     return await new Promise<string>((resolve, reject) => {
@@ -69,7 +68,7 @@ async function invokeGeminiCli(prompt: string, opts: GeminiInvokeOptions): Promi
     let errBytes = 0;
 
     const proc = spawn("agy", args, {
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"],
       env: childProcessEnv(),
       // Prompts carry all required context. Never expose the repository (or
       // its environment files) as the working directory of a local agent.
@@ -139,15 +138,40 @@ async function invokeGeminiCli(prompt: string, opts: GeminiInvokeOptions): Promi
       settle(() => reject(err));
     });
 
-    proc.stdin.on("error", (err) => {
-      clearTimeout(timeout);
-      settle(() => reject(err));
-    });
-    proc.stdin.end(prompt);
     });
   } finally {
     await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+export function buildGeminiCliArgs(
+  prompt: string,
+  options: { model: string; reasoning: "low" | "medium" | "high"; timeoutMs: number },
+): string[] {
+  const promptBytes = Buffer.byteLength(prompt, "utf8");
+  if (promptBytes === 0) throw new Error("gemini CLI prompt is empty");
+  if (prompt.includes("\0")) throw new Error("gemini CLI prompt contains a null byte");
+  if (promptBytes > CLI_PROMPT_CAP_BYTES) {
+    throw new Error(`gemini CLI prompt exceeded ${CLI_PROMPT_CAP_BYTES} bytes`);
+  }
+
+  // agy 1.0's --print is a string flag; it does not consume stdin. Passing a
+  // bare `--print` caused the next flag (`--model`) to become the prompt and
+  // made every real response an identity sentence. Use one argv element so
+  // a prompt beginning with "--" cannot be reparsed as another flag. spawn()
+  // receives an argument array (never a shell), and the byte cap leaves ample
+  // headroom below the platform's ARG_MAX in this local-only CLI mode.
+  return [
+    `--print=${prompt}`,
+    "--model",
+    options.model,
+    "--effort",
+    options.reasoning,
+    "--mode",
+    "plan",
+    "--print-timeout",
+    `${Math.ceil(options.timeoutMs / 1000)}s`,
+  ];
 }
 
 async function invokeGeminiApi(prompt: string, opts: GeminiInvokeOptions): Promise<string> {

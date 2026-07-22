@@ -76,7 +76,7 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
               aria-label={item.label}
               key={item.label}
             >
-              <SocialIcon id={item.icon} size={28} />
+              <SocialIcon id={item.icon} size={22} />
             </a>
           ))}
           <span className="alert-slot">

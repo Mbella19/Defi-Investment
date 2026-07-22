@@ -816,7 +816,7 @@ export default async function Home() {
           {community.map((item) => (
             <Link href="/tools" className="community-card" key={item.label}>
               <span>{item.label}</span>
-              <SocialIcon id={item.icon} size={34} />
+              <SocialIcon id={item.icon} size={26} />
             </Link>
           ))}
         </div>

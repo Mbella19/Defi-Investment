@@ -4,7 +4,9 @@ import { getDb } from "@/lib/db";
 import {
   claimNextStrategyJob,
   createJob,
+  failJob,
   getJob,
+  publicView,
 } from "@/lib/strategy-jobs";
 import {
   claimNextAuditJob,
@@ -52,6 +54,33 @@ describe("durable job integrity", () => {
 
     claimNextStrategyJob("test-worker");
     expect(getJob(job.id)?.status).toBe("error");
+  });
+
+  it("persists an actionable safe error without exposing internal details", () => {
+    const wallet = "0x3000000000000000000000000000000000000005";
+    const job = createJob(
+      wallet,
+      { criteria, mode: "council" },
+      `strategy-${randomUUID()}`,
+      randomUUID(),
+    );
+    failJob(job.id, "internal catalogue and provider detail", {
+      errorCode: "criteria_too_restrictive",
+      publicError: "Only one eligible market remains. Widen the APY range.",
+    });
+
+    const stored = getJob(job.id);
+    expect(stored?.error).toBe("internal catalogue and provider detail");
+    const view = publicView(stored!);
+    expect(view.errorCode).toBe("criteria_too_restrictive");
+    expect(view.error).toBe("Only one eligible market remains. Widen the APY range.");
+    expect(JSON.stringify(view)).not.toContain("internal catalogue and provider detail");
+
+    const row = getDb()
+      .prepare("SELECT error_code, public_error FROM strategy_jobs WHERE id = ?")
+      .get(job.id) as { error_code: string; public_error: string };
+    expect(row.error_code).toBe("criteria_too_restrictive");
+    expect(row.public_error).toBe(view.error);
   });
 
   it("returns the winning audit job when an idempotent insert races", () => {

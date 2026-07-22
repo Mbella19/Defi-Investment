@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { getDb } from "@/lib/db";
 import { log } from "@/lib/log";
+import { GENERIC_STRATEGY_FAILURE } from "@/lib/strategy-errors";
 import type { InvestmentStrategy, StrategyCriteria } from "@/types/strategy";
 
 export type JobStage =
@@ -39,6 +40,8 @@ export interface StrategyJob {
   events: JobEvent[];
   result?: JobResult;
   error?: string;
+  errorCode?: string;
+  publicError?: string;
 }
 
 const JOB_TTL_MS = 30 * 60 * 1000;
@@ -64,15 +67,19 @@ function persistJob(job: StrategyJob): void {
     getDb()
       .prepare(
         `INSERT INTO strategy_jobs
-           (id, wallet_address, status, events_json, result_json, error, started_at, finished_at,
+           (id, wallet_address, status, events_json, result_json, error, error_code, public_error,
+            started_at, finished_at,
             heartbeat_at, updated_at)
-         VALUES (@id, @wallet, @status, @events, @result, @error, @startedAt, @finishedAt,
+         VALUES (@id, @wallet, @status, @events, @result, @error, @errorCode, @publicError,
+                 @startedAt, @finishedAt,
                  @now, @now)
          ON CONFLICT(id) DO UPDATE SET
            status = excluded.status,
            events_json = excluded.events_json,
            result_json = excluded.result_json,
            error = excluded.error,
+           error_code = excluded.error_code,
+           public_error = excluded.public_error,
            finished_at = excluded.finished_at,
            heartbeat_at = excluded.heartbeat_at,
            updated_at = excluded.updated_at,
@@ -89,6 +96,8 @@ function persistJob(job: StrategyJob): void {
         events: JSON.stringify(job.events.slice(-PERSISTED_EVENTS)),
         result: job.result ? JSON.stringify(job.result) : null,
         error: job.error ?? null,
+        errorCode: job.errorCode ?? null,
+        publicError: job.publicError ?? null,
         startedAt: job.startedAt,
         finishedAt: job.finishedAt ?? null,
         now: Date.now(),
@@ -109,6 +118,8 @@ interface JobRow {
   events_json: string;
   result_json: string | null;
   error: string | null;
+  error_code: string | null;
+  public_error: string | null;
   started_at: number;
   finished_at: number | null;
   payload_json: string | null;
@@ -142,6 +153,8 @@ function rowToJob(row: JobRow): StrategyJob {
     events,
     result,
     error: row.error ?? undefined,
+    errorCode: row.error_code ?? undefined,
+    publicError: row.public_error ?? undefined,
   };
   return job;
 }
@@ -175,7 +188,8 @@ function failExhaustedLeases(): void {
   if (exhausted.length === 0) return;
   const update = db.prepare(
     `UPDATE strategy_jobs
-     SET status = 'error', error = ?, finished_at = ?, lease_owner = NULL,
+     SET status = 'error', error = ?, error_code = ?, public_error = ?,
+         finished_at = ?, lease_owner = NULL,
          lease_expires_at = NULL, heartbeat_at = ?, updated_at = ?
      WHERE id = ? AND status = 'running' AND attempts >= max_attempts
        AND (lease_expires_at IS NULL OR lease_expires_at <= ?)`,
@@ -183,12 +197,25 @@ function failExhaustedLeases(): void {
   db.transaction(() => {
     for (const { id } of exhausted) {
       const message = "Job was interrupted before completion and exhausted automatic recovery";
-      const result = update.run(message, now, now, now, id, now);
+      const publicError =
+        "Allocation generation was interrupted and could not recover automatically. Please generate again.";
+      const result = update.run(
+        message,
+        "job_interrupted",
+        publicError,
+        now,
+        now,
+        now,
+        id,
+        now,
+      );
       if (result.changes !== 1) continue;
       const cached = jobs.get(id);
       if (cached) {
         cached.status = "error";
         cached.error = message;
+        cached.errorCode = "job_interrupted";
+        cached.publicError = publicError;
         cached.finishedAt = now;
         cached.events.push({ ts: now, stage: "error", message });
       }
@@ -312,16 +339,30 @@ export function completeJob(id: string, result: JobResult): void {
   job.status = "done";
   job.finishedAt = Date.now();
   job.result = result;
+  delete job.error;
+  delete job.errorCode;
+  delete job.publicError;
   job.events.push({ ts: Date.now(), stage: "done", message: "Allocation ready" });
   persistJob(job);
 }
 
-export function failJob(id: string, error: string): void {
+export interface FailStrategyJobOptions {
+  errorCode?: string;
+  publicError?: string;
+}
+
+export function failJob(
+  id: string,
+  error: string,
+  options: FailStrategyJobOptions = {},
+): void {
   const job = jobs.get(id) ?? getJob(id);
   if (!job) return;
   job.status = "error";
   job.finishedAt = Date.now();
   job.error = error;
+  job.errorCode = options.errorCode;
+  job.publicError = options.publicError?.slice(0, 1_500);
   job.events.push({ ts: Date.now(), stage: "error", message: error });
   persistJob(job);
 }
@@ -372,13 +413,18 @@ export function claimNextStrategyJob(
   return { job, payload };
 }
 
-export function retryStrategyJob(id: string, error: string, delayMs = 30_000): boolean {
+export function retryStrategyJob(
+  id: string,
+  error: string,
+  delayMs = 30_000,
+  finalFailure: FailStrategyJobOptions = {},
+): boolean {
   const db = getDb();
   const row = db
     .prepare("SELECT attempts, max_attempts FROM strategy_jobs WHERE id = ?")
     .get(id) as { attempts: number; max_attempts: number } | undefined;
   if (!row || row.attempts >= row.max_attempts) {
-    failJob(id, error);
+    failJob(id, error, finalFailure);
     return false;
   }
   const job = jobs.get(id) ?? getJob(id);
@@ -389,10 +435,14 @@ export function retryStrategyJob(id: string, error: string, delayMs = 30_000): b
     message: "A temporary failure interrupted the run; retrying automatically...",
   });
   if (job.events.length > 200) job.events.splice(0, job.events.length - 200);
+  delete job.error;
+  delete job.errorCode;
+  delete job.publicError;
   const now = Date.now();
   db.prepare(
     `UPDATE strategy_jobs
-     SET events_json = ?, error = NULL, available_at = ?, lease_owner = NULL,
+     SET events_json = ?, error = NULL, error_code = NULL, public_error = NULL,
+         available_at = ?, lease_owner = NULL,
          lease_expires_at = NULL, heartbeat_at = ?, updated_at = ?
      WHERE id = ? AND status = 'running'`,
   ).run(JSON.stringify(job.events.slice(-PERSISTED_EVENTS)), now + delayMs, now, now, id);
@@ -436,6 +486,7 @@ export interface PublicJobView {
   events: Array<{ ts: number; stage: string; message: string; sub?: { done: number; total: number } }>;
   result?: JobResult;
   error?: string;
+  errorCode?: string;
 }
 
 const PUBLIC_STAGE: Record<JobStage, string> = {
@@ -473,7 +524,7 @@ function publicMessage(message: string): string {
 
 export function publicView(job: StrategyJob): PublicJobView {
   const last = job.events[job.events.length - 1];
-  const failureMessage = "Allocation generation failed after automatic retry. Please try again shortly.";
+  const failureMessage = job.publicError ?? GENERIC_STRATEGY_FAILURE;
   return {
     id: job.id,
     status: job.status,
@@ -490,5 +541,6 @@ export function publicView(job: StrategyJob): PublicJobView {
     })),
     result: job.result,
     error: job.error ? failureMessage : undefined,
+    errorCode: job.error ? job.errorCode : undefined,
   };
 }

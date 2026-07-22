@@ -2003,13 +2003,14 @@ main {
   height: 38px;
   border-color: transparent;
   background: transparent;
-  color: #fff;
-  transition: transform 120ms ease, background-color 120ms ease;
+  color: var(--muted);
+  transition: transform 120ms ease, background-color 120ms ease, color 120ms ease;
 }
 
 .nav-social:hover {
   transform: translateY(-1px);
   background: rgba(255, 255, 255, 0.05);
+  color: var(--ink);
 }
 
 .social-icon {
@@ -2017,15 +2018,11 @@ main {
   width: 24px;
   height: 24px;
   flex: 0 0 auto;
-  object-fit: contain;
-  filter:
-    drop-shadow(0 0 8px rgba(63, 131, 255, 0.32))
-    drop-shadow(0 0 14px rgba(110, 231, 183, 0.14));
 }
 
 .nav-social .social-icon {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
 }
 
 .wallet-button,
@@ -2654,11 +2651,22 @@ main {
   background: linear-gradient(180deg, rgba(57, 61, 68, 0.96), rgba(37, 40, 46, 0.96));
   border: 1px solid rgba(255, 255, 255, 0.17);
   border-radius: 7px;
+  transition: border-color 140ms ease;
+}
+
+.community-card:hover {
+  border-color: rgba(255, 255, 255, 0.32);
 }
 
 .community-card .social-icon {
-  width: 34px;
-  height: 34px;
+  width: 26px;
+  height: 26px;
+  color: var(--muted);
+  transition: color 140ms ease;
+}
+
+.community-card:hover .social-icon {
+  color: #6ee7b7;
 }
 
 .glow-cta-wrap {

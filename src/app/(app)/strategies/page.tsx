@@ -49,6 +49,7 @@ interface JobView {
     protocolsDeepAnalyzed: number;
   };
   error?: string;
+  errorCode?: string;
 }
 
 const RISK_TO_APPETITE: Record<RiskBand, RiskAppetite> = {
@@ -507,12 +508,17 @@ export default function StrategiesPage() {
               <div className="composer-progress">
                 <p>
                   <strong>{describeStage(job.stage ?? job.status)}</strong>
-                  {job.message ? ` · ${job.message}` : null}
+                  {job.status !== "error" && job.message ? ` · ${job.message}` : null}
                 </p>
-                {(job.events ?? []).slice(-6).map((ev, i) => (
-                  <p key={`${ev.ts}-${i}`}>· {ev.message}</p>
-                ))}
-                {job.error ? <p className="severity-high">{job.error}</p> : null}
+                {(job.events ?? [])
+                  .filter((ev) => job.status !== "error" || ev.stage !== "error")
+                  .slice(-6)
+                  .map((ev, i) => <p key={`${ev.ts}-${i}`}>· {ev.message}</p>)}
+                {job.error ? (
+                  <p className="severity-high" role="alert">
+                    {job.error}
+                  </p>
+                ) : null}
               </div>
             </div>
           ) : null}

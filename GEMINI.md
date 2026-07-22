@@ -172,7 +172,7 @@ Pipeline:
 3. Run protocol analysis through `analyzeProtocol`, which gathers ground-truth
    facts and sends prompts through the two-model (Codex + Gemini) scoring flow.
 4. Codex (the lead, gpt-5.6-sol at xhigh) proposes the allocation.
-5. Depending on plan capability, Gemini 3.5 Flash (high) adversarially reviews it.
+5. Depending on plan capability, Gemini 3.6 Flash (high in CLI mode; API model configurable) adversarially reviews it.
 6. Codex revises when reviewer concerns need a fix.
 7. The result flows through the job store: in-memory Map hot path with SQLite
    write-through (`strategy_jobs`), so finished strategies survive restarts.

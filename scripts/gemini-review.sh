@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Ad-hoc second-opinion review: pipe context (diff, file, or question) to
-# Gemini 3.5 Flash (High) and print its analysis.
+# Gemini 3.6 Flash (High) and print its analysis.
 #
 # Usage:
 #   scripts/gemini-review.sh "Question or instruction"
@@ -13,7 +13,7 @@ set -euo pipefail
 
 if [ "$#" -lt 1 ]; then
   cat <<'EOF' >&2
-gemini-review.sh — second-opinion review via Gemini 3.5 Flash (High)
+gemini-review.sh — second-opinion review via Gemini 3.6 Flash (High)
 
 Usage:
   scripts/gemini-review.sh "your question or instruction"
@@ -43,11 +43,13 @@ else
 fi
 
 GEMINI_BIN="${GEMINI_CLI_BIN:-agy}"
-GEMINI_MODEL_NAME="${GEMINI_CLI_MODEL:-Gemini 3.5 Flash (High)}"
+GEMINI_MODEL_NAME="${GEMINI_CLI_MODEL:-gemini-3.6-flash-high}"
 
-# `--print` runs a single non-interactive prompt (piped over stdin so long
-# prompts stay off argv). `--mode plan` keeps it read-only (no file edits).
-printf '%s' "$PROMPT" | "$GEMINI_BIN" \
-  --print \
+# agy 1.0 treats --print as a string flag and ignores stdin in print mode.
+# The quoted argument is passed directly (no eval), so context cannot become
+# shell syntax. `--mode plan` keeps the review read-only.
+"$GEMINI_BIN" \
+  --print="$PROMPT" \
   --model "$GEMINI_MODEL_NAME" \
+  --effort high \
   --mode plan

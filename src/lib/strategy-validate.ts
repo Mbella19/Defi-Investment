@@ -1,4 +1,5 @@
 import type { InvestmentStrategy, StrategyAllocation } from "@/types/strategy";
+import { MIN_STRATEGY_ALLOCATIONS } from "@/lib/strategy-feasibility";
 
 const VERDICTS = new Set<StrategyAllocation["verdict"]>([
   "high_confidence",
@@ -60,7 +61,9 @@ export function validateStrategyShape(
   if (!validStringArray(r.warnings, 30, 2_000)) return "strategy has invalid warnings[]";
   if (!validStringArray(r.steps, 50, 3_000)) return "strategy has invalid steps[]";
   if (!Array.isArray(r.allocations)) return "strategy missing allocations[]";
-  if (r.allocations.length < 2) return `strategy has ${r.allocations.length} allocations (need >=2)`;
+  if (r.allocations.length < MIN_STRATEGY_ALLOCATIONS) {
+    return `strategy has ${r.allocations.length} allocations (need >=${MIN_STRATEGY_ALLOCATIONS})`;
+  }
   if (r.allocations.length > 50) return "strategy has too many allocations (max 50)";
   const poolIds = new Set<string>();
   for (let i = 0; i < r.allocations.length; i++) {

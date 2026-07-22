@@ -22,6 +22,16 @@ import { invokeGemini } from "./security/gemini-client";
 import { extractJson } from "./security/extract-json";
 import type { JobStage } from "./strategy-jobs";
 import { log } from "./log";
+import {
+  assessStrategyFeasibility,
+  isPoolEligibleForStrategy,
+  isProtocolEligibleForStrategy,
+  MIN_STRATEGY_ALLOCATIONS,
+} from "./strategy-feasibility";
+import {
+  criteriaTooRestrictiveError,
+  insufficientReviewedProtocolsError,
+} from "./strategy-errors";
 
 export interface StrategyProgressEvent {
   stage: JobStage;
@@ -33,7 +43,7 @@ export interface GenerateStrategyOptions {
   onProgress?: (event: StrategyProgressEvent) => void;
   /**
    * Strategist depth — controls which review stages run. Lead = Codex GPT-5.6
-   * (proposes + revises); reviewer = Gemini 3.5 Flash.
+   * (proposes + revises); reviewer = Gemini 3.6 Flash.
    *  - "solo"    : Codex proposer only, no review, no revision (Free tier)
    *  - "dual"    : Codex proposer + Gemini reviewer + Codex revision (Pro tier)
    *  - "council" : cold-eyes Codex + Gemini reviews, then lead revision
@@ -147,6 +157,22 @@ function buildProtocolSummaries(
   return summaries.sort((a, b) => b.tvl - a.tvl);
 }
 
+function eligibleStrategyCatalogue(
+  criteria: StrategyCriteria,
+  summaries: ProtocolSummary[],
+): ProtocolSummary[] {
+  const seenPoolIds = new Set<string>();
+  return summaries.flatMap((summary) => {
+    if (!isProtocolEligibleForStrategy(criteria, summary.analysis)) return [];
+    const pools = summary.pools.filter((pool) => {
+      if (!isPoolEligibleForStrategy(criteria, pool) || seenPoolIds.has(pool.poolId)) return false;
+      seenPoolIds.add(pool.poolId);
+      return true;
+    });
+    return pools.length > 0 ? [{ ...summary, pools }] : [];
+  });
+}
+
 async function deepAnalyzeProtocols(
   summaries: ProtocolSummary[],
   qualifying: DefiLlamaPool[],
@@ -206,6 +232,7 @@ function buildStrategyPrompt(
   summaries: ProtocolSummary[],
   totalPoolsScanned: number
 ): string {
+  const eligiblePoolCount = summaries.reduce((sum, summary) => sum + summary.pools.length, 0);
   const protocolDataLines = summaries.map((s) => {
     const poolLines = s.pools
       .map((p) => {
@@ -271,7 +298,7 @@ USER PARAMETERS:
 - Risk appetite: ${criteria.riskAppetite}
 - Target APY range: ${criteria.targetApyMin}% - ${criteria.targetApyMax}%
 
-I scanned ${totalPoolsScanned} yield pools across DeFi and ran deep AI security analysis on all ${summaries.length} qualifying protocols. Here is the complete data:
+I scanned ${totalPoolsScanned} yield pools across DeFi and ran deep AI security analysis on the qualifying protocols. The catalogue below contains ${eligiblePoolCount} safety-eligible pools across ${summaries.length} protocols:
 
 <UNTRUSTED_PROTOCOL_CATALOGUE>
 ${protocolDataLines}
@@ -307,12 +334,13 @@ Create a detailed investment strategy. Return ONLY a JSON object with this struc
 
 RULES:
 - Allocations MUST sum to exactly $${criteria.budget.toLocaleString()}
-- Choose the pool count that GENUINELY fits this strategy — not a default. There is no required range. Decide based on conviction, budget, and risk:
+- Return at least ${MIN_STRATEGY_ALLOCATIONS} allocations with unique poolIds and never more than the ${eligiblePoolCount} eligible pools supplied above
+- Choose the pool count that GENUINELY fits this strategy based on conviction, budget, risk, and the size of the eligible catalogue:
   • If a few protocols are clearly best-in-class for the user's risk profile, concentrate (2-4 pools is fine — even 2 if conviction is overwhelming and concentration is the right call)
   • If multiple solid protocols compete and diversification meaningfully reduces protocol risk, spread wider (10-20+ pools for large budgets where any single failure must not crater the portfolio)
   • For small budgets ($1k-$10k), too many pools dilutes capital below useful thresholds — prefer 2-5
   • For mid budgets ($10k-$100k), typically 4-10 unless one cluster is dominant
-  • For large budgets ($100k+), genuine spread across protocol/chain/asset risk usually warrants 10-25+
+  • For large budgets ($100k+), genuine spread across protocol/chain/asset risk usually warrants 10-25+ when the eligible catalogue supports it
   NEVER pad with low-conviction pools to hit a count. NEVER over-concentrate because picks look strong on paper if a single exploit would be catastrophic. Justify the count you chose in diversificationNotes.
 - CRITICAL: Use the AI safety analysis data. Protocols with legitimacy score below 50 should get minimal or zero allocation for low/medium risk
 - For low risk: only allocate to protocols with legitimacy score >= 70 and "high_confidence" or "moderate_confidence" verdict
@@ -621,6 +649,7 @@ function buildRevisionPrompt(
   merged: MergedCritiqueForRevision,
   summaries: ProtocolSummary[]
 ): string {
+  const eligiblePoolCount = summaries.reduce((sum, summary) => sum + summary.pools.length, 0);
   const initialJson = JSON.stringify(
     {
       summary: initial.summary,
@@ -738,6 +767,7 @@ REVISE THE STRATEGY. Return ONLY a JSON object with the SAME structure as your o
 
 RULES:
 - Allocations MUST sum to exactly $${criteria.budget.toLocaleString()}
+- Return at least ${MIN_STRATEGY_ALLOCATIONS} allocations with unique poolIds and never more than the ${eligiblePoolCount} eligible pools in the catalogue
 - Address EVERY high-severity concern OR add it to "rejections" with a rationale — silent rejection is not allowed for high-severity concerns
 - Address medium concerns where possible; if not, listing in "rejections" is encouraged but not required
 - "rejections" must use the 1-based concernIndex from the list above (1, 2, 3, …)
@@ -798,19 +828,10 @@ function groundStrategyInCatalogue(
       throw new Error(`Pool ${allocation.poolId} was not in the analyzed catalogue`);
     }
     const analysis = entry.protocol.analysis!;
-    if (
-      criteria.riskAppetite !== "high" &&
-      (analysis.overallVerdict === "caution" || analysis.legitimacyScore < 50)
-    ) {
+    if (!isProtocolEligibleForStrategy(criteria, analysis)) {
       throw new Error(`Pool ${allocation.poolId} fails the ${criteria.riskAppetite} safety floor`);
     }
-    if (
-      criteria.riskAppetite === "low" &&
-      (analysis.legitimacyScore < 70 || analysis.overallVerdict === "low_confidence")
-    ) {
-      throw new Error(`Pool ${allocation.poolId} fails the conservative safety floor`);
-    }
-    if (criteria.assetType === "stablecoins" && !entry.pool.stablecoin) {
+    if (!isPoolEligibleForStrategy(criteria, entry.pool)) {
       throw new Error(`Pool ${allocation.poolId} is not a stablecoin market`);
     }
     const amount = index === strategy.allocations.length - 1
@@ -988,18 +1009,48 @@ export async function generateStrategy(
   const protocolsDeepAnalyzed = analyzedSummaries.filter((s) => s.analysis).length;
   log.info("strategy", "deep analysis complete", { protocolsDeepAnalyzed });
   if (protocolsDeepAnalyzed < 2) {
+    if (protocolsDeepAnalyzed === protocolsToAnalyze.length) {
+      const feasibility = assessStrategyFeasibility(criteria, analyzedSummaries);
+      throw insufficientReviewedProtocolsError({
+        criteria,
+        eligibleProtocolCount: feasibility.eligibleProtocolCount,
+        requiredProtocolCount: 2,
+      });
+    }
     throw new Error(
       "Insufficient security-analysis coverage to construct a diversified strategy safely",
     );
   }
 
+  const feasibility = assessStrategyFeasibility(criteria, analyzedSummaries);
+  log.info("strategy", "eligibility gate complete", {
+    eligiblePools: feasibility.eligiblePoolCount,
+    eligibleProtocols: feasibility.eligibleProtocolCount,
+  });
+  if (feasibility.eligiblePoolCount < MIN_STRATEGY_ALLOCATIONS) {
+    // If an entire protocol analysis failed, another attempt can restore the
+    // catalogue. When every intended analysis completed, the mandate itself
+    // is unsatisfiable and repeating the same expensive run cannot help.
+    if (protocolsDeepAnalyzed < protocolsToAnalyze.length) {
+      throw new Error(
+        "Insufficient security-analysis coverage to construct a diversified strategy safely",
+      );
+    }
+    throw criteriaTooRestrictiveError({
+      criteria,
+      ...feasibility,
+      requiredPoolCount: MIN_STRATEGY_ALLOCATIONS,
+    });
+  }
+  const eligibleSummaries = eligibleStrategyCatalogue(criteria, analyzedSummaries);
+
   // ===== STAGE 1 — Codex (lead) proposes initial strategy =====
   log.info("strategy", "lead proposal stage started");
   emit({
     stage: "lead_proposer",
-    message: `The lead architect is composing an initial allocation across ${protocolsDeepAnalyzed} analyzed protocols…`,
+    message: `The lead architect is composing an initial allocation from ${feasibility.eligiblePoolCount} eligible pools across ${feasibility.eligibleProtocolCount} protocols…`,
   });
-  const initialPrompt = buildStrategyPrompt(criteria, analyzedSummaries, qualifying.length);
+  const initialPrompt = buildStrategyPrompt(criteria, eligibleSummaries, qualifying.length);
   const initialOutput = await invokeLead(initialPrompt, 600_000);
   let initialStrategy = parseStrategyResponse(initialOutput);
 
@@ -1014,7 +1065,7 @@ export async function generateStrategy(
       `Initial strategy failed validation and cannot be saved: ${initialValidationError}`,
     );
   }
-  initialStrategy = groundStrategyInCatalogue(initialStrategy, criteria, analyzedSummaries);
+  initialStrategy = groundStrategyInCatalogue(initialStrategy, criteria, eligibleSummaries);
   const groundedInitialError = validateStrategyShape(initialStrategy, criteria);
   if (groundedInitialError) {
     throw new Error(`Grounded initial strategy failed validation: ${groundedInitialError}`);
@@ -1056,7 +1107,7 @@ export async function generateStrategy(
   const critiquePrompt = buildCritiquePrompt(
     criteria,
     initialStrategy,
-    analyzedSummaries,
+    eligibleSummaries,
     qualifying.length
   );
   const [geminiResult, codexResult] = await Promise.all([
@@ -1159,7 +1210,7 @@ export async function generateStrategy(
         codexVerdict: codexVerdictRaw,
         geminiVerdict: geminiVerdictRaw,
       },
-      analyzedSummaries
+      eligibleSummaries
     );
     const revisedOutput = await invokeLead(revisionPrompt, 600_000);
     const parsedRevised = parseStrategyResponse(revisedOutput) as RevisedStrategyShape;
@@ -1169,7 +1220,7 @@ export async function generateStrategy(
     if (validationError) {
       throw new Error(`revision validation failed: ${validationError}`);
     }
-    revisedStrategy = groundStrategyInCatalogue(parsedRevised, criteria, analyzedSummaries);
+    revisedStrategy = groundStrategyInCatalogue(parsedRevised, criteria, eligibleSummaries);
     const groundedRevisionError = validateStrategyShape(revisedStrategy, criteria);
     if (groundedRevisionError) {
       throw new Error(`grounded revision validation failed: ${groundedRevisionError}`);

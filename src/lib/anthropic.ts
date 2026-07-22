@@ -414,7 +414,7 @@ function isCacheableAnalysis(value: unknown, expectedSlug: string): value is Pro
 
 /* ==================== STAGE 2 — SYNTHESIS ==================== */
 
-const SYNTHESIS_SYSTEM = `You are reconciling two independent AI security analyses of a DeFi protocol into ONE final analysis. The two models (Codex GPT-5.6 and Gemini 3.5 Flash) each scored the protocol from the same facts. Your job:
+const SYNTHESIS_SYSTEM = `You are reconciling two independent AI security analyses of a DeFi protocol into ONE final analysis. The two models (Codex GPT-5.6 and Gemini 3.6 Flash) each scored the protocol from the same facts. Your job:
 
 ${UNTRUSTED_EVIDENCE_RULES}
 

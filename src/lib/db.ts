@@ -14,25 +14,41 @@ const DB_PATH = CONFIGURED_DB_PATH === ":memory:"
     ? CONFIGURED_DB_PATH
     : path.join(/*turbopackIgnore: true*/ process.cwd(), CONFIGURED_DB_PATH);
 
-let _db: InstanceType<typeof Database> | null = null;
+interface DatabaseProcessState {
+  __sovereignDatabase?: InstanceType<typeof Database>;
+  __sovereignDbShutdownRegistered?: boolean;
+}
+
+// Next dev can re-evaluate server modules during HMR while keeping the Node
+// process alive. Process-global state prevents orphaned SQLite handles and a
+// new set of signal listeners on every recompilation.
+const databaseProcess = globalThis as typeof globalThis & DatabaseProcessState;
+let _db: InstanceType<typeof Database> | null = databaseProcess.__sovereignDatabase ?? null;
 
 export function getDb() {
   if (!_db) {
-    _db = new Database(/*turbopackIgnore: true*/ DB_PATH);
-    _db.pragma("journal_mode = WAL");
-    _db.pragma("foreign_keys = ON");
-    _db.pragma("busy_timeout = 5000");
-    // Payment activation, sessions, and job leases should survive a host
-    // power loss once SQLite reports commit success.
-    _db.pragma("synchronous = FULL");
-    _db.pragma("trusted_schema = OFF");
-    // Auto-checkpoint every 1000 frames so the WAL doesn't grow unbounded
-    // in long-running production deployments.
-    _db.pragma("wal_autocheckpoint = 1000");
-    migrate(_db);
-    hardenDatabaseFiles();
-    registerShutdownHooks();
+    const candidate = new Database(/*turbopackIgnore: true*/ DB_PATH);
+    try {
+      candidate.pragma("journal_mode = WAL");
+      candidate.pragma("foreign_keys = ON");
+      candidate.pragma("busy_timeout = 5000");
+      // Payment activation, sessions, and job leases should survive a host
+      // power loss once SQLite reports commit success.
+      candidate.pragma("synchronous = FULL");
+      candidate.pragma("trusted_schema = OFF");
+      // Auto-checkpoint every 1000 frames so the WAL doesn't grow unbounded
+      // in long-running production deployments.
+      candidate.pragma("wal_autocheckpoint = 1000");
+      migrate(candidate);
+      hardenDatabaseFiles();
+      _db = candidate;
+      databaseProcess.__sovereignDatabase = candidate;
+    } catch (error) {
+      try { candidate.close(); } catch { /* best effort */ }
+      throw error;
+    }
   }
+  registerShutdownHooks();
   return _db;
 }
 
@@ -51,13 +67,13 @@ function hardenDatabaseFiles(): void {
   }
 }
 
-let _shutdownRegistered = false;
 function registerShutdownHooks() {
-  if (_shutdownRegistered) return;
-  _shutdownRegistered = true;
+  if (databaseProcess.__sovereignDbShutdownRegistered) return;
+  databaseProcess.__sovereignDbShutdownRegistered = true;
   const close = () => {
     try {
-      _db?.close();
+      databaseProcess.__sovereignDatabase?.close();
+      databaseProcess.__sovereignDatabase = undefined;
       _db = null;
     } catch {
       /* best effort */
@@ -618,6 +634,13 @@ function migrate(db: InstanceType<typeof Database>) {
     db.exec(`
       ALTER TABLE auth_sessions ADD COLUMN auth_method TEXT NOT NULL DEFAULT 'siwe'
         CHECK(auth_method IN ('siwe', 'dev'));
+    `);
+  });
+
+  applyMigration("strategy_job_safe_errors_v1", () => {
+    db.exec(`
+      ALTER TABLE strategy_jobs ADD COLUMN error_code TEXT;
+      ALTER TABLE strategy_jobs ADD COLUMN public_error TEXT;
     `);
   });
 }

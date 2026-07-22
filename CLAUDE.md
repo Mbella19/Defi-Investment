@@ -28,7 +28,7 @@ The SQLite DB (`sovereign.db`) is created on first server route hit via `src/lib
 
 `analyzeProtocol(protocol, pools)` is the security-scoring entry point. It runs three stages:
 
-1. **Ensemble scoring** — `ensembleInvoke` (in `src/lib/security/dual-llm.ts`) fans the same prompt out to Codex GPT-5.6 (sol, xhigh) and Gemini 3.5 Flash (high) in parallel via `Promise.allSettled`. Each model returns its own `legitimacyScore`, `verdict`, `redFlags`, `sections{...}`. Partial failures are tolerated.
+1. **Ensemble scoring** — `ensembleInvoke` (in `src/lib/security/dual-llm.ts`) fans the same prompt out to Codex GPT-5.6 (sol, xhigh) and Gemini 3.6 Flash (high in CLI mode; API model configurable) in parallel via `Promise.allSettled`. Each model returns its own `legitimacyScore`, `verdict`, `redFlags`, `sections{...}`. Partial failures are tolerated.
 2. **Synthesis** — Codex (the lead, `invokeCodex` again at xhigh) reconciles the two outputs with a min-score / most-conservative-verdict bias and an explicit `disagreements[]` array. If synthesis fails, `mechanicalReconcile()` deterministically merges (min score, union flags, average sections) so the analysis still ships.
 3. **Heuristic veto** — `applyHeuristicVetoes()` enforces hard ceilings the AI cannot override: recent on-chain exploits, TVL crashes, "avoid"-rated deployers, dangerous source-audit verdicts, all-broken audit links. Each applied veto is recorded on `ProtocolAnalysis.vetoes[]` and prepended to `redFlags` so downstream prompts see it.
 
@@ -41,7 +41,7 @@ Results are cached three ways, all keyed by protocol slug: an in-process map (1h
 `generateStrategy(criteria, opts)` is a separate three-stage pipeline for portfolio construction. `opts.mode` (default `"council"`) controls the reviewer panel and is set by the API layer from the caller's plan tier (see "Plans, paywall, and capability gating" below):
 
 1. **Codex proposer (lead)** — fetches DeFiLlama pools + protocols, filters by APY/TVL/risk (plus a long-horizon stability gate for low/medium risk), runs `analyzeProtocol` on the top 10 protocols by TVL with a concurrency cap of 4 (`mapWithConcurrency` — each protocol is 2 model invocations plus synthesis, so unbounded parallelism exhausted the box), and asks Codex (the lead, `invokeLead` → `invokeCodex` at xhigh) to compose an initial allocation strategy. Always runs. The proposer's output is validated by `validateStrategyShape` (`src/lib/strategy-validate.ts`) before any fast-path branch can return it.
-2. **Reviewer panel** — the reviewer is Gemini 3.5 Flash (Codex is the lead/proposer, so it can't review its own work; with a two-model ensemble there's no independent third voice, so `dual` and `council` share the same single-reviewer panel — the mode only gates whether review runs at all).
+2. **Reviewer panel** — Gemini 3.6 Flash provides the independent review; council mode also runs a separate cold-eyes Codex critique before the lead revision.
    - `mode === "solo"` (Free tier): skipped entirely; the proposal is returned with a stub `CollaborationTrail`.
    - `mode === "dual"` / `"council"` (Pro / Ultra): Gemini reviews via `runReviewer`. `mergeReviewerCritiques` still dedupes concerns by `category + normalized issue`, escalates severity, and tracks flagging reviewer(s) via `sources: ReviewerSource[]` (the codex reviewer slot is retained as always-unavailable so the merge + trail code is unchanged).
    If the reviewer approved with zero concerns, revision is skipped.
@@ -134,7 +134,7 @@ Wallet-scoped routes use `requireWallet(request)` from `src/lib/auth/guard.ts`, 
 Each provider has one exported entry point that branches on a runtime mode:
 
 - `src/lib/security/codex-client.ts` → `invokeCodex` — the **lead** (CLI: `codex exec -m gpt-5.6-sol -c model_reasoning_effort="xhigh"`; API: OpenAI Responses, xhigh→high)
-- `src/lib/security/gemini-client.ts` → `invokeGemini` — the **reviewer** (CLI: the `agy` binary — `agy --print --model "Gemini 3.5 Flash (High)" --mode plan`, overridable via `GEMINI_CLI_BIN` / `GEMINI_CLI_MODEL`; API: Generative Language `:generateContent` with `thinkingConfig.thinkingLevel`)
+- `src/lib/security/gemini-client.ts` → `invokeGemini` — the **reviewer** (CLI: `agy --print="<prompt>" --model gemini-3.6-flash-high --effort high --mode plan`, model overridable via `GEMINI_CLI_MODEL`; API: Generative Language `:generateContent` with `thinkingConfig.thinkingLevel`)
 
 Mode resolution lives in `src/lib/security/ai-mode.ts`. Precedence: per-provider env (`OPENAI_MODE` / `GEMINI_MODE`) → global `AI_MODE` → default `cli`. API mode requires `OPENAI_API_KEY` / `GEMINI_API_KEY`; model + base URL are also env-overridable. Local dev defaults to CLI for offline parity; hosted deployments set `AI_MODE=api`. See `.env.example`.
 

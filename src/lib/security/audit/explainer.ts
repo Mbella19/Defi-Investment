@@ -12,7 +12,7 @@ import type {
 /**
  * AI explainer
  * ------------
- * The ensemble (Codex GPT-5.6 xhigh + Gemini 3.5 Flash high) is demoted from
+ * The ensemble (Codex GPT-5.6 xhigh + Gemini Flash high) is demoted from
  * "find vulnerabilities" to "explain tool-grounded findings". This is a
  * deliberate constraint: the analyzers (Slither, Aderyn, Mythril, on-chain
  * interrogator) ground every finding in real source or live state, so the

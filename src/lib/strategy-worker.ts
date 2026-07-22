@@ -5,10 +5,12 @@ import {
   claimNextStrategyJob,
   completeJob,
   emitEvent,
+  failJob,
   retryStrategyJob,
 } from "@/lib/strategy-jobs";
 import { log } from "@/lib/log";
 import { withAiUsageContext } from "@/lib/ai-telemetry";
+import { describeStrategyFailure } from "@/lib/strategy-errors";
 
 const WORKER_ID = `strategy:${process.pid}:${randomUUID()}`;
 let draining = false;
@@ -39,11 +41,22 @@ async function drain(): Promise<void> {
       );
       completeJob(claimed.job.id, result);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const retrying = retryStrategyJob(claimed.job.id, message);
+      const failure = describeStrategyFailure(error);
+      const failureOptions = {
+        errorCode: failure.code,
+        publicError: failure.publicMessage,
+      };
+      const retrying = failure.retryable
+        ? retryStrategyJob(claimed.job.id, failure.internalMessage, 30_000, failureOptions)
+        : false;
+      if (!failure.retryable) {
+        failJob(claimed.job.id, failure.internalMessage, failureOptions);
+      }
       log.warn("strategy-worker", retrying ? "job scheduled for retry" : "job failed", {
         jobId: claimed.job.id,
-        error: message,
+        error: failure.internalMessage,
+        errorCode: failure.code,
+        retryable: failure.retryable,
       });
       if (retrying) {
         const retryTimer = setTimeout(kickStrategyWorker, 30_000);

@@ -4,7 +4,7 @@ import { invokeGemini } from "./gemini-client";
 
 /**
  * The AI ensemble is two independent reasoners: Codex GPT-5.6 (sol) at xhigh
- * effort — the lead — and Gemini 3.5 Flash at high effort — the adversarial
+ * effort — the lead — and Gemini 3.6 Flash at high effort — the adversarial
  * cross-check. Same prompt to both in parallel; either failing does not abort
  * the other, so callers must handle partial results.
  */
@@ -28,7 +28,7 @@ function settleToOkErr(res: PromiseSettledResult<string>): OkOrErr {
 }
 
 /**
- * Run the same prompt through Codex GPT-5.6 (sol, xhigh) and Gemini 3.5 Flash
+ * Run the same prompt through Codex GPT-5.6 (sol, xhigh) and Gemini 3.6 Flash
  * (high) in parallel. Either model failing does not abort the other.
  */
 export async function ensembleInvoke(
