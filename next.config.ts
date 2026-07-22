@@ -19,7 +19,7 @@ const nextConfig: NextConfig = {
       "default-src 'self'",
       scriptSrc,
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob: https://icons.llama.fi https://*.walletconnect.com",
+      "img-src 'self' data: blob: https://icons.llama.fi https://icons.llamao.fi https://cdn.jsdelivr.net https://*.walletconnect.com",
       "font-src 'self' data:",
       "connect-src 'self' https: wss:",
       "frame-src https://verify.walletconnect.com https://verify.walletconnect.org",

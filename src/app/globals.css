@@ -1374,6 +1374,10 @@ main {
   fill-opacity: 0.1;
 }
 
+.pool-icon .pool-icon-logo-bg {
+  fill: rgba(255, 255, 255, 0.07);
+}
+
 .pool-icon-pixel-one {
   fill: var(--blue);
 }

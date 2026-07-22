@@ -1,3 +1,7 @@
+"use client";
+
+import { useId, useState } from "react";
+
 type PoolIconKind = "stable" | "eth" | "btc" | "lp" | "yield";
 
 function poolIconKind({
@@ -86,6 +90,77 @@ function IconGlyph({ kind }: { kind: PoolIconKind }) {
   );
 }
 
+/** Plain assets whose own mark is the recognized one (spothq icon set slugs). */
+const COIN_ICON: Record<string, string> = {
+  ETH: "eth",
+  WETH: "eth",
+  BTC: "btc",
+  WBTC: "wbtc",
+  USDC: "usdc",
+  USDT: "usdt",
+  DAI: "dai",
+  BNB: "bnb",
+  SOL: "sol",
+  MATIC: "matic",
+  POL: "matic",
+  AVAX: "avax",
+  LINK: "link",
+  UNI: "uni",
+  AAVE: "aave",
+  TRX: "trx",
+  XRP: "xrp",
+  DOGE: "doge",
+  LTC: "ltc",
+  ADA: "ada",
+  DOT: "dot",
+  CRV: "crv",
+  COMP: "comp",
+  MKR: "mkr",
+  SNX: "snx",
+  FIL: "fil",
+  ATOM: "atom",
+};
+
+/** Wrapped/derivative assets whose recognized mark is the issuing protocol's. */
+const SYMBOL_PROTOCOL: Record<string, string> = {
+  STETH: "lido",
+  WSTETH: "lido",
+  RETH: "rocket-pool",
+  WEETH: "ether.fi-stake",
+  EETH: "ether.fi-stake",
+  WBETH: "binance-staked-eth",
+  CBETH: "coinbase-wrapped-staked-eth",
+  CBBTC: "coinbase-btc",
+  SUSDS: "sky-lending",
+  USDS: "sky-lending",
+  SDAI: "spark",
+  USDE: "ethena-usde",
+  SUSDE: "ethena-usde",
+  USYC: "circle-usyc",
+  EZETH: "renzo",
+  RSETH: "kelp",
+  LSETH: "liquid-collective",
+  OETH: "origin-ether",
+  OSETH: "stakewise-v3",
+  JITOSOL: "jito",
+};
+
+/** DeFiLlama project slugs are lowercase kebab (dots allowed, e.g. ether.fi-stake). */
+const SLUG_SHAPE = /^[a-z0-9][a-z0-9.-]*$/;
+
+function iconUrlFor(symbol: string, protocol?: string): string | null {
+  const s = symbol.trim().toUpperCase();
+  const coin = COIN_ICON[s];
+  if (coin) {
+    return `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/${coin}.png`;
+  }
+  const slug = SYMBOL_PROTOCOL[s] ?? (protocol && SLUG_SHAPE.test(protocol) ? protocol : null);
+  if (slug) {
+    return `https://icons.llamao.fi/icons/protocols/${encodeURIComponent(slug)}?w=96&h=96`;
+  }
+  return null;
+}
+
 export function PoolIcon({
   symbol,
   protocol,
@@ -96,12 +171,35 @@ export function PoolIcon({
   category?: string;
 }) {
   const kind = poolIconKind({ symbol, protocol, category });
+  const clipId = useId();
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const src = iconUrlFor(symbol, protocol);
+  const showImage = src !== null && failedSrc !== src;
 
   return (
     <span className={`token-chip pool-icon pool-icon-${kind}`} aria-hidden="true">
       <svg viewBox="0 0 48 48" focusable="false">
         <rect x="3" y="3" width="42" height="42" rx="6" className="pool-icon-frame" />
-        <IconGlyph kind={kind} />
+        {showImage ? (
+          <>
+            <clipPath id={clipId}>
+              <circle cx="24" cy="24" r="16" />
+            </clipPath>
+            <rect x="8" y="8" width="32" height="32" rx="16" className="pool-icon-logo-bg" />
+            <image
+              href={src}
+              x="9"
+              y="9"
+              width="30"
+              height="30"
+              preserveAspectRatio="xMidYMid meet"
+              clipPath={`url(#${clipId})`}
+              onError={() => setFailedSrc(src)}
+            />
+          </>
+        ) : (
+          <IconGlyph kind={kind} />
+        )}
         <rect x="34" y="8" width="5" height="5" className="pool-icon-pixel-one" />
         <rect x="9" y="35" width="4" height="4" className="pool-icon-pixel-two" />
       </svg>
