@@ -177,3 +177,13 @@ DeFiLlama (protocols, pools, TVL), CoinGecko (token market data + native gas-tok
 - **Store EVM addresses lowercase in payment config.** viem rejects mixed-case addresses unless the EIP-55 checksum matches exactly — so `src/lib/payments/config.ts` keeps every contract / recipient as all-lowercase. The protocol treats lowercase and checksummed addresses as identical; the checksum is purely an integrity hint. If you add a new EVM token, lowercase the contract address before committing.
 - **Real gas, never fake.** The checkout's "Network fee" row shows live values: gas units from `useEstimateGas` (real RPC simulation), per-gas fee from `useEstimateFeesPerGas`, native USD price from CoinGecko. The deterministic 21000/65000 fallback only triggers when `useEstimateGas` errors (typically because the wallet has no token balance), and the UI labels that state explicitly with "· typical" so users can tell. Don't paper over a missing estimate with hardcoded numbers in any new payment code.
 - **Address is never rendered in the EVM checkout summary.** The recipient flows from quote → wagmi tx params → user wallet, never into a copy/paste block. For non-EVM, address reveal is gated behind an explicit "Reveal deposit address" click. Treat the recipient as a system value, not user-facing copy.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

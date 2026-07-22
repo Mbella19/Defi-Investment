@@ -57,3 +57,6 @@ sovereign 2.db-*
 
 # local production run log
 prod-server.log
+
+# graphify knowledge-graph output (regenerate with `graphify update .`)
+graphify-out/
