@@ -83,6 +83,28 @@ describe("durable job integrity", () => {
     expect(row.public_error).toBe(view.error);
   });
 
+  it("sanitizes internal progress labels without corrupting ordinary words", () => {
+    const now = Date.now();
+    const view = publicView({
+      id: randomUUID(),
+      wallet: "0x3000000000000000000000000000000000000006",
+      status: "running",
+      startedAt: now,
+      events: [{
+        ts: now,
+        stage: "lead_revision",
+        message:
+          "The architect is revising the strategy against 4 reviewer concerns; collaboration trail is available.",
+      }],
+    });
+
+    expect(view.message).toBe(
+      "The proposal is revising the allocation against 4 review concerns; proposal details is available.",
+    );
+    expect(view.message).not.toContain("agreviewnst");
+    expect(view.message).not.toContain("trreviewl");
+  });
+
   it("returns the winning audit job when an idempotent insert races", () => {
     const wallet = "0x3000000000000000000000000000000000000003";
     const key = `audit-${randomUUID()}`;

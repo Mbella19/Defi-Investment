@@ -508,18 +508,18 @@ function publicStage(stage: JobStage): string {
 
 function publicMessage(message: string): string {
   return message
-    .replace(/yield feed/gi, "market feed")
-    .replace(/yield pools?/gi, "markets")
-    .replace(/pools?/gi, "markets")
-    .replace(/protocols?/gi, "markets")
+    .replace(/\byield feed\b/gi, "market feed")
+    .replace(/\byield pools?\b/gi, "markets")
+    .replace(/\bpools?\b/gi, "markets")
+    .replace(/\bprotocols?\b/gi, "markets")
     .replace(/ground-truth checks, AI scoring, synthesis, and heuristic vetoes/gi, "risk context")
-    .replace(/AI|Claude|Codex|Gemini/gi, "review")
-    .replace(/strategy pipeline/gi, "allocation workflow")
-    .replace(/strategy/gi, "allocation")
-    .replace(/architect/gi, "proposal")
-    .replace(/reviewers?/gi, "review")
-    .replace(/collaboration trail/gi, "proposal details")
-    .replace(/pipeline/gi, "workflow");
+    .replace(/\b(?:AI|Claude|Codex|Gemini)\b/gi, "review")
+    .replace(/\bstrategy pipeline\b/gi, "allocation workflow")
+    .replace(/\bstrategy\b/gi, "allocation")
+    .replace(/\barchitect\b/gi, "proposal")
+    .replace(/\breviewers?\b/gi, "review")
+    .replace(/\bcollaboration trail\b/gi, "proposal details")
+    .replace(/\bpipeline\b/gi, "workflow");
 }
 
 export function publicView(job: StrategyJob): PublicJobView {

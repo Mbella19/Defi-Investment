@@ -18,8 +18,8 @@ import { getPoolStability, passesStabilityGate, type PoolStability } from "./poo
 import { validateStrategyShape } from "./strategy-validate";
 import { mapWithConcurrency } from "./async-utils";
 import { invokeCodex } from "./security/codex-client";
-import { invokeGemini } from "./security/gemini-client";
 import { extractJson } from "./security/extract-json";
+import { invokeJsonWithRetry } from "./security/dual-llm";
 import type { JobStage } from "./strategy-jobs";
 import { log } from "./log";
 import {
@@ -510,26 +510,74 @@ function normalizeCritique(raw: unknown): ReviewerCritique {
   };
 }
 
+function isReviewerCritique(value: unknown): value is ReviewerCritique {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (
+    !["approve", "revise", "reject"].includes(String(record.verdict)) ||
+    !Array.isArray(record.concerns) ||
+    !Array.isArray(record.rejectedPoolIds) ||
+    !record.rejectedPoolIds.every((item) => typeof item === "string") ||
+    !Array.isArray(record.missingConsiderations) ||
+    !record.missingConsiderations.every((item) => typeof item === "string") ||
+    typeof record.overallNote !== "string" ||
+    record.overallNote.trim().length === 0
+  ) {
+    return false;
+  }
+
+  const categories = new Set([
+    "concentration",
+    "safety",
+    "risk_mismatch",
+    "allocation",
+    "diversification",
+    "reasoning",
+    "missing_data",
+    "other",
+  ]);
+  const severities = new Set(["high", "medium", "low"]);
+  return record.concerns.every((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const concern = item as Record<string, unknown>;
+    return (
+      typeof concern.category === "string" &&
+      categories.has(concern.category) &&
+      typeof concern.severity === "string" &&
+      severities.has(concern.severity) &&
+      typeof concern.issue === "string" &&
+      concern.issue.trim().length > 0 &&
+      typeof concern.suggestion === "string" &&
+      concern.suggestion.trim().length > 0
+    );
+  });
+}
+
 /**
- * Invoke a single reviewer (Codex or Gemini) and parse its critique.
- * Resolves to null with error on any failure — caller handles partial results.
+ * Invoke a single reviewer and require a schema-valid critique. A malformed
+ * first response receives one provider-local strict JSON retry; the caller
+ * still handles a provider remaining unavailable after that retry.
  */
 async function runReviewer(
   source: ReviewerSource,
   prompt: string,
   timeoutMs: number
-): Promise<{ critique: ReviewerCritique | null; error: string | null }> {
-  try {
-    const output =
-      source === "codex"
-        ? await invokeCodex(prompt, { timeoutMs })
-        : await invokeGemini(prompt, { timeoutMs });
-    const parsed = extractJson<ReviewerCritique>(output);
-    return { critique: normalizeCritique(parsed), error: null };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { critique: null, error: message };
-  }
+): Promise<{
+  critique: ReviewerCritique | null;
+  error: string | null;
+  retried: boolean;
+  recovered: boolean;
+}> {
+  const result = await invokeJsonWithRetry<ReviewerCritique>(source, prompt, {
+    timeoutMs,
+    validate: isReviewerCritique,
+  });
+  return {
+    critique: result.value ? normalizeCritique(result.value) : null,
+    error: result.error,
+    retried: result.retried,
+    recovered: result.recovered,
+  };
 }
 
 /**
@@ -1117,6 +1165,8 @@ export async function generateStrategy(
       : Promise.resolve({
           critique: null as ReviewerCritique | null,
           error: null as string | null,
+          retried: false,
+          recovered: false,
         }),
   ]);
 
@@ -1129,6 +1179,14 @@ export async function generateStrategy(
     codexConcerns: codexCritique?.concerns.length ?? null,
     geminiVerdict: geminiVerdictRaw,
     geminiConcerns: geminiCritique?.concerns.length ?? null,
+    retriedReviewers: [
+      codexResult.retried ? "codex" : null,
+      geminiResult.retried ? "gemini" : null,
+    ].filter(Boolean),
+    recoveredReviewers: [
+      codexResult.recovered ? "codex" : null,
+      geminiResult.recovered ? "gemini" : null,
+    ].filter(Boolean),
   });
 
   // If the reviewer is unavailable, return the lead's proposal unreviewed.

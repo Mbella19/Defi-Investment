@@ -1,6 +1,5 @@
 import {
-  ensembleInvoke,
-  ensembleExtractJson,
+  ensembleInvokeJson,
   type AiSource,
 } from "../dual-llm";
 import type {
@@ -46,6 +45,24 @@ interface AiExplanationRaw {
   notes?: string;
 }
 
+function isAiExplanationRaw(value: unknown): value is AiExplanationRaw {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const requiredText = [
+    record.whatHappened,
+    record.whyItMatters,
+    record.recommendedFix,
+  ];
+  return (
+    typeof record.isReal === "boolean" &&
+    requiredText.every((item) => typeof item === "string" && item.trim().length > 0) &&
+    typeof record.finalSeverity === "string" &&
+    normalizeSeverity(record.finalSeverity) !== null &&
+    (record.exploitScenario === undefined || typeof record.exploitScenario === "string") &&
+    (record.notes === undefined || typeof record.notes === "string")
+  );
+}
+
 /**
  * Explain each consensus finding via both models in parallel. Returns the
  * findings array enriched with `aiExplanation`. Findings without an
@@ -68,7 +85,7 @@ export async function explainFindings(
   const toExplain = ranked.slice(0, 25);
   const explained = new Map<string, AiExplanation>();
 
-  // Process in small batches — three CLI subprocesses per finding × N
+  // Process in small batches — two model invocations per finding × N
   // parallel = lots of concurrent processes if unbounded.
   for (let i = 0; i < toExplain.length; i += FINDING_BATCH_SIZE) {
     const batch = toExplain.slice(i, i + FINDING_BATCH_SIZE);
@@ -90,8 +107,10 @@ export async function explainFindings(
 
 async function explainOne(finding: ConsensusFinding): Promise<AiExplanation | null> {
   const prompt = buildPrompt(finding);
-  const raw = await ensembleInvoke(prompt, { timeoutMs: PER_FINDING_TIMEOUT_MS });
-  const { codex, gemini, errors } = ensembleExtractJson<AiExplanationRaw>(raw);
+  const { codex, gemini, errors } = await ensembleInvokeJson<AiExplanationRaw>(prompt, {
+    timeoutMs: PER_FINDING_TIMEOUT_MS,
+    validate: isAiExplanationRaw,
+  });
 
   const reviewedBy: AiSource[] = [];
   const explanations: { source: AiSource; data: AiExplanationRaw }[] = [];

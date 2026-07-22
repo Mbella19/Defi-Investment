@@ -15,9 +15,10 @@ import { fetchTokenDetail, toTokenMarketData, formatMarketDataForPrompt } from "
 import { fetchTokenSecurity, resolveChainId, formatSecurityForPrompt } from "./goplus";
 import type { TokenMarketData } from "@/types/coingecko";
 import type { GoPlusTokenSecurity } from "@/types/goplus";
-import { ensembleInvoke, ensembleExtractJson } from "./security/dual-llm";
-import { invokeCodex } from "./security/codex-client";
-import { extractJson } from "./security/extract-json";
+import {
+  ensembleInvokeJson,
+  invokeJsonWithRetry,
+} from "./security/dual-llm";
 import { gatherGroundTruth } from "./security/ground-truth";
 
 import { boundCache } from "./cache-utils";
@@ -292,6 +293,44 @@ function normalizeRawScore(value: unknown): RawScoreResponse {
     positiveSignals: normalizeStringList(record.positiveSignals),
     investmentConsiderations: normalizeStringList(record.investmentConsiderations),
   };
+}
+
+function isRawScoreResponse(value: unknown): value is RawScoreResponse {
+  const record = asRecord(value);
+  const sections = asRecord(record?.sections);
+  if (
+    !record ||
+    !sections ||
+    !isFiniteNumber(record.legitimacyScore) ||
+    record.legitimacyScore < 0 ||
+    record.legitimacyScore > 100 ||
+    !isValidVerdict(record.overallVerdict) ||
+    typeof record.summary !== "string" ||
+    record.summary.trim().length === 0 ||
+    !Array.isArray(record.redFlags) ||
+    record.redFlags.length === 0 ||
+    !record.redFlags.every((item) => typeof item === "string") ||
+    !Array.isArray(record.positiveSignals) ||
+    !record.positiveSignals.every((item) => typeof item === "string") ||
+    !Array.isArray(record.investmentConsiderations) ||
+    !record.investmentConsiderations.every((item) => typeof item === "string")
+  ) {
+    return false;
+  }
+
+  return SECTION_KEYS.every((key) => {
+    const section = asRecord(sections[key]);
+    return (
+      !!section &&
+      isFiniteNumber(section.score) &&
+      section.score >= 0 &&
+      section.score <= 100 &&
+      typeof section.assessment === "string" &&
+      section.assessment.trim().length > 0 &&
+      Array.isArray(section.keyFindings) &&
+      section.keyFindings.every((item) => typeof item === "string")
+    );
+  });
 }
 
 /**
@@ -763,8 +802,16 @@ async function runProtocolAnalysis(
   );
 
   // ===== STAGE 1 — both models score independently in parallel =====
-  const raw = await ensembleInvoke(scoringPrompt, { timeoutMs: SCORING_TIMEOUT_MS });
-  const parsed = ensembleExtractJson<RawScoreResponse>(raw);
+  const parsed = await ensembleInvokeJson<RawScoreResponse>(scoringPrompt, {
+    timeoutMs: SCORING_TIMEOUT_MS,
+    validate: isRawScoreResponse,
+  });
+  if (parsed.recoveredSources.length > 0) {
+    log.info("analysis", "protocol reviewers recovered after strict JSON retry", {
+      slug: protocol.slug,
+      sources: parsed.recoveredSources,
+    });
+  }
   const errors: TripleAiMeta["errors"] = parsed.errors.map((e) => ({
     source: e.source as AnalysisAiSource,
     error: "Model analysis unavailable",
@@ -811,11 +858,14 @@ async function runProtocolAnalysis(
   } else {
     const synthesisPrompt = buildSynthesisPrompt(protocol, groundTruth, perAi);
     try {
-      const synthRaw = await invokeCodex(synthesisPrompt, {
-        effort: "xhigh",
+      const synthesis = await invokeJsonWithRetry<RawScoreResponse>("codex", synthesisPrompt, {
         timeoutMs: SYNTHESIS_TIMEOUT_MS,
+        validate: isRawScoreResponse,
       });
-      const parsedSynthesis = extractJson<unknown>(synthRaw);
+      if (!synthesis.value) {
+        throw new Error("Protocol synthesis response was unavailable");
+      }
+      const parsedSynthesis = synthesis.value;
       const parsedRecord = asRecord(parsedSynthesis);
       synthesized = {
         ...normalizeRawScore(parsedSynthesis),

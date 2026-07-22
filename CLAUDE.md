@@ -28,8 +28,8 @@ The SQLite DB (`sovereign.db`) is created on first server route hit via `src/lib
 
 `analyzeProtocol(protocol, pools)` is the security-scoring entry point. It runs three stages:
 
-1. **Ensemble scoring** — `ensembleInvoke` (in `src/lib/security/dual-llm.ts`) fans the same prompt out to Codex GPT-5.6 (sol, xhigh) and Gemini 3.6 Flash (high in CLI mode; API model configurable) in parallel via `Promise.allSettled`. Each model returns its own `legitimacyScore`, `verdict`, `redFlags`, `sections{...}`. Partial failures are tolerated.
-2. **Synthesis** — Codex (the lead, `invokeCodex` again at xhigh) reconciles the two outputs with a min-score / most-conservative-verdict bias and an explicit `disagreements[]` array. If synthesis fails, `mechanicalReconcile()` deterministically merges (min score, union flags, average sections) so the analysis still ships.
+1. **Ensemble scoring** — `ensembleInvokeJson` (in `src/lib/security/dual-llm.ts`) fans the same prompt out to Codex GPT-5.6 (sol, xhigh) and Gemini 3.6 Flash (high in CLI mode; API model configurable) in parallel. Each response must parse and satisfy the protocol-score schema. Only a failed provider receives one strict JSON retry, so a good peer response is never repeated. Partial failures after that retry are tolerated.
+2. **Synthesis** — Codex (the lead, via `invokeJsonWithRetry` at xhigh) reconciles the two outputs with a min-score / most-conservative-verdict bias and an explicit `disagreements[]` array. If synthesis fails, `mechanicalReconcile()` deterministically merges (min score, union flags, average sections) so the analysis still ships.
 3. **Heuristic veto** — `applyHeuristicVetoes()` enforces hard ceilings the AI cannot override: recent on-chain exploits, TVL crashes, "avoid"-rated deployers, dangerous source-audit verdicts, all-broken audit links. Each applied veto is recorded on `ProtocolAnalysis.vetoes[]` and prepended to `redFlags` so downstream prompts see it.
 
 Ground-truth facts (`src/lib/security/ground-truth.ts`) are gathered in parallel before stage 1: HEAD-checks each audit link, queries the local `exploit_alerts` table, detects TVL crashes (1d ≤ −40% or 7d ≤ −55%), and reads cached deployer/source-audit data. They're embedded verbatim in the scoring prompt and the synthesis prompt — the AIs are told they MUST engage with them.
@@ -57,7 +57,7 @@ The per-stage trail is preserved on `InvestmentStrategy.collaboration` (`Collabo
 2. **On-chain interrogation** — `onchain/interrogator.ts` reads live state with `viem` (proxy slots, owner, multisig, timelock).
 3. **Static + symbolic tools in parallel** — `tools/slither.ts`, `tools/aderyn.ts`, `tools/mythril.ts`. Missing binaries or unverified source are tolerated; affected SCSVS checks become `indeterminate` instead of aborting the run.
 4. **Consensus** — `audit/consensus.ts` groups + dedupes findings across engines and escalates confidence on agreement.
-5. **AI explanation** — top-25 findings get `ensembleInvoke`'d through Codex + Gemini for plain-English context. The models cannot invent new findings — they only annotate what the tools already produced.
+5. **AI explanation** — top-25 findings go through `ensembleInvokeJson` with Codex + Gemini for plain-English context. The models cannot invent new findings — they only annotate what the tools already produced.
 6. **SCSVS mapping** — `audit/scsvs.ts` maps findings to OWASP SCSVS v12 categories.
 
 A full audit takes 5–10 minutes, so it runs as a background job (`audit/jobs.ts` — in-memory `Map` hot path with SQLite write-through to `audit_jobs`, mirroring `strategy-jobs.ts`); the API exposes `start` + `status` endpoints (both `requireWallet`; status 404s for jobs the caller doesn't own) and the client polls. Finished reports can be shared publicly: `POST /api/security/audit/share` mints a token, `/report/[token]` renders the persisted report with no auth, and shared jobs are pinned past the normal 30-day `audit_jobs` retention.
@@ -138,7 +138,7 @@ Each provider has one exported entry point that branches on a runtime mode:
 
 Mode resolution lives in `src/lib/security/ai-mode.ts`. Precedence: per-provider env (`OPENAI_MODE` / `GEMINI_MODE`) → global `AI_MODE` → default `cli`. API mode requires `OPENAI_API_KEY` / `GEMINI_API_KEY`; model + base URL are also env-overridable. Local dev defaults to CLI for offline parity; hosted deployments set `AI_MODE=api`. See `.env.example`.
 
-Both accept a prompt and resolve to a string regardless of mode, so callers (`ensembleInvoke`, `analyzeProtocol`, `generateStrategy`, audit orchestrator) don't branch. The strategist's `invokeLead` delegates to `invokeCodex`. `extractJson()` lives in `src/lib/security/extract-json.ts` (the shared JSON extractor — strips markdown fences, returns the outermost balanced `{...}`); prefer it over ad-hoc parsing when adding a new AI consumer.
+Both accept a prompt and resolve to a string regardless of mode, so callers (`ensembleInvokeJson`, `analyzeProtocol`, `generateStrategy`, audit orchestrator) don't branch. The strategist's `invokeLead` delegates to `invokeCodex`. Structured consumers use `invokeJsonWithRetry` / `ensembleInvokeJson`, which delegate parsing to `extractJson()` in `src/lib/security/extract-json.ts` (strips markdown fences and returns the outermost balanced `{...}`).
 
 Two ad-hoc shell scripts exist for second-opinion review during development: `scripts/codex-review.sh` and `scripts/gemini-review.sh`. They take an instruction arg + optional piped context and print the model's response. Useful for security-review of diffs.
 
@@ -163,7 +163,7 @@ DeFiLlama (protocols, pools, TVL), CoinGecko (token market data + native gas-tok
 - **Use `mapWithConcurrency` from `src/lib/async-utils.ts`** for fan-outs to AI subprocesses or upstream APIs. Current caps: 4 concurrent protocol deep-analyses, 10 concurrent pool-history fetches. Don't add new unbounded `Promise.all` fan-outs.
 - **Use `log` from `src/lib/log.ts`** in new server code (JSON lines in production, pretty in dev) rather than bare `console.*`.
 - **Ground-truth before AI.** Any new safety signal that's verifiable from a free API or local DB should land in `gatherGroundTruth` and be formatted into the prompt, not asked of the AI.
-- **Partial AI failure must not abort the pipeline.** Both `ensembleInvoke` and the strategy reviewer are designed for `Promise.allSettled` semantics. Mirror that pattern when adding new AI calls.
+- **Partial AI failure must not abort the pipeline.** `ensembleInvokeJson` isolates each provider, schema-checks its response, and retries only that provider once before returning partial results. Mirror that pattern when adding new structured AI calls.
 - **Use the provided `extractJson` helper.** AI outputs frequently include prose around the JSON; ad-hoc `JSON.parse(text)` will break.
 - **Long timeouts are intentional.** Scoring/synthesis use 360s timeouts; strategy proposer/reviser use 600s. The AI CLIs at max effort are slow — don't shorten without a reason.
 - **React Compiler is on.** Don't reach for `useMemo` / `useCallback` for performance — the compiler memoizes function components automatically. Hand-written memoization is only justified when memoizing on a value the compiler can't see (e.g., refs, mutable instances).

@@ -223,10 +223,12 @@ Ground-truth facts include:
 - cached source-audit and deployer-forensics data.
 
 Ensemble helpers live in `src/lib/security/dual-llm.ts`. They call Codex
-(lead) and Gemini (reviewer) in parallel and tolerate partial failures. Use
-`ensembleInvoke`, `ensembleExtractJson`, and the shared `extractJson` helper
-(`src/lib/security/extract-json.ts`) rather than ad-hoc model calls or brittle
-JSON parsing. There is no Claude/Anthropic dependency in the app runtime.
+(lead) and Gemini (reviewer) in parallel, validate structured responses, retry
+only a failed provider once with a strict JSON reminder, and tolerate remaining
+partial failures. Use `ensembleInvokeJson`, `invokeJsonWithRetry`, and the shared
+`extractJson` helper (`src/lib/security/extract-json.ts`) rather than ad-hoc model
+calls or brittle JSON parsing. There is no Claude/Anthropic dependency in the
+app runtime.
 
 Smart-contract audit flow is orchestrated by
 `src/lib/security/audit/orchestrator.ts`:

@@ -14,7 +14,7 @@ const POLL_INTERVAL = 60_000; // 60 seconds
  * once authed we fetch immediately and then every 60s.
  */
 export function useStrategyAlerts() {
-  const { status } = useSiweAuth();
+  const { status, refresh } = useSiweAuth();
   const isAuthed = status === "authed";
 
   const [alerts, setAlerts] = useState<StrategyAlert[]>([]);
@@ -33,6 +33,15 @@ export function useStrategyAlerts() {
     }
     try {
       const res = await fetch("/api/strategies/alerts?limit=20");
+      if (res.status === 401) {
+        // A fresh SIWE login rotates older sessions for the same wallet. Sync
+        // auth state immediately so a stale tab stops producing a 401 on every
+        // poll and can present the normal sign-in state instead.
+        setAlerts([]);
+        setUnreadCount(0);
+        await refresh();
+        return;
+      }
       if (!res.ok) return;
       const data = await res.json();
       setAlerts(data.alerts);
@@ -40,7 +49,7 @@ export function useStrategyAlerts() {
     } catch {
       // Silently fail on poll errors
     }
-  }, [isAuthed]);
+  }, [isAuthed, refresh]);
 
   // Initial fetch + polling, only while authed.
   useEffect(() => {
